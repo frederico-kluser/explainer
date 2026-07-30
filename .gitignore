@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+
+# Voice assistant data (local only)
+~/.local/share/voice-assistant/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo

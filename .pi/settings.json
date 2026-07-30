@@ -1,0 +1,6 @@
+{
+  "env": {
+    "PI_BASH_DEFAULT_TIMEOUT_SECONDS": "300",
+    "PI_BASH_MAX_TIMEOUT_SECONDS": "600"
+  }
+}
