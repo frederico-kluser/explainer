@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion } from "motion/react";
-import { Plus, Paperclip, Send } from "lucide-react";
+import { Plus, Paperclip, Send, RefreshCw } from "lucide-react";
 import { useMotionUITransition } from "@/components/motion-ui/ui-theme";
 import {
   useToastStack,
   ToastStack,
   Toast,
 } from "@/components/motion-ui/toast-stack";
+import { Skeleton } from "@/components/motion-ui/skeleton";
 import { ConversationTabs } from "@/components/ui/ConversationTabs";
 import { ChatBubble } from "@/components/ui/ChatBubble";
 import { MicButton, type MicButtonState } from "@/components/ui/MicButton";
@@ -23,6 +24,10 @@ export function App() {
   // ── Core state ────────────────────────────────────────────────
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   // ── Hooks ─────────────────────────────────────────────────
   const { isRecording, startRecording, stopRecording, error: micError } =
     useAudioRecorder();
@@ -52,8 +57,6 @@ export function App() {
 
   useAutoPlay(latestAudioUrl);
   const [textInput, setTextInput] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // ── Toast queue ───────────────────────────────────────────────
   const { toasts, add: addToast, dismiss: dismissToast } = useToastStack();
@@ -97,39 +100,47 @@ export function App() {
   // ── Derived ───────────────────────────────────────────────────
   const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
 
-  // ── On mount: fetch conversations ─────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    async function init() {
-      try {
-        const convs = await api.listConversations();
-        if (cancelled) return;
+  // ── Fetch conversations (extracted for retry) ──────────────────
+  const initRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
-        if (convs.length === 0) {
-          const newConv = await api.createConversation("Nova conversa");
-          if (cancelled) return;
-          setConversations([newConv]);
-          setActiveConvId(newConv.id);
-        } else {
-          setConversations(convs);
-          if (convs[0]) setActiveConvId(convs[0].id);
-        }
-      } catch {
-        if (!cancelled) {
-          showError(
-            "Não foi possível conectar ao servidor. O app iniciará offline.",
-          );
-          setConversations([]);
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
+  const fetchConversations = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(false);
+    initRef.current.cancelled = false;
+    const ctx = initRef.current;
+
+    try {
+      const convs = await api.listConversations();
+      if (ctx.cancelled) return;
+
+      if (convs.length === 0) {
+        const newConv = await api.createConversation("Nova conversa");
+        if (ctx.cancelled) return;
+        setConversations([newConv]);
+        setActiveConvId(newConv.id);
+      } else {
+        setConversations(convs);
+        if (convs[0]) setActiveConvId(convs[0].id);
       }
+    } catch {
+      if (!ctx.cancelled) {
+        showError(
+          "Não foi possível conectar ao servidor. Verifique sua conexão.",
+        );
+        setConversations([]);
+        setLoadError(true);
+      }
+    } finally {
+      if (!ctx.cancelled) setIsLoading(false);
     }
-    init();
-    return () => {
-      cancelled = true;
-    };
   }, [showError]);
+
+  useEffect(() => {
+    void fetchConversations();
+    return () => {
+      initRef.current.cancelled = true;
+    };
+  }, [fetchConversations]);
 
   // ── Conversation CRUD ─────────────────────────────────────────
   const handleCreate = useCallback(async () => {
@@ -218,18 +229,76 @@ export function App() {
     [showError],
   );
 
-  // ── Loading screen ────────────────────────────────────────────
-  if (isLoading) {
+  // ── Loading / error screen ────────────────────────────────────
+  if (isLoading || loadError) {
     return (
-      <div className="dark flex h-screen items-center justify-center bg-background">
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={transition}
-          className="text-sm text-muted-foreground"
-        >
-          Carregando…
-        </motion.p>
+      <div className="dark flex h-screen overflow-hidden bg-background text-foreground">
+        {/* Header skeleton */}
+        <header className="fixed inset-x-0 top-0 z-30 flex h-12 items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-sm">
+          <Skeleton className="h-5 w-32" animate />
+          <Skeleton className="h-8 w-28 rounded-md" animate />
+        </header>
+
+        <div className="flex flex-1 pt-12">
+          {/* Sidebar skeleton */}
+          <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-muted/30 px-3 py-4">
+            <Skeleton className="mb-2 h-10 w-full rounded-md" animate />
+            <Skeleton className="mb-2 h-10 w-full rounded-md" animate />
+            <Skeleton className="mb-2 h-10 w-full rounded-md" animate />
+            <Skeleton className="h-10 w-full rounded-md" animate />
+          </aside>
+
+          {/* Main area — skeleton or error */}
+          <main className="flex min-w-0 flex-1 flex-col">
+            <div className="flex flex-1 items-center justify-center p-4">
+              {loadError ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={transition}
+                  className="max-w-sm text-center"
+                >
+                  <p className="mb-1 text-lg font-medium text-foreground">
+                    Erro de conexão
+                  </p>
+                  <p className="mb-4 text-sm text-muted-foreground">
+                    Não foi possível carregar as conversas. Verifique sua
+                    conexão e tente novamente.
+                  </p>
+                  <Button
+                    onClick={() => {
+                      void fetchConversations();
+                    }}
+                  >
+                    <RefreshCw className="mr-2 size-4" />
+                    Tentar novamente
+                  </Button>
+                </motion.div>
+              ) : (
+                <div className="mx-auto w-full max-w-3xl space-y-4">
+                  <div className="flex justify-end">
+                    <Skeleton className="h-16 w-2/3 rounded-2xl" animate />
+                  </div>
+                  <div className="flex justify-start">
+                    <Skeleton className="h-24 w-3/4 rounded-2xl" animate />
+                  </div>
+                  <div className="flex justify-end">
+                    <Skeleton className="h-12 w-1/2 rounded-2xl" animate />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Input skeleton */}
+            <div className="border-t border-border p-4">
+              <div className="mx-auto flex max-w-3xl items-center gap-3">
+                <Skeleton className="size-10 rounded-full" animate />
+                <Skeleton className="h-10 flex-1 rounded-full" animate />
+                <Skeleton className="size-10 rounded-full" animate />
+              </div>
+            </div>
+          </main>
+        </div>
       </div>
     );
   }
@@ -354,6 +423,7 @@ export function App() {
                     )}
                   </div>
                 ))}
+                {/* ── Streaming skeleton bubble ──────────────────── */}
                 {chatLoading && (
                   <motion.div
                     initial={{ opacity: 0, y: 12 }}
@@ -361,16 +431,18 @@ export function App() {
                     transition={transition}
                     className="flex items-start"
                   >
-                    <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground">
-                      <span className="inline-flex items-center gap-2">
-                        <span className="size-2 animate-pulse rounded-full bg-current" />
-                        Processando…
-                      </span>
+                    <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-secondary px-4 py-3">
+                      <Skeleton className="mb-2 h-3 w-48" animate />
+                      <Skeleton className="h-3 w-32" animate />
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Digitando...
+                      </p>
                     </div>
                   </motion.div>
                 )}
               </div>
             ) : chatLoading ? (
+              /* ── Empty-state streaming skeleton ───────────────── */
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -378,13 +450,16 @@ export function App() {
                 className="flex h-full items-center justify-center"
               >
                 <div className="max-w-sm text-center">
-                  <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                    <span className="size-2 animate-pulse rounded-full bg-current" />
-                    Processando…
-                  </span>
+                  <Skeleton className="mx-auto mb-3 h-4 w-48" animate />
+                  <Skeleton className="mx-auto mb-1 h-3 w-64" animate />
+                  <Skeleton className="mx-auto h-3 w-40" animate />
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Digitando...
+                  </p>
                 </div>
               </motion.div>
             ) : (
+              /* ── Idle empty state ─────────────────────────────── */
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
