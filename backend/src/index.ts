@@ -30,13 +30,13 @@ app.get("/api/health", (_req, res) => {
 // import sttRouter        from "./routes/stt.js";
 // import chatRouter       from "./routes/chat.js";
 // import ttsRouter        from "./routes/tts.js";
-// import filesRouter      from "./routes/files.js";
+import filesRouter from "./routes/files.js";
 //
 // app.use("/api/conversations", conversationsRouter);
 // app.use("/api/stt",            sttRouter);
 // app.use("/api/chat",           chatRouter);
 // app.use("/api/tts",            ttsRouter);
-// app.use("/api/files",          filesRouter);
+app.use("/api/files", filesRouter);
 
 // --- Error handler (must be last) ---
 
