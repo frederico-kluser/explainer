@@ -18,6 +18,10 @@ import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useConversation } from "@/hooks/useConversation";
 import { useAutoPlay } from "@/hooks/useAutoPlay";
 import type { Conversation, Message } from "@/types";
+import {
+  CommandPalette,
+  type CommandPaletteItem,
+} from "@/components/motion-ui/command-palette";
 
 export function App() {
   // ── Core state ────────────────────────────────────────────────
@@ -94,6 +98,29 @@ export function App() {
 
   const transition = useMotionUITransition("gentle");
 
+  // ── Command palette state ──────────────────────────────────
+  const [commandOpen, setCommandOpen] = useState(false);
+  const openCommandPalette = useCallback(() => setCommandOpen(true), []);
+
+  const commandItems = useMemo<CommandPaletteItem[]>(
+    () => [
+      {
+        id: "__new__",
+        label: "Nova conversa",
+        icon: Plus,
+        group: "Ações",
+        keywords: ["nova", "criar", "new", "create", "add"],
+      },
+      ...conversations.map((c) => ({
+        id: c.id,
+        label: c.title,
+        group: "Conversas",
+        hint: `Atualizada ${new Date(c.updated_at).toLocaleDateString("pt-BR")}`,
+      })),
+    ],
+    [conversations],
+  );
+
   // ── Derived ───────────────────────────────────────────────────
   const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
 
@@ -163,6 +190,18 @@ export function App() {
     setActiveConvId(id);
     setTextInput("");
   }, []);
+
+  // ── Command palette handler (after handleCreate/handleSelect) ─
+  const handleCommandSelect = useCallback(
+    (item: CommandPaletteItem) => {
+      if (item.id === "__new__") {
+        void handleCreate();
+      } else {
+        handleSelect(item.id);
+      }
+    },
+    [handleCreate, handleSelect],
+  );
 
   // ── Microphone ────────────────────────────────────────────────
   const handleMicStart = useCallback(() => {
@@ -272,6 +311,14 @@ export function App() {
           <h1 className="text-sm font-semibold text-foreground">
             Voice Assistant
           </h1>
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title="Paleta de comandos (⌘K)"
+          >
+            ⌘K
+          </button>
         </div>
 
         <button
@@ -473,6 +520,26 @@ export function App() {
             )}
           </div>
         </main>
+      </div>
+
+      {/* Command palette — trigger hidden off-screen; dialog renders in portal */}
+      <div className="absolute -left-[9999px] -top-[9999px]" aria-hidden="true">
+        <CommandPalette
+          open={commandOpen}
+          onOpenChange={setCommandOpen}
+          items={commandItems}
+          groupOrder={["Ações", "Conversas"]}
+          onSelect={handleCommandSelect}
+          triggerLabel="Buscar conversas…"
+          triggerShortcut="⌘K"
+          inputPlaceholder="Buscar conversa…"
+          dialogLabel="Conversas"
+          footerHints={[
+            { keys: "↑↓", label: "navegar" },
+            { keys: "↵", label: "abrir" },
+            { keys: "esc", label: "fechar" },
+          ]}
+        />
       </div>
     </div>
   );
