@@ -16,11 +16,6 @@ import { Button } from "@/components/ui/button";
 import * as api from "@/lib/api";
 import type { Conversation, Message } from "@/types";
 
-interface ToastEntry {
-  id: number;
-  message: string;
-}
-
 export function App() {
   // ── Core state ────────────────────────────────────────────────
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -33,16 +28,18 @@ export function App() {
 
   // ── Toast queue ───────────────────────────────────────────────
   const { toasts, add: addToast, dismiss: dismissToast } = useToastStack();
-  const [toastEntries, setToastEntries] = useState<ToastEntry[]>([]);
+  const toastDataRef = useRef<Map<number, string>>(new Map());
+  const [toastVersion, setToastVersion] = useState(0);
 
   const showError = useCallback(
     (message: string) => {
       const id = addToast();
-      setToastEntries((prev) => [...prev, { id, message }]);
-      // Auto-dismiss after 5 s
+      toastDataRef.current.set(id, message);
+      setToastVersion((v) => v + 1);
       setTimeout(() => {
         dismissToast(id);
-        setToastEntries((prev) => prev.filter((t) => t.id !== id));
+        toastDataRef.current.delete(id);
+        setToastVersion((v) => v + 1);
       }, 5000);
     },
     [addToast, dismissToast],
@@ -51,7 +48,8 @@ export function App() {
   const dismissToastEntry = useCallback(
     (id: number) => {
       dismissToast(id);
-      setToastEntries((prev) => prev.filter((t) => t.id !== id));
+      toastDataRef.current.delete(id);
+      setToastVersion((v) => v + 1);
     },
     [dismissToast],
   );
@@ -110,23 +108,23 @@ export function App() {
     async (id: string) => {
       try {
         await api.deleteConversation(id);
-        setConversations((prev) => {
-          const filtered = prev.filter((c) => c.id !== id);
-          if (activeConvId === id) {
-            setActiveConvId(filtered[0]?.id ?? null);
-          }
-          return filtered;
-        });
+        const wasActive = activeConvId === id;
+        setConversations((prev) => prev.filter((c) => c.id !== id));
+        if (wasActive) {
+          const remaining = conversations.filter((c) => c.id !== id);
+          setActiveConvId(remaining[0]?.id ?? null);
+        }
       } catch {
         showError("Erro ao deletar conversa.");
       }
     },
-    [activeConvId, showError],
+    [activeConvId, conversations, showError],
   );
 
   const handleSelect = useCallback((id: string) => {
     setActiveConvId(id);
     setAudioUrl(null);
+    setTextInput("");
   }, []);
 
   // ── Microphone ────────────────────────────────────────────────
@@ -150,13 +148,15 @@ export function App() {
   // ── File upload / remove ──────────────────────────────────────
   const handleFileUpload = useCallback(
     async (fileList: FileList) => {
-      if (!activeConvId) return;
+      const convId = activeConvId;
+      if (!convId) return;
       try {
-        await api.uploadFiles(activeConvId, Array.from(fileList));
-        const updated = await api.getConversation(activeConvId);
-        setConversations((prev) =>
-          prev.map((c) => (c.id === activeConvId ? updated : c)),
-        );
+        await api.uploadFiles(convId, Array.from(fileList));
+        const updated = await api.getConversation(convId);
+        setConversations((prev) => {
+          if (!prev.some((c) => c.id === convId)) return prev;
+          return prev.map((c) => (c.id === convId ? updated : c));
+        });
       } catch {
         showError("Erro ao fazer upload de arquivos.");
       }
@@ -165,10 +165,10 @@ export function App() {
   );
 
   const handleFileRemove = useCallback(
-    async (/* attachmentId */ _id: string) => {
-      // File removal not yet available in the API — noop
+    (_id: string) => {
+      showError("Remoção de arquivos ainda não disponível.");
     },
-    [],
+    [showError],
   );
 
   // ── Loading screen ────────────────────────────────────────────
@@ -193,13 +193,13 @@ export function App() {
       {/* Toast stack — fixed bottom-centre */}
       <ToastStack>
         {toasts.map((toastId, idx) => {
-          const entry = toastEntries.find((t) => t.id === toastId);
+          const message = toastDataRef.current.get(toastId) ?? "";
           return (
             <Toast key={toastId}>
               <div className="rounded-lg border border-border bg-card p-4 shadow-lg">
                 <div className="flex items-start gap-3">
                   <p className="flex-1 text-sm text-foreground">
-                    {entry?.message ?? ""}
+                    {message}
                   </p>
                   <button
                     type="button"
