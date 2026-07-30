@@ -1,7 +1,24 @@
+import { readFile } from "node:fs/promises";
+import { validateAttachmentPath } from "../middleware/sandbox.js";
+
 export async function executeReadFile(
   filename: string,
-  convId: string
+  convId: string,
 ): Promise<string> {
-  // STUB — implemented in F5-03
-  throw new Error("read_file not yet implemented");
+  try {
+    const filePath = validateAttachmentPath(convId, filename);
+    const content = await readFile(filePath, "utf-8");
+
+    // Truncate large files to ~8000 chars
+    if (content.length > 8000) {
+      return content.slice(0, 8000) + "\n\n... [truncated]";
+    }
+    return content;
+  } catch (error: any) {
+    if (error?.code === "ENOENT") {
+      return `File not found: ${filename}`;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return `Read file failed: ${message}`;
+  }
 }
