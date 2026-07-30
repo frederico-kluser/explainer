@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { chat, synthesize, type ChatMessage } from "../services/openrouter.js";
 import { executeToolCall } from "../services/tool-executor.js";
 import { getConversation, updateConversation } from "../services/storage.js";
+import { shouldSummarize, summarizeConversation } from "../services/summarizer.js";
 import { TOOLS } from "../tools/index.js";
 import { ensureDir } from "../middleware/sandbox.js";
 import type { Message, ToolCall } from "../types/index.js";
@@ -94,17 +95,52 @@ chatRouter.post("/", async (req: Request, res: Response, next) => {
       await updateConversation(conversation_id, { messages: conv.messages });
     }
 
-    // ── 2. Build messages array for LLM ───────────────────────────────────
+    // ── 2. Optionally summarize long conversations ──────────────────────
+
+    let summary: string | undefined;
+
+    if (shouldSummarize(conv.messages)) {
+      try {
+        summary = await summarizeConversation(conv.messages);
+      } catch (summarizeErr) {
+        console.error(
+          "Summarization failed, proceeding without summary:",
+          summarizeErr instanceof Error
+            ? summarizeErr.message
+            : String(summarizeErr),
+        );
+      }
+    }
+
+    // ── 3. Build messages array for LLM ───────────────────────────────────
 
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
-      ...conv.messages.map((m) => ({
+    ];
+
+    if (summary) {
+      // Persist summary in conversation metadata
+      conv.metadata = { ...(conv.metadata || {}), summary };
+      await updateConversation(conversation_id, { metadata: conv.metadata });
+
+      messages.push({
+        role: "system",
+        content: `[Previous conversation summary]: ${summary}`,
+      });
+    }
+
+    const recentMessages = summary
+      ? conv.messages.slice(-16)
+      : conv.messages;
+
+    messages.push(
+      ...recentMessages.map((m) => ({
         role: m.role,
         content: m.content,
         ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
         ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
       })),
-    ];
+    );
 
     // Set SSE response headers
     res.setHeader("Content-Type", "text/event-stream");
