@@ -10,6 +10,7 @@ import {
 import { Skeleton } from "@/components/motion-ui/skeleton";
 import { ConversationTabs } from "@/components/ui/ConversationTabs";
 import { ChatBubble } from "@/components/ui/ChatBubble";
+import { ToolTrace } from "@/components/ui/ToolTrace";
 import { MicButton, type MicButtonState } from "@/components/ui/MicButton";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { FilePanel } from "@/components/ui/FilePanel";
@@ -17,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import * as api from "@/lib/api";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useConversation } from "@/hooks/useConversation";
-import { useAutoPlay } from "@/hooks/useAutoPlay";
+import { useFileAttachment } from "@/hooks/useFileAttachment";
 import type { Conversation, Message } from "@/types";
 import {
   CommandPalette,
@@ -45,10 +46,14 @@ export function App() {
   const {
     messages: chatMessages,
     isLoading: chatLoading,
+    isLoadingHistory,
     sendMessage,
     error: chatError,
   } = useConversation(activeConvId);
 
+  // The newest spoken reply gets the dedicated player at the bottom of the
+  // screen, which is also the single owner of auto-play. It used to share that
+  // job with a headless useAutoPlay hook, so every reply played twice at once.
   const latestAudioUrl = useMemo(() => {
     for (let i = chatMessages.length - 1; i >= 0; i--) {
       const msg = chatMessages[i];
@@ -59,7 +64,6 @@ export function App() {
     return null;
   }, [chatMessages]);
 
-  useAutoPlay(latestAudioUrl);
   const [textInput, setTextInput] = useState("");
 
   // ── Toast queue ───────────────────────────────────────────────
@@ -99,6 +103,18 @@ export function App() {
     if (chatError) showError(chatError);
   }, [chatError, showError]);
 
+  // ── Attachments ───────────────────────────────────────────────
+  const {
+    files: attachments,
+    uploadFiles: uploadAttachments,
+    removeFile: removeAttachment,
+    error: attachmentError,
+  } = useFileAttachment(activeConvId);
+
+  useEffect(() => {
+    if (attachmentError) showError(attachmentError);
+  }, [attachmentError, showError]);
+
   const transition = useMotionUITransition("gentle");
 
   // ── Command palette state ──────────────────────────────────
@@ -123,9 +139,6 @@ export function App() {
     ],
     [conversations],
   );
-
-  // ── Derived ───────────────────────────────────────────────────
-  const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
 
   // ── Fetch conversations (extracted for retry) ──────────────────
   const initRef = useRef<{ cancelled: boolean }>({ cancelled: false });
@@ -200,6 +213,7 @@ export function App() {
   const handleSelect = useCallback((id: string) => {
     setActiveConvId(id);
     setTextInput("");
+    inputRef.current?.focus();
   }, []);
 
   // ── Command palette handler (after handleCreate/handleSelect) ─
@@ -216,8 +230,11 @@ export function App() {
 
   // ── Microphone ────────────────────────────────────────────────
   const handleMicStart = useCallback(() => {
+    // Same race as the text input: don't start a turn the history load could
+    // still overwrite.
+    if (isLoadingHistory) return;
     startRecording();
-  }, [startRecording]);
+  }, [isLoadingHistory, startRecording]);
 
   const handleMicStop = useCallback(async () => {
     setMicProcessing(true);
@@ -236,36 +253,30 @@ export function App() {
 
   // ── Text input ────────────────────────────────────────────────
   const handleTextSubmit = useCallback(() => {
-    if (!textInput.trim() || !activeConvId) return;
+    // Sending before the history lands would race the fetch that populates it.
+    if (!textInput.trim() || !activeConvId || isLoadingHistory) return;
     const text = textInput.trim();
     setTextInput("");
-    sendMessage(text);
-  }, [textInput, activeConvId, sendMessage]);
+    void sendMessage(text);
+    inputRef.current?.focus();
+  }, [textInput, activeConvId, isLoadingHistory, sendMessage]);
 
   // ── File upload / remove ──────────────────────────────────────
+  // Both entry points (sidebar panel and the paperclip) go through the same
+  // hook, which refetches the server's list and reports its own failures.
   const handleFileUpload = useCallback(
-    async (fileList: FileList) => {
-      const convId = activeConvId;
-      if (!convId) return;
-      try {
-        await api.uploadFiles(convId, Array.from(fileList));
-        const updated = await api.getConversation(convId);
-        setConversations((prev) => {
-          if (!prev.some((c) => c.id === convId)) return prev;
-          return prev.map((c) => (c.id === convId ? updated : c));
-        });
-      } catch {
-        showError("Erro ao fazer upload de arquivos.");
-      }
+    (fileList: FileList) => {
+      if (!activeConvId) return;
+      void uploadAttachments(fileList);
     },
-    [activeConvId, showError],
+    [activeConvId, uploadAttachments],
   );
 
   const handleFileRemove = useCallback(
-    (_id: string) => {
-      showError("Remoção de arquivos ainda não disponível.");
+    (id: string) => {
+      void removeAttachment(id);
     },
-    [showError],
+    [removeAttachment],
   );
 
   // ── Loading / error screen ────────────────────────────────────
@@ -435,10 +446,8 @@ export function App() {
           {activeConvId && (
             <div className="border-t border-border px-3 py-3">
               <FilePanel
-                files={activeConv?.attachments ?? []}
-                onUpload={(fileList) => {
-                  void handleFileUpload(fileList);
-                }}
+                files={attachments}
+                onUpload={handleFileUpload}
                 onRemove={handleFileRemove}
               />
             </div>
@@ -453,14 +462,20 @@ export function App() {
               <div className="mx-auto max-w-3xl space-y-4">
                 {chatMessages.map((msg: Message) => (
                   <div key={msg.id}>
-                    {msg.content && (
-                      <ChatBubble
-                        role={msg.role === "user" ? "user" : "assistant"}
-                        content={msg.content}
-                        timestamp={msg.timestamp}
-                      />
-                    )}
-                    {msg.audio_url && (
+                    {/* Tool traces carry raw grep/web output — never render
+                        them as something the assistant said. */}
+                    {msg.role === "tool"
+                      ? msg.content && <ToolTrace content={msg.content} />
+                      : msg.content && (
+                          <ChatBubble
+                            role={msg.role === "user" ? "user" : "assistant"}
+                            content={msg.content}
+                            timestamp={msg.timestamp}
+                          />
+                        )}
+                    {/* The newest clip already has the player at the bottom of
+                        the screen; a second one here would fetch it twice. */}
+                    {msg.audio_url && msg.audio_url !== latestAudioUrl && (
                       <div className="mt-2">
                         <AudioPlayer
                           audioUrl={msg.audio_url}
@@ -488,8 +503,8 @@ export function App() {
                   </motion.div>
                 )}
               </div>
-            ) : chatLoading ? (
-              /* ── Empty-state streaming skeleton ───────────────── */
+            ) : chatLoading || isLoadingHistory ? (
+              /* ── Empty-state skeleton (history load or first reply) ── */
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -501,7 +516,7 @@ export function App() {
                   <Skeleton className="mx-auto mb-1 h-3 w-64" animate />
                   <Skeleton className="mx-auto h-3 w-40" animate />
                   <p className="mt-3 text-sm text-muted-foreground">
-                    Digitando...
+                    {chatLoading ? "Digitando..." : "Carregando conversa..."}
                   </p>
                 </div>
               </motion.div>
@@ -544,6 +559,7 @@ export function App() {
                   ref={inputRef}
                   type="text"
                   value={textInput}
+                  disabled={isLoadingHistory}
                   onChange={(e) => setTextInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
@@ -551,13 +567,17 @@ export function App() {
                       handleTextSubmit();
                     }
                   }}
-                  placeholder="Digite sua pergunta..."
-                  className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                  placeholder={
+                    isLoadingHistory
+                      ? "Carregando conversa..."
+                      : "Digite sua pergunta..."
+                  }
+                  className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
                 />
                 <button
                   type="button"
                   onClick={handleTextSubmit}
-                  disabled={!textInput.trim()}
+                  disabled={!textInput.trim() || isLoadingHistory}
                   className="inline-flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                   aria-label="Enviar"
                 >
@@ -574,7 +594,7 @@ export function App() {
                   className="hidden"
                   onChange={(e) => {
                     if (e.target.files && e.target.files.length > 0) {
-                      void handleFileUpload(e.target.files);
+                      handleFileUpload(e.target.files);
                       e.target.value = "";
                     }
                   }}

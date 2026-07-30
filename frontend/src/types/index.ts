@@ -34,10 +34,12 @@ export interface Conversation {
   updated_at: string;
   messages?: Message[];
   attachments?: Attachment[];
+  metadata?: Record<string, unknown>;
 }
 
 export type ChatEvent =
   | { type: "tool_call"; tool: string; args: Record<string, unknown> }
   | { type: "content"; text: string }
   | { type: "audio"; url: string }
+  | { type: "error"; error: string }
   | { type: "done" };

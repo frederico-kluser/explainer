@@ -6,18 +6,55 @@ import {
   updateConversation,
   deleteConversation,
 } from "../services/storage.js";
+import { isUUID } from "../middleware/sandbox.js";
+import type { Conversation } from "../types/index.js";
 
 const router = Router();
 
-// UUID v4 regex for route parameter validation
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 function validateUUID(id: string): void {
-  if (!UUID_RE.test(id)) {
+  if (!isUUID(id)) {
     const err = new Error(`Invalid conversation ID: ${id}`) as Error & { status: number };
     err.status = 400;
     throw err;
   }
+}
+
+// Only these fields may be set from the outside. `messages` and `attachments`
+// are owned by /api/chat and /api/files — a PATCH must not be able to rewrite
+// or wipe them.
+function pickPatchableFields(body: unknown): Partial<Conversation> {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    const err = new Error("Request body must be a JSON object") as Error & { status: number };
+    err.status = 400;
+    throw err;
+  }
+
+  const source = body as Record<string, unknown>;
+  const patch: Partial<Conversation> = {};
+
+  if (source.title !== undefined) {
+    if (typeof source.title !== "string" || source.title.trim().length === 0) {
+      const err = new Error('"title" must be a non-empty string') as Error & { status: number };
+      err.status = 400;
+      throw err;
+    }
+    patch.title = source.title;
+  }
+
+  if (source.metadata !== undefined) {
+    if (
+      source.metadata === null ||
+      typeof source.metadata !== "object" ||
+      Array.isArray(source.metadata)
+    ) {
+      const err = new Error('"metadata" must be an object') as Error & { status: number };
+      err.status = 400;
+      throw err;
+    }
+    patch.metadata = source.metadata as Record<string, unknown>;
+  }
+
+  return patch;
 }
 
 // GET /api/conversations
@@ -66,7 +103,10 @@ router.get("/:id", async (req, res, next) => {
 router.patch("/:id", async (req, res, next) => {
   try {
     validateUUID(req.params.id!);
-    const conversation = await updateConversation(req.params.id!, req.body);
+    const conversation = await updateConversation(
+      req.params.id!,
+      pickPatchableFields(req.body),
+    );
     res.json(conversation);
   } catch (err) {
     next(err);

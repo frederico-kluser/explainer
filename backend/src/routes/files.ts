@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { extname } from "node:path";
@@ -44,6 +44,50 @@ const MIME_MAP: Record<string, string> = {
 function mimeFromFilename(filename: string): string {
   const ext = extname(filename).toLowerCase();
   return MIME_MAP[ext] ?? "application/octet-stream";
+}
+
+// Types the browser can render without being able to run script in this
+// origin. Everything else — notably text/html and image/svg+xml, both of
+// which execute JavaScript — is forced to download instead of render, so an
+// uploaded file can never become stored XSS against the API origin.
+const INLINE_SAFE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/ogg",
+  "video/mp4",
+  "video/webm",
+  "text/plain",
+]);
+
+/**
+ * Build a Content-Disposition value that is safe to put in a header:
+ * quoted ASCII fallback plus the RFC 5987 UTF-8 form.
+ */
+function contentDisposition(mode: "inline" | "attachment", name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  return `${mode}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
+function sendAttachmentFile(
+  res: Response,
+  data: Buffer,
+  storedName: string,
+  downloadName: string,
+): void {
+  const mime = mimeFromFilename(storedName);
+  const inline = INLINE_SAFE_TYPES.has(mime);
+
+  res.setHeader("Content-Type", inline ? mime : "application/octet-stream");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader(
+    "Content-Disposition",
+    contentDisposition(inline ? "inline" : "attachment", downloadName),
+  );
+  res.send(data);
 }
 
 // ── POST /api/files/:convId — Upload one or more files ──────────────────────
@@ -172,9 +216,15 @@ router.get("/:convId/:filename", async (req, res, next) => {
 
     try {
       const data = await readFile(filePath);
-      const mime = mimeFromFilename(filename);
-      res.setHeader("Content-Type", mime);
-      res.send(data);
+
+      // Prefer the name the user uploaded for the download prompt; fall back
+      // to the stored UUID name when there is no metadata for it.
+      const conversation = await getConversation(convId);
+      const known = (conversation?.attachments ?? []).find(
+        (a) => a.filename === filename,
+      );
+
+      sendAttachmentFile(res, data, filename, known?.original_name ?? filename);
     } catch (err: unknown) {
       if (
         typeof err === "object" &&
@@ -189,6 +239,27 @@ router.get("/:convId/:filename", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// ── Multer error handling ───────────────────────────────────────────────────
+// MulterError carries no `status`, so without this an oversized upload reaches
+// the generic handler and comes back as 500 "Internal server error".
+
+router.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      res.status(413).json({ error: "File too large. Maximum size is 50 MB." });
+      return;
+    }
+    if (err.code === "LIMIT_FILE_COUNT" || err.code === "LIMIT_UNEXPECTED_FILE") {
+      res.status(400).json({ error: "Too many files. Maximum is 20 per upload." });
+      return;
+    }
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
+  next(err);
 });
 
 export default router;
