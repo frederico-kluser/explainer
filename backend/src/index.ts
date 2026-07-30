@@ -24,15 +24,15 @@ app.get("/api/health", (_req, res) => {
 });
 
 // --- Routes ---
-// Placeholders — route modules will be created in later cards (F1-04, F1-05, F4-02, F4-03, F6-01)
+import conversationsRouter from "./routes/conversations.js";
+// Placeholders — route modules will be created in later cards (F1-05, F4-02, F4-03, F6-01)
 //
-// import conversationsRouter from "./routes/conversations.js";
 // import sttRouter        from "./routes/stt.js";
 // import chatRouter       from "./routes/chat.js";
 // import ttsRouter        from "./routes/tts.js";
 // import filesRouter      from "./routes/files.js";
-//
-// app.use("/api/conversations", conversationsRouter);
+
+app.use("/api/conversations", conversationsRouter);
 // app.use("/api/stt",            sttRouter);
 // app.use("/api/chat",           chatRouter);
 // app.use("/api/tts",            ttsRouter);
