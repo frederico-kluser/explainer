@@ -26,15 +26,15 @@ app.get("/api/health", (_req, res) => {
 // --- Routes ---
 import conversationsRouter from "./routes/conversations.js";
 import filesRouter from "./routes/files.js";
-// Placeholders — route modules will be created in later cards (F4-02, F4-03, F6-01)
+import sttRouter from "./routes/stt.js";
+// Placeholders — route modules will be created in later cards (F4-03, F6-01)
 //
-// import sttRouter from "./routes/stt.js";
 // import chatRouter from "./routes/chat.js";
 // import ttsRouter from "./routes/tts.js";
 
 app.use("/api/conversations", conversationsRouter);
 app.use("/api/files", filesRouter);
-// app.use("/api/stt",  sttRouter);
+app.use("/api/stt",  sttRouter);
 // app.use("/api/chat", chatRouter);
 // app.use("/api/tts",  ttsRouter);
 
