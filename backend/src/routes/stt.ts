@@ -1,7 +1,8 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { writeFile, unlink } from "node:fs/promises";
 import { transcribe } from "../services/openrouter.js";
 
@@ -41,8 +42,12 @@ router.post("/", upload.single("audio"), async (req, res, next) => {
 
     // --- Save buffer to temp file ---
 
-    const ext = file.originalname.split(".").pop() || "webm";
-    tempPath = join(tmpdir(), `stt-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
+    // The extension goes straight into a filesystem path, so take it from
+    // extname (not a raw split) and accept only a plain alphanumeric suffix —
+    // an originalname like `a./../../etc/x` must not steer the write.
+    const rawExt = extname(file.originalname).toLowerCase();
+    const ext = /^\.[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : ".webm";
+    tempPath = join(tmpdir(), `stt-${randomUUID()}${ext}`);
     await writeFile(tempPath, file.buffer);
 
     // --- Transcribe ---

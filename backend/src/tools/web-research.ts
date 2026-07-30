@@ -3,11 +3,36 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+// Mirrors the limits advertised to the model in tools/index.ts.
+const MAX_QUERY_LENGTH = 400;
+const MIN_RESULTS = 1;
+const MAX_RESULTS = 10;
+const DEFAULT_RESULTS = 5;
+
+function clampResults(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_RESULTS;
+  return Math.min(MAX_RESULTS, Math.max(MIN_RESULTS, Math.trunc(value)));
+}
+
 export async function executeWebResearch(
   query: string,
-  maxResults: number = 5,
+  maxResults?: number,
 ): Promise<string> {
-  const args = ["search", query, "--max", String(maxResults), "--json"];
+  const trimmed = query.trim();
+  if (trimmed.length === 0) {
+    return "Web research failed: query is empty.";
+  }
+
+  // The model is told the cap but does not always respect it; enforce both
+  // bounds here so nothing unbounded reaches the CLI.
+  const safeQuery = trimmed.slice(0, MAX_QUERY_LENGTH);
+  const args = [
+    "search",
+    safeQuery,
+    "--max",
+    String(clampResults(maxResults)),
+    "--json",
+  ];
 
   try {
     const { stdout, stderr } = await execFileAsync("surf-research-skill", args, {
@@ -25,9 +50,20 @@ export async function executeWebResearch(
     // Format results as readable text for the LLM
     return formatResearchResults(result);
   } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return (
+        "Web research is unavailable: the `surf-research-skill` CLI is not " +
+        "installed or not on PATH. Answer from what you already know, and say " +
+        "that you could not search the web."
+      );
+    }
     const message = error instanceof Error ? error.message : String(error);
     return `Web research failed: ${message}`;
   }
+}
+
+function isNodeError(err: unknown): err is Error & { code?: string } {
+  return err instanceof Error && "code" in err;
 }
 
 function formatResearchResults(data: Record<string, unknown>): string {

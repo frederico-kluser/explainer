@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { Play, Pause } from "lucide-react";
 import { ProgressBar } from "@/components/motion-ui/progress-bar";
 import { useMotionUITransition } from "@/components/motion-ui/ui-theme";
+import { getAudioContext, loadAudioBuffer, resumeAudioContext } from "@/lib/audio";
 
 export interface AudioPlayerProps {
   audioUrl: string;
@@ -12,6 +13,7 @@ export interface AudioPlayerProps {
 }
 
 function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, "0")}`;
@@ -25,144 +27,146 @@ export function AudioPlayer({ audioUrl, autoPlay = false }: AudioPlayerProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const startTimeRef = useRef<number>(0);
-  const offsetRef = useRef<number>(0);
-  const animFrameRef = useRef<number>(0);
   const bufferRef = useRef<AudioBuffer | null>(null);
-  const attemptedAutoPlayRef = useRef(false);
+  const startedAtRef = useRef(0); // context clock when the source started
+  const offsetRef = useRef(0); // where in the buffer that source began
+  const animFrameRef = useRef(0);
+
+  // Identity of the current audioUrl "run". App renders a single player whose
+  // `audioUrl` prop changes as new replies arrive, so an async load started for
+  // the previous URL can still be in flight. A plain mounted-flag cannot tell
+  // those apart — it goes back to true on the next run and lets the stale
+  // continuation install the wrong buffer. Comparing tokens can.
+  const runRef = useRef<object>({});
 
   const stopSource = useCallback(() => {
-    if (sourceRef.current) {
-      try {
-        sourceRef.current.stop();
-      } catch {
-        // already stopped
-      }
-      sourceRef.current.disconnect();
-      sourceRef.current = null;
+    const source = sourceRef.current;
+    if (!source) return;
+    // Detach first: `stop()` also fires onended, which would otherwise be
+    // indistinguishable from the track finishing on its own.
+    source.onended = null;
+    try {
+      source.stop();
+    } catch {
+      // already stopped
     }
+    source.disconnect();
+    sourceRef.current = null;
   }, []);
 
-  const updateTime = useCallback(() => {
-    if (!audioContextRef.current || !startTimeRef.current) return;
+  const tick = useCallback(() => {
+    if (!sourceRef.current) return;
     const elapsed =
-      audioContextRef.current.currentTime - startTimeRef.current +
-      offsetRef.current;
+      offsetRef.current + (getAudioContext().currentTime - startedAtRef.current);
     setCurrentTime(elapsed);
-    if (elapsed >= duration) {
-      setPlaying(false);
-      setCurrentTime(0);
-      offsetRef.current = 0;
-      stopSource();
-      return;
-    }
-    animFrameRef.current = requestAnimationFrame(updateTime);
-  }, [duration, stopSource]);
+    animFrameRef.current = requestAnimationFrame(tick);
+  }, []);
 
-  const playAudio = useCallback(
-    (startOffset = 0) => {
-      const ctx = audioContextRef.current;
-      const buffer = bufferRef.current;
-      if (!ctx || !buffer) return;
+  const ensureBuffer = useCallback(async (): Promise<AudioBuffer | null> => {
+    if (bufferRef.current) return bufferRef.current;
 
-      stopSource();
-
-      if (ctx.state === "suspended") {
-        ctx.resume();
+    const run = runRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const buffer = await loadAudioBuffer(audioUrl);
+      if (runRef.current !== run) return null; // a newer URL took over
+      bufferRef.current = buffer;
+      setDuration(buffer.duration);
+      return buffer;
+    } catch (err) {
+      if (runRef.current === run) {
+        setError(err instanceof Error ? err.message : "Failed to load audio");
       }
+      return null;
+    } finally {
+      if (runRef.current === run) setLoading(false);
+    }
+  }, [audioUrl]);
+
+  const startPlayback = useCallback(
+    async (startOffset: number) => {
+      const run = runRef.current;
+
+      const buffer = await ensureBuffer();
+      if (!buffer || runRef.current !== run) return;
+
+      const ctx = await resumeAudioContext();
+      if (runRef.current !== run) return;
+
+      stopSource();
 
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(ctx.destination);
-
       source.onended = () => {
-        setPlaying(false);
-        setCurrentTime(0);
+        sourceRef.current = null;
+        cancelAnimationFrame(animFrameRef.current);
+        if (runRef.current !== run) return;
         offsetRef.current = 0;
+        setCurrentTime(0);
+        setPlaying(false);
       };
 
-      source.start(0, startOffset);
+      source.start(0, Math.min(startOffset, buffer.duration));
       sourceRef.current = source;
-      startTimeRef.current = ctx.currentTime;
+      startedAtRef.current = ctx.currentTime;
       offsetRef.current = startOffset;
       setPlaying(true);
 
       cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = requestAnimationFrame(updateTime);
+      animFrameRef.current = requestAnimationFrame(tick);
     },
-    [stopSource, updateTime]
+    [ensureBuffer, stopSource, tick],
   );
 
-  const pauseAudio = useCallback(() => {
-    if (!audioContextRef.current) return;
-    const elapsed =
-      audioContextRef.current.currentTime -
-      startTimeRef.current +
-      offsetRef.current;
-    offsetRef.current = elapsed;
+  const pausePlayback = useCallback(() => {
+    if (!sourceRef.current) return;
+    offsetRef.current +=
+      getAudioContext().currentTime - startedAtRef.current;
     stopSource();
     cancelAnimationFrame(animFrameRef.current);
     setPlaying(false);
   }, [stopSource]);
 
-  // Load audio
+  // Reset for a new URL. Only auto-playing players fetch up front; the rest
+  // load on first press, so a long thread doesn't download every reply at once.
   useEffect(() => {
-    let cancelled = false;
-    const loadAudio = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const ctx = new AudioContext();
-        audioContextRef.current = ctx;
+    const run = {};
+    runRef.current = run;
 
-        const response = await fetch(audioUrl);
-        if (!response.ok) throw new Error("Failed to fetch audio");
-        const arrayBuffer = await response.arrayBuffer();
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    bufferRef.current = null;
+    offsetRef.current = 0;
+    setCurrentTime(0);
+    setDuration(0);
+    setPlaying(false);
+    setError(null);
+    setLoading(false);
 
-        if (cancelled) return;
-        bufferRef.current = audioBuffer;
-        setDuration(audioBuffer.duration);
-        setLoading(false);
-
-        if (autoPlay && !attemptedAutoPlayRef.current) {
-          attemptedAutoPlayRef.current = true;
-          playAudio(0);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to load audio"
-          );
-          setLoading(false);
-        }
-      }
-    };
-
-    loadAudio();
+    if (autoPlay) {
+      void startPlayback(0);
+    }
 
     return () => {
-      cancelled = true;
+      // A token nobody holds: everything still in flight for this URL bails out.
+      runRef.current = {};
       stopSource();
       cancelAnimationFrame(animFrameRef.current);
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-      }
+      // The AudioContext is shared app-wide — never close it here.
     };
-  }, [audioUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+    // startPlayback/stopSource are stable for a given audioUrl.
+  }, [audioUrl, autoPlay]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToggle = () => {
     if (playing) {
-      pauseAudio();
+      pausePlayback();
     } else {
-      playAudio(offsetRef.current);
+      void startPlayback(offsetRef.current);
     }
   };
 
-  const progress = duration > 0 ? currentTime / duration : 0;
+  const progress = duration > 0 ? Math.min(currentTime / duration, 1) : 0;
 
   if (error) {
     return (
@@ -199,7 +203,7 @@ export function AudioPlayer({ audioUrl, autoPlay = false }: AudioPlayerProps) {
         <ProgressBar value={progress} size="sm" />
         <div className="flex justify-between text-xs text-muted-foreground">
           <span>{formatTime(currentTime)}</span>
-          <span>{formatTime(duration)}</span>
+          <span>{duration > 0 ? formatTime(duration) : "--:--"}</span>
         </div>
       </div>
     </div>

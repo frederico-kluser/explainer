@@ -7,6 +7,8 @@ export interface FileAttachmentState {
   uploadFiles: (fileList: FileList | File[]) => Promise<void>;
   removeFile: (attachmentId: string) => Promise<void>;
   isLoading: boolean;
+  error: string | null;
+  clearError: () => void;
 }
 
 export function useFileAttachment(
@@ -14,9 +16,14 @@ export function useFileAttachment(
 ): FileAttachmentState {
   const [files, setFiles] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const clearError = useCallback(() => setError(null), []);
 
   // Load files when convId changes
   useEffect(() => {
+    setError(null);
+
     if (!convId) {
       setFiles([]);
       return;
@@ -34,6 +41,7 @@ export function useFileAttachment(
       } catch {
         if (!cancelled) {
           setFiles([]);
+          setError("Não foi possível carregar os arquivos anexados.");
         }
       } finally {
         if (!cancelled) {
@@ -42,7 +50,7 @@ export function useFileAttachment(
       }
     }
 
-    load();
+    void load();
 
     return () => {
       cancelled = true;
@@ -54,19 +62,20 @@ export function useFileAttachment(
       if (!convId) return;
 
       setIsLoading(true);
+      setError(null);
       try {
-        const filesArr = Array.from(fileList);
-        const uploaded = await api.uploadFiles(convId, filesArr);
+        await api.uploadFiles(convId, Array.from(fileList));
 
-        // Refresh full list to stay in sync with server
-        const refreshed = await api.listFiles(convId);
-        setFiles(refreshed);
-
-        // If the API returned the uploaded files, we could also merge
-        // but fetching the full list is safer for consistency.
-        void uploaded;
-      } catch {
-        // Error silently handled; list remains as-is
+        // Refresh the full list to stay in sync with the server.
+        setFiles(await api.listFiles(convId));
+      } catch (err) {
+        // A silent failure here looked exactly like a successful upload of
+        // zero files; say so instead.
+        setError(
+          err instanceof Error && err.message
+            ? `Erro ao enviar arquivos: ${err.message}`
+            : "Erro ao enviar arquivos.",
+        );
       } finally {
         setIsLoading(false);
       }
@@ -75,10 +84,10 @@ export function useFileAttachment(
   );
 
   const removeFile = useCallback(async (_attachmentId: string) => {
-    // File removal not yet implemented in the API
-    // eslint-disable-next-line no-console
-    console.warn("Em breve: remoção de arquivos ainda não disponível.");
+    // No DELETE endpoint exists yet — surface that in the UI rather than
+    // logging to a console nobody is watching.
+    setError("Remoção de arquivos ainda não disponível.");
   }, []);
 
-  return { files, uploadFiles, removeFile, isLoading };
+  return { files, uploadFiles, removeFile, isLoading, error, clearError };
 }

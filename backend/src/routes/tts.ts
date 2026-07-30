@@ -25,9 +25,9 @@ router.post("/", async (req, res, next) => {
     }
 
     // Synthesize
-    let buffer: Buffer;
+    let audio: Awaited<ReturnType<typeof synthesize>>;
     try {
-      buffer = await synthesize(text);
+      audio = await synthesize(text);
     } catch (synthErr) {
       const message = synthErr instanceof Error ? synthErr.message : String(synthErr);
       const err = new Error(`TTS failed: ${message}`) as Error & { status: number };
@@ -35,11 +35,11 @@ router.post("/", async (req, res, next) => {
       throw err;
     }
 
-    // Send audio response
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.setHeader("Content-Length", buffer.length);
+    // Send audio response — the container depends on the TTS provider.
+    res.setHeader("Content-Type", audio.contentType);
+    res.setHeader("Content-Length", audio.buffer.length);
     res.setHeader("Cache-Control", "no-cache");
-    res.send(buffer);
+    res.send(audio.buffer);
   } catch (err) {
     next(err);
   }

@@ -19,5 +19,20 @@ export function errorHandler(
     console.error("[error-handler]", err);
   }
 
+  // A streaming response (SSE) has already sent its headers and possibly part
+  // of the body — writing a status or a JSON envelope now would throw
+  // ERR_HTTP_HEADERS_SENT. Report the failure in-band and close the stream.
+  if (res.headersSent) {
+    if (!res.writableEnded) {
+      try {
+        res.write(`data: ${JSON.stringify({ type: "error", error: message })}\n\n`);
+      } catch {
+        // Socket already gone — nothing left to do.
+      }
+      res.end();
+    }
+    return;
+  }
+
   res.status(status).json({ error: message });
 }

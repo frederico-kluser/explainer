@@ -110,6 +110,7 @@ export async function transcribe(audio: Blob): Promise<{ text: string }> {
 export async function* chat(
   conversationId: string,
   message?: string,
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
   const response = await fetch("/api/chat", {
     method: "POST",
@@ -118,6 +119,7 @@ export async function* chat(
       conversation_id: conversationId,
       ...(message !== undefined ? { message } : {}),
     }),
+    signal,
   })
 
   if (!response.ok) {
@@ -136,6 +138,9 @@ export async function* chat(
       yield event
     }
   } finally {
+    // Abort tears the stream down; cancel() is what releases the connection
+    // when the consumer stops early (component unmount, conversation switch).
+    await reader.cancel().catch(() => {})
     reader.releaseLock()
   }
 }

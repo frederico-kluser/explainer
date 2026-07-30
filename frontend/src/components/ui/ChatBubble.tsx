@@ -11,16 +11,27 @@ export interface ChatBubbleProps {
 
 function renderContent(content: string) {
   return content.split("\n\n").map((paragraph, i) => (
-    <p key={i} className={i > 0 ? "mt-2" : ""}>
+    <p key={i} className={`whitespace-pre-wrap ${i > 0 ? "mt-2" : ""}`}>
       {paragraph}
     </p>
   ));
+}
+
+/** ISO 8601 in, "14:32" out. Returns null for anything unparseable. */
+function formatClock(timestamp: string): string | null {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export function ChatBubble({ role, content, timestamp }: ChatBubbleProps) {
   const transition = useMotionUITransition("gentle");
 
   const isUser = role === "user";
+  const clock = timestamp ? formatClock(timestamp) : null;
 
   return (
     <motion.div
@@ -39,10 +50,14 @@ export function ChatBubble({ role, content, timestamp }: ChatBubbleProps) {
       >
         {renderContent(content)}
       </motion.div>
-      {timestamp && (
-        <span className="mt-1 px-1 text-xs text-muted-foreground">
-          {timestamp}
-        </span>
+      {clock && (
+        <time
+          dateTime={timestamp}
+          title={new Date(timestamp!).toLocaleString("pt-BR")}
+          className="mt-1 px-1 text-xs text-muted-foreground"
+        >
+          {clock}
+        </time>
       )}
     </motion.div>
   );
