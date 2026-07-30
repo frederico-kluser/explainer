@@ -8,6 +8,7 @@ export interface Conversation {
   updated_at: string; // ISO 8601
   messages: Message[];
   attachments: Attachment[]; // Reference only, not file content
+  metadata?: Record<string, unknown>; // Optional metadata (e.g. summary)
 }
 
 export interface Message {
