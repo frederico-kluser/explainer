@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion } from "motion/react";
 import { Plus, Paperclip, Send } from "lucide-react";
 import { useMotionUITransition } from "@/components/motion-ui/ui-theme";
@@ -14,14 +14,43 @@ import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { FilePanel } from "@/components/ui/FilePanel";
 import { Button } from "@/components/ui/button";
 import * as api from "@/lib/api";
+import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { useConversation } from "@/hooks/useConversation";
+import { useAutoPlay } from "@/hooks/useAutoPlay";
 import type { Conversation, Message } from "@/types";
 
 export function App() {
   // ── Core state ────────────────────────────────────────────────
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
-  const [micState, setMicState] = useState<MicButtonState>("idle");
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  // ── Hooks ─────────────────────────────────────────────────
+  const { isRecording, startRecording, stopRecording, error: micError } =
+    useAudioRecorder();
+  const [micProcessing, setMicProcessing] = useState(false);
+  const micState: MicButtonState = isRecording
+    ? "recording"
+    : micProcessing
+      ? "processing"
+      : "idle";
+
+  const {
+    messages: chatMessages,
+    isLoading: chatLoading,
+    sendMessage,
+    error: chatError,
+  } = useConversation(activeConvId);
+
+  const latestAudioUrl = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      const msg = chatMessages[i];
+      if (msg?.audio_url) {
+        return msg.audio_url;
+      }
+    }
+    return null;
+  }, [chatMessages]);
+
+  useAutoPlay(latestAudioUrl);
   const [textInput, setTextInput] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -53,6 +82,15 @@ export function App() {
     },
     [dismissToast],
   );
+
+  // ── Error effects ──────────────────────────────────────────
+  useEffect(() => {
+    if (micError) showError(micError);
+  }, [micError, showError]);
+
+  useEffect(() => {
+    if (chatError) showError(chatError);
+  }, [chatError, showError]);
 
   const transition = useMotionUITransition("gentle");
 
@@ -123,27 +161,36 @@ export function App() {
 
   const handleSelect = useCallback((id: string) => {
     setActiveConvId(id);
-    setAudioUrl(null);
     setTextInput("");
   }, []);
 
   // ── Microphone ────────────────────────────────────────────────
   const handleMicStart = useCallback(() => {
-    setMicState("recording");
-  }, []);
+    startRecording();
+  }, [startRecording]);
 
-  const handleMicStop = useCallback(() => {
-    setMicState("processing");
-    // TODO: wire real STT + chat when those features are ready
-    setTimeout(() => setMicState("idle"), 2000);
-  }, []);
+  const handleMicStop = useCallback(async () => {
+    setMicProcessing(true);
+    try {
+      const blob = await stopRecording();
+      const { text } = await api.transcribe(blob);
+      setMicProcessing(false);
+      sendMessage(text);
+    } catch (err: unknown) {
+      setMicProcessing(false);
+      const message =
+        err instanceof Error ? err.message : "Erro ao processar áudio.";
+      showError(message);
+    }
+  }, [stopRecording, sendMessage, showError]);
 
   // ── Text input ────────────────────────────────────────────────
   const handleTextSubmit = useCallback(() => {
     if (!textInput.trim() || !activeConvId) return;
-    // TODO: wire chat API
+    const text = textInput.trim();
     setTextInput("");
-  }, [textInput, activeConvId]);
+    sendMessage(text);
+  }, [textInput, activeConvId, sendMessage]);
 
   // ── File upload / remove ──────────────────────────────────────
   const handleFileUpload = useCallback(
@@ -286,9 +333,9 @@ export function App() {
         <main className="flex min-w-0 flex-1 flex-col">
           {/* Message list */}
           <div className="flex-1 overflow-y-auto p-4">
-            {activeConv?.messages && activeConv.messages.length > 0 ? (
+            {chatMessages.length > 0 ? (
               <div className="mx-auto max-w-3xl space-y-4">
-                {activeConv.messages.map((msg: Message) => (
+                {chatMessages.map((msg: Message) => (
                   <div key={msg.id}>
                     {msg.content && (
                       <ChatBubble
@@ -307,7 +354,36 @@ export function App() {
                     )}
                   </div>
                 ))}
+                {chatLoading && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={transition}
+                    className="flex items-start"
+                  >
+                    <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="size-2 animate-pulse rounded-full bg-current" />
+                        Processando…
+                      </span>
+                    </div>
+                  </motion.div>
+                )}
               </div>
+            ) : chatLoading ? (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={transition}
+                className="flex h-full items-center justify-center"
+              >
+                <div className="max-w-sm text-center">
+                  <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                    <span className="size-2 animate-pulse rounded-full bg-current" />
+                    Processando…
+                  </span>
+                </div>
+              </motion.div>
             ) : (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
@@ -385,14 +461,14 @@ export function App() {
             </div>
 
             {/* Audio player for current utterance */}
-            {audioUrl && (
+            {latestAudioUrl && (
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={transition}
                 className="mx-auto mt-3 max-w-3xl"
               >
-                <AudioPlayer audioUrl={audioUrl} autoPlay />
+                <AudioPlayer audioUrl={latestAudioUrl} autoPlay />
               </motion.div>
             )}
           </div>
