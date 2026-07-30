@@ -28,14 +28,13 @@ import conversationsRouter from "./routes/conversations.js";
 import filesRouter from "./routes/files.js";
 import sttRouter from "./routes/stt.js";
 import ttsRouter from "./routes/tts.js";
-// Placeholders — route modules will be created in later cards (F6-01)
-//
-// import chatRouter from "./routes/chat.js";
+import chatRouter, { audioRouter as chatAudioRouter } from "./routes/chat.js";
 
 app.use("/api/conversations", conversationsRouter);
 app.use("/api/files", filesRouter);
 app.use("/api/stt",  sttRouter);
-// app.use("/api/chat", chatRouter);
+app.use("/api/chat", chatRouter);
+app.use("/api/files/audio", chatAudioRouter);
 app.use("/api/tts", ttsRouter);
 
 // --- Error handler (must be last) ---

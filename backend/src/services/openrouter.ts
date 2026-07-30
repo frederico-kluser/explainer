@@ -54,8 +54,10 @@ export async function transcribe(audioPath: string): Promise<string> {
 
 export type ChatMessage = Pick<
   Message,
-  "role" | "content" | "tool_calls" | "tool_call_id"
->;
+  "content" | "tool_calls" | "tool_call_id"
+> & {
+  role: "user" | "assistant" | "tool" | "system";
+};
 
 export async function chat(
   messages: ChatMessage[],
