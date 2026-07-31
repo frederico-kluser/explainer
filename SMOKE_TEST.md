@@ -11,6 +11,9 @@
 ## Testes
 
 ### 1. Inicialização
+- [ ] `npm run dev` na raiz → sobe backend (3001) e frontend (5173) juntos;
+      Ctrl+C derruba os dois. Para subir separado: `npm run dev:backend` /
+      `npm run dev:frontend`
 - [ ] `cd backend && npm run dev` → servidor na porta 3001
 - [ ] `cd frontend && npm run dev` → Vite na porta 5173
 - [ ] Abrir http://localhost:5173 → layout carrega sem erros no console
