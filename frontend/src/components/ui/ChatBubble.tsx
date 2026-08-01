@@ -35,6 +35,10 @@ export function ChatBubble({ role, content, timestamp }: ChatBubbleProps) {
 
   return (
     <motion.div
+      // Who said it, in the DOM: the transcript is the only place a test can
+      // check that the model actually spoke, rather than that some text merely
+      // appeared on the page.
+      data-role={role}
       className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}

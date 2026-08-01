@@ -3,10 +3,8 @@ import { resolve } from "node:path";
 
 // Side-effect module: import it before anything that reads process.env.
 //
-// `.env.example` and the playbook both tell the operator to put
-// OPENROUTER_API_KEY in a `.env`, but nothing was ever reading that file, so the
-// key never reached the process. Node's built-in loader keeps the dependency
-// count at zero; variables already present in the environment win.
+// Node's built-in loader keeps the dependency count at zero; variables already
+// present in the environment win over the file.
 
 const CANDIDATES = [
   resolve(import.meta.dirname, "..", ".env"), // backend/.env
@@ -25,9 +23,10 @@ for (const path of CANDIDATES) {
   }
 }
 
-if (!process.env.OPENROUTER_API_KEY) {
+if (!process.env.OPENAI_API_KEY) {
   console.warn(
-    "[env] OPENROUTER_API_KEY is not set — STT, chat and TTS will fail. " +
+    "[env] OPENAI_API_KEY is not set — the realtime session cannot be minted " +
+      "and web search will fall back to surf-research-skill. " +
       "Copy .env.example to .env and fill it in.",
   );
 }

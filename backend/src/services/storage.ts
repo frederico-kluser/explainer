@@ -1,4 +1,5 @@
-import { readFile, writeFile, unlink, readdir, rm } from "node:fs/promises";
+import { readFile, writeFile, rename, unlink, readdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import {
   validateConversationPath,
@@ -7,7 +8,7 @@ import {
   ensureDir,
   isUUID,
 } from "../middleware/sandbox.js";
-import type { Conversation, Message } from "../types/index.js";
+import type { Attachment, Conversation, Message } from "../types/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -21,6 +22,23 @@ function notFoundError(message: string): Error & { status: number } {
 
 function isoNow(): string {
   return new Date().toISOString();
+}
+
+/** Write data to `targetPath` atomically via temp-file + rename. */
+async function atomicWrite(targetPath: string, data: string): Promise<void> {
+  const tmpPath = `${targetPath}.tmp.${randomUUID()}`;
+  try {
+    await writeFile(tmpPath, data, "utf-8");
+    await rename(tmpPath, targetPath);
+  } catch (err) {
+    // Best-effort cleanup: don't shadow the original error.
+    try {
+      await unlink(tmpPath);
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
 }
 
 // A conversation is one JSON file rewritten whole, so two overlapping
@@ -129,7 +147,7 @@ export async function createConversation(title: string): Promise<Conversation> {
   // Ensure the directory exists before writing
   await ensureDir(validateConversationPath());
 
-  await writeFile(validateConversationPath(id), JSON.stringify(conversation, null, 2), "utf-8");
+  await atomicWrite(validateConversationPath(id), JSON.stringify(conversation, null, 2));
 
   return conversation;
 }
@@ -156,9 +174,13 @@ export async function updateConversation(
       id: existing.id, // id is immutable
       created_at: existing.created_at, // created_at is immutable
       updated_at: isoNow(),
+      metadata:
+        data.metadata !== undefined
+          ? { ...existing.metadata, ...data.metadata }
+          : existing.metadata,
     };
 
-    await writeFile(validateConversationPath(id), JSON.stringify(updated, null, 2), "utf-8");
+    await atomicWrite(validateConversationPath(id), JSON.stringify(updated, null, 2));
 
     return updated;
   });
@@ -193,7 +215,43 @@ export async function appendMessages(
       updated_at: isoNow(),
     };
 
-    await writeFile(validateConversationPath(id), JSON.stringify(updated, null, 2), "utf-8");
+    await atomicWrite(validateConversationPath(id), JSON.stringify(updated, null, 2));
+
+    return updated;
+  });
+}
+
+/**
+ * Append attachments to a conversation, deduplicating by filename or id.
+ * Operates under the per-conversation lock to prevent races.
+ *
+ * @returns The conversation as persisted, including the newly added attachments.
+ * @throws 404 when the conversation does not exist.
+ */
+export async function appendAttachments(
+  id: string,
+  attachments: Attachment[],
+): Promise<Conversation> {
+  return withConversationLock(id, async () => {
+    const existing = await getConversation(id);
+    if (!existing) {
+      throw notFoundError(`Conversation not found: ${id}`);
+    }
+
+    const current = existing.attachments ?? [];
+    const existingNames = new Set(current.map((a) => a.filename));
+    const existingIds = new Set(current.map((a) => a.id));
+    const toAdd = attachments.filter(
+      (a) => !existingNames.has(a.filename) && !existingIds.has(a.id),
+    );
+
+    const updated: Conversation = {
+      ...existing,
+      attachments: [...current, ...toAdd],
+      updated_at: isoNow(),
+    };
+
+    await atomicWrite(validateConversationPath(id), JSON.stringify(updated, null, 2));
 
     return updated;
   });
@@ -209,29 +267,31 @@ export async function appendMessages(
  * @throws 404 when the conversation does not exist.
  */
 export async function deleteConversation(id: string): Promise<void> {
-  const filePath = validateConversationPath(id);
+  return withConversationLock(id, async () => {
+    const filePath = validateConversationPath(id);
 
-  try {
-    await unlink(filePath);
-  } catch (err: unknown) {
-    if (isNodeError(err) && err.code === "ENOENT") {
-      throw notFoundError(`Conversation not found: ${id}`);
-    }
-    throw err;
-  }
-
-  // Best effort: the record is already gone, so a stray leftover must not turn
-  // a successful delete into an error. Both paths are sandbox-validated.
-  for (const dir of [validateAttachmentPath(id), validateAudioPath(id)]) {
     try {
-      await rm(dir, { recursive: true, force: true });
-    } catch (err) {
-      console.warn(
-        `[storage] Could not remove ${dir}:`,
-        err instanceof Error ? err.message : String(err),
-      );
+      await unlink(filePath);
+    } catch (err: unknown) {
+      if (isNodeError(err) && err.code === "ENOENT") {
+        throw notFoundError(`Conversation not found: ${id}`);
+      }
+      throw err;
     }
-  }
+
+    // Best effort: the record is already gone, so a stray leftover must not turn
+    // a successful delete into an error. Both paths are sandbox-validated.
+    for (const dir of [validateAttachmentPath(id), validateAudioPath(id)]) {
+      try {
+        await rm(dir, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(
+          `[storage] Could not remove ${dir}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ done
 
 if [ ! -f .env ] && [ ! -f backend/.env ]; then
   echo "${C_DIM}[dev] nenhum .env encontrado — 'cp .env.example .env' e preencha"
-  echo "      OPENROUTER_API_KEY, senão STT, chat e TTS vão falhar.${C_OFF}"
+  echo "      OPENAI_API_KEY, senão a sessão de voz não abre.${C_OFF}"
 fi
 
 # --- Servidores -----------------------------------------------------------

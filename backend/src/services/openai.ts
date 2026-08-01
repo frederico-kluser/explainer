@@ -1,0 +1,282 @@
+// Thin HTTP layer over the two OpenAI surfaces this app needs:
+//
+//   1. Realtime  — minting the ephemeral client secret the browser uses to open
+//                  its own WebRTC session. The standard API key never leaves
+//                  this process.
+//   2. Responses — the `web_search` hosted tool. The Realtime API does *not*
+//                  expose web search (its only tool types are `function` and
+//                  `mcp`), so search runs here and comes back as a function
+//                  result.
+//
+// Plain `fetch` rather than the SDK: the realtime client-secrets endpoint moves
+// faster than the npm package does, and a 20-line wrapper is easier to pin to
+// the documented request shape than a version range is.
+
+import type { TextUsage } from "./pricing.js";
+
+const OPENAI_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+
+export const REALTIME_MODEL =
+  process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1";
+export const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
+export const SEARCH_MODEL = process.env.OPENAI_SEARCH_MODEL || "gpt-5.2";
+export const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-5.2-mini";
+
+export class OpenAIError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OpenAIError";
+  }
+}
+
+function apiKey(): string {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) {
+    throw new OpenAIError(500, "OPENAI_API_KEY is not set on the server");
+  }
+  return key;
+}
+
+async function request<T>(
+  path: string,
+  body: unknown,
+  timeoutMs = 60_000,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${OPENAI_BASE}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      // OpenAI errors are JSON, but a gateway in front of it may not be.
+      let detail = text.slice(0, 500);
+      try {
+        const parsed = JSON.parse(text) as { error?: { message?: string } };
+        if (parsed.error?.message) detail = parsed.error.message;
+      } catch {
+        // keep the raw body
+      }
+      throw new OpenAIError(response.status, detail);
+    }
+
+    return JSON.parse(text) as T;
+  } catch (err) {
+    if (err instanceof OpenAIError) throw err;
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new OpenAIError(504, `OpenAI request timed out after ${timeoutMs}ms`);
+    }
+    throw new OpenAIError(502, err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Realtime: ephemeral client secrets
+// ---------------------------------------------------------------------------
+
+/** The session config accepted by both `client_secrets` and `session.update`. */
+export interface RealtimeSessionConfig {
+  type: "realtime";
+  model: string;
+  instructions: string;
+  output_modalities?: string[];
+  audio?: Record<string, unknown>;
+  tools?: unknown[];
+  tool_choice?: string;
+  [key: string]: unknown;
+}
+
+export interface ClientSecret {
+  value: string;
+  expires_at: number;
+  session: Record<string, unknown>;
+}
+
+/**
+ * Mint a short-lived token the browser can use to open its own WebRTC peer
+ * connection to the realtime model.
+ *
+ * Everything that costs money or grants access — model, voice, instructions,
+ * tool list — is fixed here, server-side. A tampered browser can burn the
+ * session it was given, and nothing else.
+ */
+export async function mintRealtimeClientSecret(
+  session: RealtimeSessionConfig,
+  safetyIdentifier?: string,
+): Promise<ClientSecret> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const response = await fetch(`${OPENAI_BASE}/realtime/client_secrets`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        "Content-Type": "application/json",
+        // A stable, privacy-preserving per-user id. The Realtime API binds it to
+        // the token, so the browser never has to send it.
+        ...(safetyIdentifier
+          ? { "OpenAI-Safety-Identifier": safetyIdentifier }
+          : {}),
+      },
+      body: JSON.stringify({ session }),
+      signal: controller.signal,
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      let detail = text.slice(0, 500);
+      try {
+        const parsed = JSON.parse(text) as { error?: { message?: string } };
+        if (parsed.error?.message) detail = parsed.error.message;
+      } catch {
+        // keep the raw body
+      }
+      throw new OpenAIError(response.status, detail);
+    }
+
+    return JSON.parse(text) as ClientSecret;
+  } catch (err) {
+    if (err instanceof OpenAIError) throw err;
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new OpenAIError(504, "Minting the realtime session timed out");
+    }
+    throw new OpenAIError(502, err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Responses: hosted web search
+// ---------------------------------------------------------------------------
+
+interface ResponsesPayload {
+  status?: string;
+  model?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number };
+  };
+  output?: Array<{
+    type?: string;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      annotations?: Array<{ type?: string; url?: string; title?: string }>;
+    }>;
+  }>;
+}
+
+export interface WebSearchResult {
+  text: string;
+  citations: Array<{ title: string; url: string }>;
+  /** Token usage, so the caller can put a price on the answer. */
+  usage: TextUsage;
+  model: string;
+  /** How many hosted search calls were billed ($10 per 1000). */
+  search_calls: number;
+}
+
+/**
+ * Answer `query` from the live web using OpenAI's hosted `web_search` tool.
+ *
+ * Returns prose plus the `url_citation` annotations, because the model on the
+ * other end is going to *speak* this: a synthesised answer with two or three
+ * named sources reads aloud far better than ten raw search hits.
+ */
+export async function webSearch(
+  query: string,
+  { timeoutMs = 45_000 }: { timeoutMs?: number } = {},
+): Promise<WebSearchResult> {
+  const payload = await request<ResponsesPayload>(
+    "/responses",
+    {
+      model: SEARCH_MODEL,
+      tools: [{ type: "web_search" }],
+      tool_choice: "auto",
+      reasoning: { effort: "low" },
+      max_output_tokens: 900,
+      input:
+        "Pesquise na web e responda de forma curta e objetiva, em portugues do Brasil, " +
+        "em no maximo cinco frases, citando as fontes.\n\nPergunta: " +
+        query,
+    },
+    timeoutMs,
+  );
+
+  const citations: Array<{ title: string; url: string }> = [];
+  const chunks: string[] = [];
+  let searchCalls = 0;
+
+  for (const item of payload.output ?? []) {
+    if (item.type === "web_search_call") {
+      searchCalls += 1;
+      continue;
+    }
+    if (item.type !== "message") continue;
+    for (const part of item.content ?? []) {
+      if (part.text) chunks.push(part.text);
+      for (const annotation of part.annotations ?? []) {
+        if (annotation.type === "url_citation" && annotation.url) {
+          citations.push({
+            title: annotation.title ?? annotation.url,
+            url: annotation.url,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    text: chunks.join("\n").trim(),
+    citations,
+    usage: payload.usage ?? {},
+    model: payload.model ?? SEARCH_MODEL,
+    search_calls: searchCalls,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Responses: plain text completion (titles, session re-seeding)
+// ---------------------------------------------------------------------------
+
+/** One-shot text completion. Used for conversation titles and summaries. */
+export async function completeText(
+  prompt: string,
+  { maxTokens = 400, timeoutMs = 30_000 }: { maxTokens?: number; timeoutMs?: number } = {},
+): Promise<string> {
+  const payload = await request<ResponsesPayload>(
+    "/responses",
+    {
+      model: TEXT_MODEL,
+      input: prompt,
+      max_output_tokens: maxTokens,
+    },
+    timeoutMs,
+  );
+
+  const chunks: string[] = [];
+  for (const item of payload.output ?? []) {
+    if (item.type !== "message") continue;
+    for (const part of item.content ?? []) {
+      if (part.text) chunks.push(part.text);
+    }
+  }
+  return chunks.join("\n").trim();
+}

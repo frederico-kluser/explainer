@@ -1,11 +1,12 @@
 node_modules/
 dist/
+*.tsbuildinfo
 .env
 *.log
 .DS_Store
 
-# Voice assistant data (local only)
-~/.local/share/voice-assistant/
+# Voice assistant data — stored at $XDG_DATA_HOME/voice-assistant
+# (typically ~/.local/share/voice-assistant on Linux)
 
 # Editor
 .idea/

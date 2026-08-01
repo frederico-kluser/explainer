@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, isAbsolute, resolve, sep } from "node:path";
+import { basename, resolve, sep } from "node:path";
 
 /**
  * Error thrown when a file path is outside the allowed sandbox directories.
@@ -15,17 +15,40 @@ export class SandboxError extends Error {
   }
 }
 
-// This module lives at <root>/backend/src/middleware/ under tsx and at
-// <root>/backend/dist/middleware/ once compiled — three levels up either way.
-const PROJECT_ROOT = resolve(import.meta.dirname, "..", "..", "..");
-const DATA_ROOT = resolve(homedir(), ".local", "share", "voice-assistant");
+export const DATA_ROOT = resolve(homedir(), ".local", "share", "voice-assistant");
 
-/** Every directory the server is ever allowed to touch. */
-export const ALLOWED_DIRS = [
-  resolve(PROJECT_ROOT, "backend"),
-  resolve(PROJECT_ROOT, "frontend"),
-  DATA_ROOT,
-];
+/** Where GitHub sources get shallow-cloned. Throwaway; safe to delete. */
+export const REPO_CACHE_ROOT = resolve(DATA_ROOT, "repos");
+
+/**
+ * The docs that describe this machine. `~/Projects/config` ships an agent skill
+ * (`project-router`) that indexes every hardware/shell/GPU/AI-agent document in
+ * the tree, which is exactly what the `machine` source needs.
+ */
+export const MACHINE_DOCS_ROOT = resolve(
+  process.env.EXPLAINER_MACHINE_DOCS || resolve(homedir(), "Projects", "config"),
+);
+
+/**
+ * Directories a *local* repo source is allowed to live under.
+ *
+ * The user picks the repo, but the model picks the paths inside it — so the
+ * outer boundary is fixed here rather than trusted from either of them.
+ */
+export function allowedSourceRoots(): string[] {
+  const extra = (process.env.EXPLAINER_REPO_ROOTS || "")
+    .split(":")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => resolve(p.replace(/^~(?=$|\/)/, homedir())));
+
+  return [
+    REPO_CACHE_ROOT,
+    MACHINE_DOCS_ROOT,
+    resolve(homedir(), "Projects"),
+    ...extra,
+  ];
+}
 
 // RFC 4122 v4 — the exact shape uuidv4() produces.
 const UUID_RE =
@@ -34,11 +57,6 @@ const UUID_RE =
 /** True when `value` is a v4 UUID. Shared by the routes so they all agree. */
 export function isUUID(value: string): boolean {
   return UUID_RE.test(value);
-}
-
-/** True when `child` is `parent` itself or sits underneath it. */
-function isInside(child: string, parent: string): boolean {
-  return child === parent || child.startsWith(parent + sep);
 }
 
 /**
@@ -57,52 +75,54 @@ function assertPlainFilename(filename: string): void {
   }
 }
 
+/** True when `candidate` is `root` itself or lives underneath it. */
+export function isInsideRoot(root: string, candidate: string): boolean {
+  const normalizedRoot = resolve(root);
+  const normalized = resolve(candidate);
+  return (
+    normalized === normalizedRoot ||
+    normalized.startsWith(normalizedRoot.endsWith(sep) ? normalizedRoot : normalizedRoot + sep)
+  );
+}
+
 /**
- * Resolve `requestedPath` relative to `baseAllowedDir`, ensuring the result
- * stays inside the allowed directory.
+ * Resolve `relativePath` against `root` and refuse anything that escapes it.
+ * `relativePath` comes from the model, so `../../../etc/passwd` is the expected
+ * input, not the exceptional one.
  *
- * @throws {SandboxError} if the base is outside the sandbox, or the path is
- *         absolute, contains a `..` segment, or escapes the base.
+ * @throws {SandboxError} when the result would land outside `root`.
  */
-export function resolveSafePath(
-  requestedPath: string,
-  baseAllowedDir: string,
-): string {
-  const resolvedBase = resolve(baseAllowedDir);
+export function resolveInsideRoot(root: string, relativePath: string): string {
+  if (relativePath.includes("\0")) {
+    throw new SandboxError("Invalid path");
+  }
+  // An absolute path would make resolve() ignore `root` entirely.
+  const cleaned = relativePath.replace(/^[/\\]+/, "");
+  const resolved = resolve(root, cleaned);
+  if (!isInsideRoot(root, resolved)) {
+    throw new SandboxError(`Path escapes the source directory: ${relativePath}`);
+  }
+  return resolved;
+}
 
-  if (!ALLOWED_DIRS.some((dir) => isInside(resolvedBase, dir))) {
+/**
+ * Validate a directory the user asked us to treat as a source root.
+ *
+ * @throws {SandboxError} when it is not under one of `allowedSourceRoots()`.
+ */
+export function assertAllowedSourceRoot(dir: string): string {
+  const resolved = resolve(dir.replace(/^~(?=$|\/)/, homedir()));
+  const roots = allowedSourceRoots();
+  if (!roots.some((root) => isInsideRoot(root, resolved))) {
     throw new SandboxError(
-      `Base directory is outside the sandbox: ${baseAllowedDir}`,
+      `Directory is outside the allowed roots (${roots.join(", ")}): ${resolved}`,
     );
   }
-
-  if (requestedPath.includes("\0")) {
-    throw new SandboxError("Path contains a NUL byte");
-  }
-  if (isAbsolute(requestedPath)) {
-    throw new SandboxError(`Absolute paths are not allowed: ${requestedPath}`);
-  }
-  if (requestedPath.split(/[\\/]/).includes("..")) {
-    throw new SandboxError(`Path traversal is not allowed: ${requestedPath}`);
-  }
-
-  const resolved = resolve(resolvedBase, requestedPath);
-
-  if (!isInside(resolved, resolvedBase)) {
-    throw new SandboxError(
-      `Path escapes the allowed directory: ${requestedPath}`,
-    );
-  }
-
   return resolved;
 }
 
 /**
  * Build and validate the path where attachments for a conversation are stored.
- *
- * @param convId  Conversation UUID.
- * @param filename  Optional attachment filename (a single plain path segment).
- * @returns Absolute path under `<DATA_ROOT>/attachments/<convId>[/<filename>]`.
  *
  * @throws {SandboxError} if convId is not a UUID or filename is not a plain segment.
  */
@@ -128,18 +148,14 @@ export function validateAttachmentPath(
 /**
  * Build and validate the path for conversation JSON files.
  *
- * @param convId  Optional conversation UUID.  When omitted the directory path is returned.
- * @returns Absolute path — either `<DATA_ROOT>/conversations/<convId>.json`
- *          or `<DATA_ROOT>/conversations/` (directory).
- *
  * @throws {SandboxError} if convId is not a UUID.
  */
 export function validateConversationPath(convId?: string): string {
   if (convId !== undefined) {
     if (!isUUID(convId)) {
-      throw new SandboxError(
-        `Invalid conversation ID (expected UUID): ${convId}`,
-      );
+      const err = new Error("Invalid conversation ID format") as Error & { status: number };
+      err.status = 400;
+      throw err;
     }
     return resolve(DATA_ROOT, "conversations", `${convId}.json`);
   }
@@ -148,15 +164,17 @@ export function validateConversationPath(convId?: string): string {
 }
 
 /**
- * Build and validate the path for generated TTS audio files.
+ * Path of the generated-audio directory for a conversation.
+ *
+ * The realtime model streams its voice over WebRTC, so nothing writes here any
+ * more — but conversations created by the old record/TTS pipeline still have
+ * files on disk, and deleting a conversation has to clean them up.
  *
  * @throws {SandboxError} if convId is not a UUID or filename is not a plain segment.
  */
 export function validateAudioPath(convId: string, filename?: string): string {
   if (!isUUID(convId)) {
-    throw new SandboxError(
-      `Invalid conversation ID (expected UUID): ${convId}`,
-    );
+    throw new SandboxError(`Invalid conversation ID (expected UUID): ${convId}`);
   }
 
   const parts = [DATA_ROOT, "audio", convId];

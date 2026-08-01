@@ -1,3 +1,13 @@
+> **Histórico — arquitetura substituída em 2026-08-01.**
+> Este playbook descreve a construção da versão original: gravar → Whisper →
+> DeepSeek com tool calling → TTS, tudo em turnos. O projeto foi reescrito sobre
+> a **OpenAI Realtime API** (conversa por voz sem latência, WebRTC direto do
+> browser) com ferramentas roteadas por fonte e agentes `pi` disparados em
+> segundo plano. Para a arquitetura atual, veja o [README](./README.md); para o
+> raciocínio e as fontes da migração, veja
+> `~/.claude/plans/explainer-realtime-voice-20260801-1820.md`.
+> O conteúdo abaixo permanece como registro do que existia antes.
+
 # Playbook — Construindo um assistente de voz local React + IA
 
 *Um plano operacional para construir uma aplicação local React/Node.js com entrada por microfone,
@@ -104,12 +114,19 @@ na resposta final (pós-tools), se aplicável. O fallback é non-streaming para 
 
 | Opção | Veredito | Por quê |
 |---|---|---|
-| OpenRouter TTS (melhor disponível) | ✅ **Escolhido** | Mistral e Google Gemini lideram em naturalidade. Single API key. |
+| Chat completions com audio output (`gpt-audio-mini`) | ✅ **Escolhido** | Unico caminho que o OpenRouter serve hoje. Produz PCM16 24 kHz; backend embrulha em WAV. Single API key. |
+| OpenRouter `/audio/speech` (Mistral, Gemini) | ⚠️ Fallback | Endpoint atualmente nao resolve nenhum modelo ("Model X does not exist"). Codigo existe como fallback para quando houver. |
 | ElevenLabs | ❌ Rejeitado | API key adicional; custo mais alto |
-| Browser SpeechSynthesis | ❌ Rejeitado | Vozes robóticas; sem controle de qualidade |
+| Browser SpeechSynthesis | ❌ Rejeitado | Vozes roboticas; sem controle de qualidade |
 
-**Decisão:** OpenRouter TTS, modelo selecionado dinamicamente (tentar Mistral, fallback Google).
-Formato de saída: MP3. Auto-play via AudioContext previamente desbloqueado.
+**Decisao:** `gpt-audio-mini` via chat completions com `audio` modality (`synthesizeViaChat()` em `openrouter.ts`).
+Formato de saida: PCM16 embrulhado em WAV (header de 44 bytes + dados raw). Auto-play via AudioContext previamente desbloqueado.
+
+A implementacao tambem suporta o endpoint `/audio/speech` classico como fallback
+(`synthesizeViaSpeechEndpoint()`), controlado por `OPENROUTER_TTS_MODE=speech`.
+No modo padrao (`chat`), o modelo recebe instrucoes para ler o texto verbatim;
+se ele responder conversacionalmente ("Claro! Estou ouvindo...") em vez de ler,
+o audio e rejeitado e o turno fica sem som.
 
 ### Frontend
 
@@ -205,110 +222,150 @@ DeepSeek v4 pro (com tools definidas)
 │  MediaRecorder │ AudioContext │ File System Access   │
 └──────────────┬──────────────────────────────────────┘
                │ HTTP + Server-Sent Events (streaming)
-┌──────────────▼──────────────────────────────────────┐
-│              Node.js Backend (Express)               │
-│  ┌────────┐ ┌────────┐ ┌────────┐ ┌─────────────┐  │
-│  │  /stt  │ │ /chat  │ │  /tts  │ │ /conversations│ │
-│  │Whisper │ │DeepSeek│ │OpenRtr │ │   CRUD       │  │
-│  └────────┘ └───┬────┘ └────────┘ └─────────────┘  │
-│                 │                                    │
-│  ┌──────────────▼───────────────────────────────┐   │
-│  │           Tool Executor                       │   │
-│  │  web_research → surf-research-skill           │   │
-│  │  search_files → find/grep (sandboxed)         │   │
-│  │  read_file    → fs.readFile (sandboxed)       │   │
-│  │  list_files   → fs.readdir (sandboxed)        │   │
-│  └──────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────┐   │
-│  │         Storage (filesystem JSON)            │   │
-│  │  ~/.local/share/voice-assistant/             │   │
-│  │    conversations/<id>.json                   │   │
-│  │    attachments/<conv-id>/*                   │   │
-│  └──────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────┘
+┌──────────────▼──────────────────────────────────────────────────┐
+│                  Node.js Backend (Express 5)                     │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌──────────┐ ┌────────────┐  │
+│  │  /stt  │ │ /chat  │ │  /tts  │ │ /files   │ │/conversations│ │
+│  │Whisper │ │DeepSeek│ │GPT AUD │ │upload/list│ │   CRUD+PATCH│ │
+│  │        │ │+tools  │ │  MINI  │ │  /read    │ │             │  │
+│  └────────┘ └───┬────┘ └───┬────┘ └──────────┘ └────────────┘  │
+│                 │          │                                     │
+│  ┌──────────────▼──────────▼────────────────────────────────┐   │
+│  │           Tool Executor                Audio serving      │   │
+│  │  web_research → surf-research-skill   /api/files/audio/   │   │
+│  │  search_files → find/grep (sandboxed)  :convId/:filename  │   │
+│  │  read_file    → fs.readFile (sandboxed)                   │   │
+│  │  list_files   → fs.readdir (sandboxed)                    │   │
+│  └───────────────────────────────────────────────────────────┘   │
+│  ┌───────────────────────────────────────────────────────────┐   │
+│  │              Storage (filesystem JSON)                     │   │
+│  │  ~/.local/share/voice-assistant/                           │   │
+│  │    conversations/<id>.json                                 │   │
+│  │    attachments/<conv-id>/*                                  │   │
+│  │    audio/<conv-id>/*.wav                                    │   │
+│  └───────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-## 9. Estrutura de diretórios
+## 9. Estrutura de diretorios
 
 ```
 voice-assistant/
-├── frontend/                  # React + Vite + Motion UI
+├── backend/
 │   ├── src/
-│   │   ├── App.tsx            # Layout raiz + temas
+│   │   ├── index.ts              # Entry point Express 5
+│   │   ├── load-env.ts           # Carrega .env no boot
+│   │   ├── middleware/
+│   │   │   ├── error-handler.ts  # Global error handler
+│   │   │   └── sandbox.ts        # Validacao de paths (UUID, traversal)
+│   │   ├── routes/
+│   │   │   ├── chat.ts           # POST /api/chat (SSE) + audio router
+│   │   │   ├── conversations.ts  # CRUD /api/conversations (inclui PATCH)
+│   │   │   ├── files.ts          # Upload/list/read /api/files
+│   │   │   ├── stt.ts            # POST /api/stt (Whisper)
+│   │   │   └── tts.ts            # POST /api/tts
+│   │   ├── services/
+│   │   │   ├── openrouter.ts     # Cliente OpenRouter (STT + LLM + TTS)
+│   │   │   ├── storage.ts        # Persistencia JSON (atomic writes)
+│   │   │   ├── summarizer.ts     # Sumarizacao inline (~8K token threshold)
+│   │   │   ├── tool-executor.ts  # Executor de tool calls
+│   │   │   └── transcript.ts     # Montagem do transcript para LLM
+│   │   ├── tools/
+│   │   │   ├── index.ts          # Definicoes das tools (schema OpenAI)
+│   │   │   ├── list-files.ts
+│   │   │   ├── read-file.ts
+│   │   │   ├── resolve-attachment.ts
+│   │   │   ├── search-files.ts
+│   │   │   └── web-research.ts
+│   │   └── types/
+│   │       └── index.ts          # Conversation, Message, ToolCall, Attachment
+│   ├── package.json              # express@^5, uuid@^11, multer, openai
+│   └── tsconfig.json
+├── frontend/
+│   ├── src/
+│   │   ├── App.tsx               # Layout raiz + temas
+│   │   ├── main.tsx              # Entry point React
+│   │   ├── index.css             # Tailwind + tokens globais
 │   │   ├── components/
-│   │   │   ├── ui/            # Wrappers Motion UI (nunca editar source instalado)
+│   │   │   ├── ui/               # Wrappers custom (editaveis)
+│   │   │   │   ├── AudioPlayer.tsx
+│   │   │   │   ├── button.tsx
 │   │   │   │   ├── ChatBubble.tsx
-│   │   │   │   ├── MicButton.tsx
-│   │   │   │   ├── FilePanel.tsx
 │   │   │   │   ├── ConversationTabs.tsx
-│   │   │   │   └── AudioPlayer.tsx
-│   │   │   └── motion-ui/    # Instalado pelo shadcn CLI (NÃO editar)
+│   │   │   │   ├── FilePanel.tsx
+│   │   │   │   ├── MicButton.tsx
+│   │   │   │   └── ToolTrace.tsx
+│   │   │   └── motion-ui/        # Instalado pelo shadcn CLI (NAO editar)
+│   │   │       ├── command-palette/
+│   │   │       ├── overlay/
+│   │   │       ├── progress-bar/
+│   │   │       ├── sheet/
+│   │   │       ├── skeleton/
+│   │   │       ├── smooth-tabs/
+│   │   │       ├── toast-stack/
+│   │   │       └── ui-theme/
 │   │   ├── hooks/
 │   │   │   ├── useAudioRecorder.ts
 │   │   │   ├── useConversation.ts
-│   │   │   ├── useAutoPlay.ts
 │   │   │   └── useFileAttachment.ts
 │   │   ├── lib/
-│   │   │   ├── api.ts         # Cliente HTTP para o backend
-│   │   │   └── audio.ts       # Utilitários de áudio
-│   │   ├── types/
-│   │   │   └── index.ts       # Tipos compartilhados
-│   │   └── motion.theme.ts    # Config de springs e transições
+│   │   │   ├── api.ts            # Cliente HTTP + SSE parser
+│   │   │   ├── audio.ts          # Utilitarios de audio
+│   │   │   └── utils.ts          # cn() helper
+│   │   └── types/
+│   │       └── index.ts          # Tipos compartilhados frontend
 │   ├── index.html
 │   ├── vite.config.ts
-│   ├── tailwind.config.ts
-│   └── package.json
-├── backend/
-│   ├── src/
-│   │   ├── index.ts           # Entry point Express
-│   │   ├── routes/
-│   │   │   ├── stt.ts         # POST /api/stt
-│   │   │   ├── chat.ts        # POST /api/chat (SSE streaming)
-│   │   │   ├── tts.ts         # POST /api/tts
-│   │   │   ├── conversations.ts # CRUD /api/conversations
-│   │   │   └── files.ts       # Upload/list/read /api/files
-│   │   ├── services/
-│   │   │   ├── openrouter.ts  # Cliente HTTP para OpenRouter (STT + LLM + TTS)
-│   │   │   ├── tool-executor.ts # Executor de tool calls
-│   │   │   └── storage.ts     # Persistência em JSON
-│   │   ├── tools/
-│   │   │   ├── index.ts       # Definições das tools (schema OpenAI)
-│   │   │   ├── web-research.ts
-│   │   │   ├── search-files.ts
-│   │   │   ├── read-file.ts
-│   │   │   └── list-files.ts
-│   │   ├── middleware/
-│   │   │   ├── sandbox.ts     # Validação de paths
-│   │   │   └── error-handler.ts
-│   │   └── types/
-│   │       └── index.ts
-│   └── package.json
-├── .env.example               # OPENROUTER_API_KEY=...
+│   ├── eslint.config.js          # ESLint flat config (v9 + typescript-eslint)
+│   ├── motion.theme.ts           # Config de springs e transicoes
+│   ├── components.json           # Config do shadcn
+│   └── package.json              # react@^19, vite@^6, motion@^12, tailwind@^4
+├── .env.example                  # Template de variaveis de ambiente
+├── .gitignore
+├── dev.sh                        # Sobe backend + frontend juntos
+├── validate.sh                   # Gate local: lint + typecheck + build
+├── package.json                  # Workspace root: scripts setup/dev/build
+├── PLAYBOOK.md
+├── SMOKE_TEST.md
 └── README.md
 ```
 
 ## 10. API endpoints
 
-| Method | Path | Body | Response | Descrição |
+| Method | Path | Body | Response | Descricao |
 |---|---|---|---|---|
-| `POST` | `/api/stt` | `multipart: audio` | `{ text: string }` | Envia WebM para Whisper |
-| `POST` | `/api/chat` | `{ conversation_id, message? }` | SSE stream | Inicia ciclo de chat (com tools) |
-| `POST` | `/api/tts` | `{ text: string }` | `audio/mpeg` | Sintetiza texto em fala |
+| `GET` | `/api/health` | — | `{ "status": "ok" }` | Health check |
+| `POST` | `/api/stt` | `multipart: audio` | `{ text: string }` | Envia audio para Whisper (max 25 MB) |
+| `POST` | `/api/chat` | `{ conversation_id, message? }` | SSE stream | Chat com tool calling (max 5 iteracoes) + TTS inline |
+| `POST` | `/api/tts` | `{ text: string }` | `audio/wav` (ou `audio/mpeg`) | Sintetiza texto em fala (max 4096 chars) |
 | `GET` | `/api/conversations` | — | `Conversation[]` | Lista conversas |
-| `POST` | `/api/conversations` | `{ title }` | `Conversation` | Cria nova conversa |
-| `GET` | `/api/conversations/:id` | — | `Conversation` | Obtém uma conversa |
-| `DELETE` | `/api/conversations/:id` | — | `204` | Remove conversa |
-| `POST` | `/api/files/:convId` | `multipart: files[]` | `FileInfo[]` | Upload de arquivos |
-| `GET` | `/api/files/:convId` | — | `FileInfo[]` | Lista arquivos |
-| `GET` | `/api/files/:convId/:filename` | — | `text/plain` | Lê conteúdo |
+| `POST` | `/api/conversations` | `{ title }` | `Conversation` (201) | Cria nova conversa |
+| `GET` | `/api/conversations/:id` | — | `Conversation` | Obtem uma conversa |
+| `PATCH` | `/api/conversations/:id` | `{ title?, metadata? }` | `Conversation` | Atualiza titulo e/ou metadata (rejeita `messages`, `attachments`) |
+| `DELETE` | `/api/conversations/:id` | — | `204 No Content` | Remove conversa |
+| `POST` | `/api/files/:convId` | `multipart: files[]` | `Attachment[]` (201) | Upload de arquivos (max 50 MB, 20 arquivos) |
+| `GET` | `/api/files/:convId` | — | `Attachment[]` | Lista arquivos da conversa |
+| `GET` | `/api/files/:convId/:filename` | — | Conteudo do arquivo | Le arquivo anexado (Content-Type + Content-Disposition) |
+| `GET` | `/api/files/audio/:convId/:filename` | — | `audio/wav` (ou conforme gerado) | Serve audio TTS gerado durante o chat |
 
-O endpoint `/api/chat` é o core. Ele:
-1. Carrega o histórico da conversa + nova mensagem (ou mensagem vazia se for continuar tool calls)
-2. Monta o prompt com tools definidas
-3. Chama OpenRouter (DeepSeek v4 pro) non-streaming
-4. Se resposta tem `tool_calls` → executa → adiciona ao histórico → volta ao passo 3
-5. Se resposta tem `content` → envia TTS + retorna texto + áudio
-6. Salva conversa atualizada
+O endpoint `/api/chat` e o core. Ele:
+1. Valida `conversation_id` (UUID), carrega a conversa, adiciona mensagem do usuario se fornecida
+2. Opcionalmente dispara sumarizacao inline se a conversa cruzar ~8K tokens estimados
+3. Monta o prompt com system message, summary opcional, e transcript das mensagens recentes
+4. Chama OpenRouter (DeepSeek v4 pro) non-streaming com tools definidas
+5. Se resposta tem `tool_calls` → executa (max 5 iteracoes) → adiciona ao historico → volta ao passo 4
+6. Se resposta tem `content` → envia texto via SSE → gera TTS → envia URL do audio → salva mensagem
+7. Eventos SSE: `tool_call`, `content`, `audio`, `error`, `done`
+
+### Eventos SSE do `/api/chat`
+
+| `type` | Payload | Significado |
+|---|---|---|
+| `tool_call` | `{ tool, args }` | O modelo disparou uma ferramenta |
+| `content` | `{ text }` | Resposta final em texto |
+| `audio` | `{ url }` | URL do audio TTS gerado |
+| `error` | `{ error }` | Erro durante o processamento |
+| `done` | — | Fim do stream |
 
 ## 11. Autoplay de áudio — a solução ✍️ prescrito
 
@@ -427,6 +484,7 @@ interface Conversation {
   updated_at: string;            // ISO 8601
   messages: Message[];
   attachments: Attachment[];     // Referência, não conteúdo
+  metadata?: Record<string, unknown>;  // Sumarização, flags internas (summary, summarized_count)
 }
 
 interface Message {
@@ -463,17 +521,16 @@ interface Attachment {
 
 DeepSeek v4 pro tem janela de contexto de 128K tokens. Conversas longas precisam de trimming.
 
-**Estratégia:** Sliding window com sumarização.
+**Estratégia real (implementada):** Threshold único de ~8K tokens estimados (caracteres ÷ 3 para
+PT-BR). Quando a conversa cruza esse limite, a sumarização é disparada **inline durante o turno** de
+chat — não em background, não em save. O sumário é injetado como segunda system message antes do
+transcript das mensagens recentes. Sumários anteriores são incorporados ao novo ("rolling summary").
 
-1. **Até 8K tokens:** mantém histórico completo
-2. **8K-32K tokens:** mantém últimas 16 mensagens + sumário das antigas injetado como system message
-3. **>32K tokens:** mantém últimas 8 mensagens + sumário + as 3 mensagens mais antigas com attachments citados
+O estimador usa `text.length / 3` (média de ~3 caracteres por token em português, vs ~4 em inglês).
+A sumarização é feita pelo próprio DeepSeek (chamada separada, sem tools).
 
-O sumário é gerado pelo próprio DeepSeek (chamada separada, sem tools) quando a conversa cruza 8K.
-O sumário anterior é preservado; cada novo sumário incorpora o anterior ("rolling summary").
-
-**⚠️ Limitação:** sumarização custa uma chamada extra de API. Só dispara no save da conversa, não em
-tempo real.
+**⚠️ Limitação:** sumarização custa uma chamada extra de API e acontece dentro do lock da conversa.
+Se falhar, o turno continua sem sumário (log de erro, sem quebrar o fluxo).
 
 ---
 
@@ -741,24 +798,21 @@ explícita, nunca "pulado".
 
 ## 21. Smoke test mínimo (F7-02)
 
-Checklist manual, executável na máquina local:
+Checklist manual completo em [SMOKE_TEST.md](./SMOKE_TEST.md). Resumo rápido:
 
-1. `cd backend && npm run dev` — servidor sobe na porta 3001
-2. `cd frontend && npm run dev` — Vite sobe na porta 5173
-3. Abrir `http://localhost:5173` → vê layout com tabs e área central
-4. Clicar "Nova conversa" → nova tab aparece
-5. Clicar botão de microfone → permissão de microfone solicitada
-6. Falar "Olá, teste de voz" → texto transcrito aparece no chat
-7. Resposta em áudio toca automaticamente
-8. Clicar "Anexar" → selecionar arquivo → arquivo aparece no painel
-9. Falar "leia o arquivo que anexei" → resposta referencia o conteúdo do arquivo
-10. Falar "pesquise sobre o tempo em São Paulo" → resposta menciona fontes web
+1. `npm run dev` — sobe backend (3001) + frontend (5173)
+2. Abrir `http://localhost:5173` → layout com tabs e área central
+3. Microfone → transcrição → resposta em áudio com autoplay
+4. Anexar arquivo → pedir leitura → resposta referencia conteúdo
+5. Pesquisa web → resposta menciona fontes
+
+O `validate.sh` cobre o gate automatizado: `npm run validate` (lint + typecheck + test + build).
 
 ## 22. Invariantes
 
 | Invariante | Verificação |
 |---|---|
-| Nenhum `.env` versionado | `grep -r "OPENROUTER_API_KEY" --include="*.ts" --include="*.json"` → vazio |
+| Nenhuma API key versionada | `git grep -E '(sk-[a-zA-Z0-9]{20,}|OPENROUTER_API_KEY=)' -- ':!.env' ':!.env.example'` → vazio |
 | `components/motion-ui/` sem edições manuais | `git diff -- components/motion-ui/` → vazio |
 | Backend compila sem erros | `cd backend && npx tsc --noEmit` → exit 0 |
 | Frontend compila sem erros | `cd frontend && npx tsc --noEmit` → exit 0 |
@@ -807,7 +861,7 @@ Checklist manual, executável na máquina local:
   <o_que_fazer>
     1. Criar estrutura de diretórios: frontend/src/{components,hooks,lib,types}, backend/src/{routes,services,tools,middleware,types}
     2. Criar frontend/package.json com: react@^19, react-dom@^19, vite@^6, typescript@^5, tailwindcss@^4, motion@^12, @motionplus/core@^2
-    3. Criar backend/package.json com: express@^4, typescript@^5, tsx@^4, openai@^4 (usado para OpenRouter), multer@^1, uuid@^10
+    3. Criar backend/package.json com: express@^5, typescript@^5, tsx@^4, openai@^4 (usado para OpenRouter), multer@^2, uuid@^11
     4. Criar tsconfig.json em ambos (strict, ESNext, paths alias @/ → src/)
     5. Criar .env.example com OPENROUTER_API_KEY= (placeholder)
   </o_que_fazer>
@@ -970,3 +1024,51 @@ o pipeline — e deve receber o agente mais capaz.
 
 **Regra final:** o gate local (`validate.sh`) roda após CADA merge de card.
 Merge limpo não prova integração funcional — o gate prova.
+
+---
+
+## 25. Deltas pós-plano (2026-07-31)
+
+Registro das mudanças aplicadas após a rodada de melhorias completa do projeto.
+
+### Backend — segurança e robustez
+- **Bind 127.0.0.1**: `app.listen` agora vincula apenas em localhost (antes: todas as interfaces)
+- **Multer ^2.0.2**: Upgrade de v1.4.5-lts.2 (4 CVEs de DoS)
+- **Writes atômicos**: `storage.ts` usa `tmp + rename()` em vez de `writeFile` direto (previne corrupção JSON em crash)
+- **deleteConversation sob lock**: Operação inteira (unlink + rm dirs) agora dentro de `withConversationLock`
+- **appendAttachments()**: Nova função sob lock para adicionar anexos atomicamente (usada por `files.ts`)
+- **409 concurrent turn**: `chat.ts` rejeita turnos concorrentes na mesma conversa (antes: poluíam o transcript)
+- **PATCH rejeita reserved keys**: `summary`/`summarized_count` bloqueados no PATCH (só o sumarizador interno escreve)
+- **Token estimator /3**: De `/4` para `/3` (melhor estimativa para português)
+- **`--` antes da query**: `web_research` agora protege contra flag injection
+- **Stream destroy**: `createReadStream` no `openrouter.ts` tem `.destroy()` no catch
+- **Extensão validation**: Upload de arquivos agora filtra extensões permitidas (regex, 400 em inválidas)
+- **STT temp 0o600**: Arquivo temporário de áudio com permissões restritivas
+- **Dead code removido**: `ALLOWED_DIRS`, `resolveSafePath`, `paths` do tsconfig, código morto em `sandbox.ts`
+
+### Frontend — UX e a11y
+- **Autoplay só de stream**: Áudio do SSE faz autoplay; áudio do histórico não (evita tocar sozinho ao trocar de conversa)
+- **Double-click guard**: Criar conversa não duplica mais com clique rápido
+- **Transcrição vazia**: Toast "Nenhum áudio detectado" quando STT retorna texto vazio
+- **Input/mic desabilitados**: Sem conversa ativa, todos os controles ficam desabilitados
+- **A11y delete**: Botão de excluir conversa saiu de dentro do tab button — agora é alcançável por teclado (`group-focus-within`)
+- **Timeout de delete por id**: Confirmação de exclusão não interfere mais entre conversas diferentes
+- **key={activeConvId}**: Lista de mensagens remonta ao trocar de conversa (sem flicker)
+- **aria-live**: Regiões `polite` e `assertive` para leitores de tela
+- **Retry no AudioPlayer**: Botão de tentar novamente quando áudio falha
+- **Favicon**: Emoji 🎤 via data URI (não mais 404)
+- **Dead code removido**: `synthesize`, `readFile`, `clearError`, `audioBlob`, `toastVersion`, `SmoothTabsPanels` vazio, `tailwind.config.ts`
+- **shadcn → devDependencies**: CLI estava em dependencies
+- **autoprefixer/postcss removidos**: Tailwind v4 dispensa
+
+### Tooling
+- **ESLint flat config**: `eslint.config.js` em backend e frontend (typescript-eslint v8)
+- **Lint funcional**: Scripts `npm run lint` voltaram a funcionar em ambos os pacotes
+- **vitest adicionado**: Testes unitários nos módulos puros do backend + parser SSE no frontend
+- **validate.sh**: Atualizado para `lint + typecheck + test + build`
+
+### Docs
+- **README.md**: Criado com quickstart, tabela de env vars, endpoints, troubleshooting, link para SMOKE_TEST.md
+- **PLAYBOOK.md**: Seções §5, §8, §9, §10, §13, §14, §21, Apêndice A e Invariantes atualizadas para refletir o código real
+- **.gitignore**: Entrada `~` inerte removida; documentado path real (XDG_DATA_HOME)
+- **Root package**: Renomeado de `explainer-final` para `voice-assistant`

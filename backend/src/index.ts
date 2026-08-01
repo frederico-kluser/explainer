@@ -5,13 +5,14 @@ import cors from "cors";
 import { errorHandler } from "./middleware/error-handler.js";
 
 import conversationsRouter from "./routes/conversations.js";
-import filesRouter from "./routes/files.js";
-import sttRouter from "./routes/stt.js";
-import ttsRouter from "./routes/tts.js";
-import chatRouter, { audioRouter as chatAudioRouter } from "./routes/chat.js";
+import realtimeRouter from "./routes/realtime.js";
+import sourcesRouter from "./routes/sources.js";
+import agentsRouter from "./routes/agents.js";
+import costsRouter, { creditsRouter } from "./routes/costs.js";
+import browseRouter from "./routes/browse.js";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT) || 3001;
 
 // --- Middleware ---
 
@@ -29,7 +30,7 @@ app.use((_req, res, next) => {
   next();
 });
 
-// JSON body parser with 10 MB limit (room for base64-encoded audio)
+// JSON body parser. Markdown sources are pasted whole, so the limit is generous.
 app.use(express.json({ limit: "10mb" }));
 
 // --- Health check ---
@@ -40,13 +41,13 @@ app.get("/api/health", (_req, res) => {
 
 // --- Routes ---
 
-// Mounted before /api/files so the more specific prefix always wins.
-app.use("/api/files/audio", chatAudioRouter);
 app.use("/api/conversations", conversationsRouter);
-app.use("/api/files", filesRouter);
-app.use("/api/stt", sttRouter);
-app.use("/api/chat", chatRouter);
-app.use("/api/tts", ttsRouter);
+app.use("/api/realtime", realtimeRouter);
+app.use("/api/sources", sourcesRouter);
+app.use("/api/agents", agentsRouter);
+app.use("/api/costs", costsRouter);
+app.use("/api/credits", creditsRouter);
+app.use("/api/browse", browseRouter);
 
 // --- 404 for unknown API routes (JSON, not Express' HTML default) ---
 
@@ -60,7 +61,7 @@ app.use(errorHandler);
 
 // --- Start ---
 
-app.listen(PORT, () => {
+app.listen(PORT, "127.0.0.1", () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 });
 
