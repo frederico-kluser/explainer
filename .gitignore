@@ -13,3 +13,10 @@ dist/
 .vscode/
 *.swp
 *.swo
+
+# Skills system: validation tokens are machine-local and short-lived.
+# The regression BASELINE is committed on purpose — it is the reference a future
+# update is judged against, so it belongs in review and in history.
+.agents/skills/.validation/*.json
+!.agents/skills/.validation/*.baseline.json
+.agents/skills/.stop-attempts

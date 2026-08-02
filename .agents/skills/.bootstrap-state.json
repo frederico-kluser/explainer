@@ -1,0 +1,42 @@
+{
+  "mission": "knowledge-skills-system",
+  "mission_complete": false,
+  "phases": [
+    {
+      "id": 1,
+      "name": "Latest-docs analysis + deep project analysis",
+      "done": true,
+      "gate_passed": true,
+      "artifact": ".agents/artifacts/project-analysis.md"
+    },
+    {
+      "id": 2,
+      "name": "Skill map",
+      "done": false,
+      "gate_passed": false,
+      "artifact": ".agents/artifacts/skill-map.md"
+    },
+    {
+      "id": 3,
+      "name": "Generate knowledge and task skills",
+      "done": false,
+      "gate_passed": false,
+      "artifact": ".agents/skills/catalog.md"
+    },
+    {
+      "id": 4,
+      "name": "Router + verified-evolution mechanism",
+      "done": false,
+      "gate_passed": false,
+      "artifact": ".agents/skills/project-router/SKILL.md"
+    },
+    {
+      "id": 5,
+      "name": "Validation",
+      "done": false,
+      "gate_passed": false,
+      "artifact": ".agents/artifacts/validation-report.md"
+    }
+  ],
+  "updated_by": "phase-1 gate: 13/13 citations verified, all sections present"
+}
