@@ -21,6 +21,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -147,6 +148,15 @@ function runSkill(skill, { acceptBaseline = false, mintToken = true } = {}) {
   }
 
   const tokenPath = join(VALIDATION_DIR, `${skill}.json`);
+
+  // A red run revokes any token still standing. Without this, failing the evals
+  // and then editing the skill inside the previous token's window would sail
+  // past the write-gate — the check would have run, said no, and been ignored.
+  if (!green && existsSync(tokenPath)) {
+    rmSync(tokenPath);
+    console.error(`  token revoked for ${skill} — the last run was not green`);
+  }
+
   if (green && mintToken) {
     const now = Date.now();
     writeFileSync(

@@ -1,6 +1,6 @@
 ---
 name: adding-realtime-tools
-description: Adds a new function tool the voice model can call, across the six files a tool touches in both packages. Use whenever the user wants the assistant to be able to do something new during a call — look something up, read something, trigger something — or whenever a tool exists but the model never calls it or its result never arrives.
+description: Adds a new function tool the voice model can call, across the six files a tool touches in both packages. Use whenever the user wants the assistant to be able to do something new during a call — look something up, read something, trigger something — and when a tool you just added is not offered to the model, returns unknown tool, or its result never reaches the conversation.
 metadata:
   type: task
   verification_signal: npm run validate && npm --prefix frontend test

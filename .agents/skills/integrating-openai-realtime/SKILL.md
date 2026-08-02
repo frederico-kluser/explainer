@@ -1,6 +1,6 @@
 ---
 name: integrating-openai-realtime
-description: Encodes the OpenAI Realtime protocol contract this app depends on — the flat tool schema, the ack gate before response.create, barge-in, and the session limits. Use whenever touching backend/src/tools, backend/src/routes/realtime.ts, frontend useRealtimeSession or lib/realtime.ts, or whenever a voice turn is lost, a tool is never called, or the model answers without using the tool it should have, even if the user never mentions the Realtime API.
+description: Encodes the OpenAI Realtime protocol contract this app depends on — the flat schema whose nested variant silently exposes zero tools, the ack gate before response.create, barge-in, and the session limits. Use whenever touching routes/realtime.ts, useRealtimeSession or lib/realtime.ts, and whenever the protocol itself misbehaves: a voice turn is lost, an active-response error appears, the assistant talks over the user, or an existing tool stopped being invoked, even if the user never mentions the Realtime API.
 metadata:
   type: knowledge
   verification_signal: npm --prefix frontend test -- src/__tests__/realtime.test.ts (named directly; validate.sh cannot fail on frontend tests)

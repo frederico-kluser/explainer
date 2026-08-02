@@ -1,0 +1,82 @@
+{
+  "note": "Queries lean on identifiers and file names, which read the same in Portuguese and English. The model's own semantic matching is stronger than this scorer; what is being checked here is that the descriptions discriminate from each other at all.",
+  "cases": [
+    {
+      "query": "the model never calls the tool I defined in tools/index.ts during a call",
+      "expect": "adding-realtime-tools",
+      "note": "first hop is the wiring checklist; it loads the protocol skill itself"
+    },
+    {
+      "query": "a voice turn was lost and the session logged an active response error",
+      "expect": "integrating-openai-realtime"
+    },
+    {
+      "query": "tool parameters nested under a function key and the session exposes zero tools",
+      "expect": "integrating-openai-realtime"
+    },
+    {
+      "query": "assistant speaks over the user and barge in does not stop the audio",
+      "expect": "integrating-openai-realtime"
+    },
+    {
+      "query": "quero que o assistente consiga fazer uma coisa nova durante a call",
+      "expect": "adding-realtime-tools"
+    },
+    {
+      "query": "o custo no painel ficou zero depois que eu troquei o model id no pricing",
+      "expect": "tracking-costs-and-credits"
+    },
+    {
+      "query": "provider balance will not load and credits shows nothing",
+      "expect": "tracking-costs-and-credits"
+    },
+    {
+      "query": "o job do agent-jobs travou e o resultado foi falado duas vezes",
+      "expect": "dispatching-pi-agents"
+    },
+    {
+      "query": "browse returned 403 and the repo will not load from sandbox roots",
+      "expect": "managing-conversation-materials"
+    },
+    {
+      "query": "the model answered about the wrong material after source-store resolved it",
+      "expect": "managing-conversation-materials"
+    },
+    {
+      "query": "which command actually proves this change works before I declare it done",
+      "expect": "verifying-explainer-changes"
+    },
+    {
+      "query": "req.params widened to string array after I annotated the express handler",
+      "expect": "writing-explainer-code"
+    },
+    {
+      "query": "routes every task in this repository to the right skills first",
+      "expect": "project-router"
+    },
+    {
+      "query": "should this thing I just learned be written into a skill",
+      "expect": "meta-skill-evolution"
+    },
+    {
+      "query": "deduplicate overlapping passages and revalidate stale citations",
+      "expect": "meta-skill-consolidate"
+    },
+    {
+      "query": "rename a css variable in index.css",
+      "expect_not": [
+        "integrating-openai-realtime",
+        "dispatching-pi-agents",
+        "tracking-costs-and-credits"
+      ]
+    },
+    {
+      "query": "bump a dependency in package.json",
+      "expect_not": [
+        "integrating-openai-realtime",
+        "managing-conversation-materials",
+        "dispatching-pi-agents"
+      ]
+    }
+  ]
+}
