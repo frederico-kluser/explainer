@@ -1,0 +1,51 @@
+{
+  "skill": "managing-conversation-materials",
+  "verification_signal": "npm --prefix backend test -- src/__tests__/sandbox.test.ts src/__tests__/sources.test.ts src/__tests__/source-store.test.ts",
+  "cases": [
+    {
+      "id": "sandbox-sources-store-tests",
+      "type": "command",
+      "run": "npm --prefix backend test -- src/__tests__/sandbox.test.ts src/__tests__/sources.test.ts src/__tests__/source-store.test.ts",
+      "expect_exit": 0
+    },
+    {
+      "id": "leading-slash-stripped",
+      "type": "file_matches",
+      "file": "backend/src/middleware/sandbox.ts",
+      "pattern": "replace\\(/\\^\\[/\\\\\\\\\\]\\+/, \"\"\\)",
+      "why": "entailment: without the strip, resolve(root, '/etc/passwd') escapes the root the check claims to enforce"
+    },
+    {
+      "id": "sibling-prefix-guarded",
+      "type": "file_matches",
+      "file": "backend/src/middleware/sandbox.ts",
+      "pattern": "endsWith\\(sep\\)",
+      "why": "a plain startsWith would let /srv/repo-evil pass as inside /srv/repo"
+    },
+    {
+      "id": "picksource-falls-back",
+      "type": "file_matches",
+      "file": "backend/src/services/source-store.ts",
+      "pattern": "return partial \\?\\? sources\\[0\\]!",
+      "why": "the documented failure mode — a confident answer about the wrong material — depends on this fallback existing"
+    },
+    {
+      "id": "max-materials-is-six",
+      "type": "file_matches",
+      "file": "backend/src/services/source-store.ts",
+      "pattern": "MAX_MATERIALS = 6",
+      "why": "the skill states a number; if it changes the skill is wrong and must be revalidated"
+    },
+    {
+      "id": "write-queue-chains-on-both-paths",
+      "type": "file_matches",
+      "file": "backend/src/services/storage.ts",
+      "pattern": "previous\\.then\\(operation, operation\\)",
+      "why": "the reference file claims chaining on success only deadlocks the conversation; this is that claim's anchor"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

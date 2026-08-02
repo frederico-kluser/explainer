@@ -1,0 +1,44 @@
+{
+  "skill": "adding-realtime-tools",
+  "verification_signal": "npm run validate && npm --prefix frontend test",
+  "cases": [
+    {
+      "id": "gate-passes",
+      "type": "command",
+      "run": "npm run validate",
+      "expect_exit": 0
+    },
+    {
+      "id": "frontend-suite-passes",
+      "type": "command",
+      "run": "npm --prefix frontend test",
+      "expect_exit": 0,
+      "why": "step 6 tells the reader to run this separately; the eval holds it to the same rule"
+    },
+    {
+      "id": "executor-gates-by-source",
+      "type": "file_matches",
+      "file": "backend/src/services/tool-executor.ts",
+      "pattern": "toolsForSources\\(sources\\)",
+      "why": "step 3 claims the executor re-checks the gate; the model can ask for a tool it was never offered"
+    },
+    {
+      "id": "arguments-normalised-not-trusted",
+      "type": "file_matches",
+      "file": "backend/src/services/tool-executor.ts",
+      "pattern": "typeof value === \"number\"",
+      "why": "entailment for 'a numeric material is coerced' — model output is normalised, not trusted"
+    },
+    {
+      "id": "tool-name-union-exists",
+      "type": "file_matches",
+      "file": "backend/src/types/index.ts",
+      "pattern": "export type ToolName",
+      "why": "step 1 sends the reader here; if the union moves the procedure is wrong"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

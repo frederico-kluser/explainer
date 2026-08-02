@@ -1,3 +1,10 @@
+> **Histórico — obsoleto desde a migração para a OpenAI Realtime API (`92a2577`).**
+> Este checklist descreve o fluxo anterior: `OPENROUTER_API_KEY`, gravação por
+> MediaRecorder, a ferramenta `web_research` e anexos de arquivo — nada disso
+> existe mais. Mantido como registro. Para o fluxo atual veja o
+> [README](./README.md); para verificar uma mudança hoje, veja
+> `.agents/skills/verifying-explainer-changes`.
+
 # Smoke Test — Voice Assistant
 
 ## Pré-requisitos

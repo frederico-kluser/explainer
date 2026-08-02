@@ -1,0 +1,11 @@
+{
+  "skill": "project-router",
+  "results": {
+    "asks-in-portuguese": true,
+    "creates-the-plan": true,
+    "deletes-the-plan": true,
+    "protects-the-bootstrap-artifacts": true,
+    "runs-evolution-before-finishing": true,
+    "no-task-plan-left-in-repo": true
+  }
+}

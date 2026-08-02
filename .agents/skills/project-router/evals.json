@@ -1,0 +1,45 @@
+{
+  "skill": "project-router",
+  "verification_signal": "contract checks on the protocol itself; its runtime behaviour is exercised the first time a real task goes through it",
+  "cases": [
+    {
+      "id": "asks-in-portuguese",
+      "type": "file_matches",
+      "file": ".agents/skills/project-router/SKILL.md",
+      "pattern": "Qual é exatamente o comportamento esperado",
+      "why": "the questions are required verbatim in Portuguese; an English example would silently change the register"
+    },
+    {
+      "id": "creates-the-plan",
+      "type": "file_matches",
+      "file": ".agents/skills/project-router/SKILL.md",
+      "pattern": "Write `TASK_PLAN\\.md`, in Portuguese"
+    },
+    {
+      "id": "deletes-the-plan",
+      "type": "file_matches",
+      "file": ".agents/skills/project-router/SKILL.md",
+      "pattern": "Delete `TASK_PLAN\\.md`"
+    },
+    {
+      "id": "protects-the-bootstrap-artifacts",
+      "type": "file_matches",
+      "file": ".agents/skills/project-router/SKILL.md",
+      "pattern": "only file this protocol deletes",
+      "why": "the plan is disposable; the artifacts carry the reasoning behind the library and must not be swept up with it"
+    },
+    {
+      "id": "runs-evolution-before-finishing",
+      "type": "file_matches",
+      "file": ".agents/skills/project-router/SKILL.md",
+      "pattern": "<evolution>` step of every task skill"
+    },
+    {
+      "id": "no-task-plan-left-in-repo",
+      "type": "command",
+      "run": "test ! -f TASK_PLAN.md",
+      "expect_exit": 0,
+      "why": "if a plan is sitting in the repo, the last run of the protocol did not finish"
+    }
+  ]
+}

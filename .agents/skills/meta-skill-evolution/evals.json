@@ -1,0 +1,30 @@
+{
+  "skill": "meta-skill-evolution",
+  "verification_signal": "lint-skills + test-hooks (the pipeline's gate is only real if the hook enforces it)",
+  "cases": [
+    {
+      "id": "library-lints",
+      "type": "command",
+      "run": "node .agents/skills/scripts/lint-skills.mjs --quiet",
+      "expect_exit": 0
+    },
+    {
+      "id": "hooks-behave-as-documented",
+      "type": "command",
+      "run": "node .agents/skills/scripts/test-hooks.mjs",
+      "expect_exit": 0,
+      "why": "step 4 claims the write-gate enforces the ordering; that is a behavioural claim and needs a behavioural test"
+    },
+    {
+      "id": "write-gate-is-installed",
+      "type": "file_matches",
+      "file": ".claude/settings.json",
+      "pattern": "skill-write-gate\\.mjs",
+      "why": "a hook that exists but is not wired into settings enforces nothing"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

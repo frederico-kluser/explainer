@@ -1,0 +1,12 @@
+{
+  "skill": "dispatching-pi-agents",
+  "results": {
+    "agent-jobs-tests": true,
+    "read-only-allowlist": true,
+    "no-approve-flag": true,
+    "pi-bin-read-late": true,
+    "replay-flag-emitted": true,
+    "replay-flag-honoured": true,
+    "citations-fresh": true
+  }
+}

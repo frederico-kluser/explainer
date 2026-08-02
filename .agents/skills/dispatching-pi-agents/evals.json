@@ -1,0 +1,51 @@
+{
+  "skill": "dispatching-pi-agents",
+  "verification_signal": "npm --prefix backend test -- src/__tests__/agent-jobs.test.ts",
+  "cases": [
+    {
+      "id": "agent-jobs-tests",
+      "type": "command",
+      "run": "npm --prefix backend test -- src/__tests__/agent-jobs.test.ts",
+      "expect_exit": 0
+    },
+    {
+      "id": "read-only-allowlist",
+      "type": "file_matches",
+      "file": "backend/src/services/agent-jobs.ts",
+      "pattern": "read,glob,grep,find,ls",
+      "why": "the blast-radius claim is only true while the allowlist is actually this"
+    },
+    {
+      "id": "no-approve-flag",
+      "type": "file_matches",
+      "file": "backend/src/services/agent-jobs.ts",
+      "pattern": "\"--no-approve\"",
+      "why": "without it a cloned repo's own skills would be trusted by the agent reading it"
+    },
+    {
+      "id": "pi-bin-read-late",
+      "type": "file_matches",
+      "file": "backend/src/services/agent-jobs.ts",
+      "pattern": "function piBin\\(\\)",
+      "why": "reading PI_BIN at import instead would break the subprocess-fake technique the tests depend on"
+    },
+    {
+      "id": "replay-flag-emitted",
+      "type": "file_matches",
+      "file": "backend/src/routes/agents.ts",
+      "pattern": "replay: true",
+      "why": "server half of the do-not-re-narrate rule"
+    },
+    {
+      "id": "replay-flag-honoured",
+      "type": "file_matches",
+      "file": "frontend/src/hooks/useRealtimeSession.ts",
+      "pattern": "event\\.replay === true",
+      "why": "client half; either side alone makes the assistant read stale answers aloud"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

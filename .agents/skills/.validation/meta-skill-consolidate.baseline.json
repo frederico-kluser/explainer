@@ -1,0 +1,9 @@
+{
+  "skill": "meta-skill-consolidate",
+  "results": {
+    "library-lints": true,
+    "no-stale-citations": true,
+    "budget-limits-enforced": true,
+    "citations-fresh": true
+  }
+}

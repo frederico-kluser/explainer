@@ -1,0 +1,11 @@
+{
+  "skill": "adding-realtime-tools",
+  "results": {
+    "gate-passes": true,
+    "frontend-suite-passes": true,
+    "executor-gates-by-source": true,
+    "arguments-normalised-not-trusted": true,
+    "tool-name-union-exists": true,
+    "citations-fresh": true
+  }
+}

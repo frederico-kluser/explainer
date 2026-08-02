@@ -1,0 +1,12 @@
+{
+  "skill": "tracking-costs-and-credits",
+  "results": {
+    "pricing-tests": true,
+    "cached-share-subtracted": true,
+    "unknown-model-returns-zero": true,
+    "realtime-model-in-rate-card": true,
+    "configured-model-matches-rate-card": true,
+    "openai-balance-needs-admin-key": true,
+    "citations-fresh": true
+  }
+}

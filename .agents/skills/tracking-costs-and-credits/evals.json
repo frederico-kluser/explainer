@@ -1,0 +1,51 @@
+{
+  "skill": "tracking-costs-and-credits",
+  "verification_signal": "npm --prefix backend test -- src/__tests__/pricing.test.ts",
+  "cases": [
+    {
+      "id": "pricing-tests",
+      "type": "command",
+      "run": "npm --prefix backend test -- src/__tests__/pricing.test.ts",
+      "expect_exit": 0
+    },
+    {
+      "id": "cached-share-subtracted",
+      "type": "file_matches",
+      "file": "backend/src/services/pricing.ts",
+      "pattern": "Math\\.max\\(0, \\(input\\.(text|audio)_tokens \\?\\? 0\\) - cached",
+      "why": "entailment for the 10x-overbilling claim: the subtraction has to be in the code"
+    },
+    {
+      "id": "unknown-model-returns-zero",
+      "type": "file_matches",
+      "file": "backend/src/services/pricing.ts",
+      "pattern": "if \\(!rates\\) return summary;",
+      "why": "the silent-zero failure mode the skill warns about"
+    },
+    {
+      "id": "realtime-model-in-rate-card",
+      "type": "file_matches",
+      "file": "backend/src/services/pricing.ts",
+      "pattern": "\"gpt-realtime-2\\.1\"",
+      "why": "the model actually configured must have a row, or the meter reads zero"
+    },
+    {
+      "id": "configured-model-matches-rate-card",
+      "type": "file_matches",
+      "file": "backend/src/services/openai.ts",
+      "pattern": "gpt-realtime-2\\.1",
+      "why": "pairs with the case above: this is the check that catches a model bump that forgets the rate card"
+    },
+    {
+      "id": "openai-balance-needs-admin-key",
+      "type": "file_matches",
+      "file": "backend/src/services/credits.ts",
+      "pattern": "OPENAI_ADMIN_KEY",
+      "why": "the panel's honest 'cannot report' message depends on this being the key it looks for"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "skill": "managing-conversation-materials",
+  "results": {
+    "sandbox-sources-store-tests": true,
+    "leading-slash-stripped": true,
+    "sibling-prefix-guarded": true,
+    "picksource-falls-back": true,
+    "max-materials-is-six": true,
+    "write-queue-chains-on-both-paths": true,
+    "citations-fresh": true
+  }
+}
