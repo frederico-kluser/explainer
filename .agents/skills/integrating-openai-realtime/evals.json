@@ -1,0 +1,46 @@
+{
+  "skill": "integrating-openai-realtime",
+  "verification_signal": "npm --prefix frontend test -- src/__tests__/realtime.test.ts",
+  "cases": [
+    {
+      "id": "realtime-protocol-tests",
+      "type": "command",
+      "run": "npm --prefix frontend test -- src/__tests__/realtime.test.ts",
+      "expect_exit": 0,
+      "why": "named directly rather than via validate.sh, which runs frontend tests with || true"
+    },
+    {
+      "id": "flat-tool-shape",
+      "type": "file_matches",
+      "file": "backend/src/tools/index.ts",
+      "pattern": "type: \"function\",\\s*\\n\\s*name:",
+      "flags": "m",
+      "why": "entailment: the flat-schema claim is only true while the definitions are actually flat"
+    },
+    {
+      "id": "no-nested-function-key",
+      "type": "file_absent_match",
+      "file": "backend/src/tools/index.ts",
+      "pattern": "function:\\s*\\{",
+      "why": "the Chat Completions nested shape reappearing is the silent failure this skill exists to prevent"
+    },
+    {
+      "id": "both-ack-names-accepted",
+      "type": "file_matches",
+      "file": "frontend/src/lib/realtime.ts",
+      "pattern": "conversation\\.item\\.created[\\s\\S]{0,120}conversation\\.item\\.added|conversation\\.item\\.added[\\s\\S]{0,120}conversation\\.item\\.created",
+      "why": "gating on one name only costs the ack timeout on every tool call"
+    },
+    {
+      "id": "response-create-is-gated",
+      "type": "file_matches",
+      "file": "frontend/src/hooks/useRealtimeSession.ts",
+      "pattern": "activeResponseRef\\.current[\\s\\S]{0,200}wantResponseRef",
+      "why": "the deferral is what prevents 'Conversation already has an active response'"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

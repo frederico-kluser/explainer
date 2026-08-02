@@ -1,0 +1,11 @@
+{
+  "skill": "verifying-explainer-changes",
+  "results": {
+    "gate-passes": true,
+    "frontend-suite-passes-on-its-own": true,
+    "gate-hole-still-present": true,
+    "no-ci-yet": true,
+    "home-before-import-technique": true,
+    "citations-fresh": true
+  }
+}

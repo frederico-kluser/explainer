@@ -1,0 +1,11 @@
+{
+  "skill": "integrating-openai-realtime",
+  "results": {
+    "realtime-protocol-tests": true,
+    "flat-tool-shape": true,
+    "no-nested-function-key": true,
+    "both-ack-names-accepted": true,
+    "response-create-is-gated": true,
+    "citations-fresh": true
+  }
+}

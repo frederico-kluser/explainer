@@ -1,0 +1,12 @@
+{
+  "skill": "writing-explainer-code",
+  "results": {
+    "lint-clean": true,
+    "typecheck-clean": true,
+    "no-annotated-handler-on-param-route": true,
+    "js-specifier-still-required": true,
+    "load-env-first": true,
+    "motion-ui-lint-excluded": true,
+    "citations-fresh": true
+  }
+}

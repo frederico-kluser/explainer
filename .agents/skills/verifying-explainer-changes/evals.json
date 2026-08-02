@@ -1,0 +1,44 @@
+{
+  "skill": "verifying-explainer-changes",
+  "verification_signal": "npm run validate",
+  "cases": [
+    {
+      "id": "gate-passes",
+      "type": "command",
+      "run": "npm run validate",
+      "expect_exit": 0
+    },
+    {
+      "id": "frontend-suite-passes-on-its-own",
+      "type": "command",
+      "run": "npm --prefix frontend test",
+      "expect_exit": 0,
+      "why": "the gate cannot fail on this, so the skill's advice to run it separately is only useful if it is actually run"
+    },
+    {
+      "id": "gate-hole-still-present",
+      "type": "file_matches",
+      "file": "validate.sh",
+      "pattern": "npm --prefix frontend test \\|\\| true",
+      "why": "staleness detector: if someone closes the hole this case fails and the passage documenting it must be rewritten"
+    },
+    {
+      "id": "no-ci-yet",
+      "type": "file_absent_match",
+      "file": "package.json",
+      "pattern": "\"ci\":",
+      "why": "the 'nothing runs these unless someone does' claim stops being true the day a CI script appears"
+    },
+    {
+      "id": "home-before-import-technique",
+      "type": "file_matches",
+      "file": "backend/src/__tests__/storage.test.ts",
+      "pattern": "process\\.env\\.HOME",
+      "why": "entailment for the documented technique"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

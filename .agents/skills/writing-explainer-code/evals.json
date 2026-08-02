@@ -1,0 +1,51 @@
+{
+  "skill": "writing-explainer-code",
+  "verification_signal": "npm run lint && npm run typecheck",
+  "cases": [
+    {
+      "id": "lint-clean",
+      "type": "command",
+      "run": "npm run lint",
+      "expect_exit": 0,
+      "why": "the skill defers to lint for a whole class of conventions; if lint is red the deferral is worthless"
+    },
+    {
+      "id": "typecheck-clean",
+      "type": "command",
+      "run": "npm run typecheck",
+      "expect_exit": 0
+    },
+    {
+      "id": "no-annotated-handler-on-param-route",
+      "type": "file_absent_match",
+      "file": "backend/src/routes/agents.ts",
+      "pattern": "router\\.(get|post|patch|delete)\\(\"/[^\"]*:[^\"]*\",\\s*(async\\s*)?\\(req: Request, res: Response\\)",
+      "why": "entailment for the Express 5 claim: annotating a handler on a parameterised route is what breaks param inference"
+    },
+    {
+      "id": "js-specifier-still-required",
+      "type": "file_matches",
+      "file": "backend/src/index.ts",
+      "pattern": "from \"\\./middleware/error-handler\\.js\"",
+      "why": "the .js runtime specifier claim must be entailed by the source it cites"
+    },
+    {
+      "id": "load-env-first",
+      "type": "file_matches",
+      "file": "backend/src/index.ts",
+      "pattern": "^import \"\\./load-env\\.js\";",
+      "why": "ordering claim: load-env has to precede anything that freezes homedir()-derived roots"
+    },
+    {
+      "id": "motion-ui-lint-excluded",
+      "type": "file_matches",
+      "file": "frontend/eslint.config.js",
+      "pattern": "motion-ui",
+      "why": "the 'vendored, do not edit' claim rests on the exclusion actually being configured"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

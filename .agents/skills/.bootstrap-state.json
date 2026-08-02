@@ -19,8 +19,8 @@
     {
       "id": 3,
       "name": "Generate knowledge and task skills",
-      "done": false,
-      "gate_passed": false,
+      "done": true,
+      "gate_passed": true,
       "artifact": ".agents/skills/catalog.md"
     },
     {
@@ -38,5 +38,5 @@
       "artifact": ".agents/artifacts/validation-report.md"
     }
   ],
-  "updated_by": "phase-1 gate: 13/13 citations verified, all sections present"
+  "updated_by": "phase-3 gate: 7/7 linter, 44/44 eval cases green, baselines recorded"
 }
