@@ -123,8 +123,13 @@ function lintSkill(path) {
     }
     // Selection among many skills happens on the description alone, and the
     // model under-triggers, so an explicit trigger clause is mandatory.
-    if (!/\bUse (when|whenever|for|before|any time|on)\b/i.test(description)) {
-      errors.push("description must state when to use it ('Use whenever …')");
+    const invites = /\bUse\b/i.test(description);
+    const names_a_trigger =
+      /\b(when|whenever|before|after|periodically|any time|during)\b/i.test(description);
+    if (!invites || !names_a_trigger) {
+      errors.push(
+        "description must invite use and name a trigger ('Use whenever …', 'Use before …')",
+      );
     }
   }
 
@@ -145,11 +150,25 @@ function lintSkill(path) {
     warnings.push(`body ${lines.length} lines; approaching the ${LIMITS.bodyLinesError} limit`);
   }
 
+  // Sections are required per type: a router carries a protocol, a knowledge
+  // skill carries knowledge, a task skill carries both plus the evolution step.
   if (!/^##\s+When to use\s*$/m.test(body)) errors.push("missing '## When to use'");
-  if (!/^##\s+Injected knowledge\s*$/m.test(body)) errors.push("missing '## Injected knowledge'");
 
-  if (type === "task" && !/^##\s+<evolution>\s*$/m.test(body)) {
-    errors.push("task skill must end with a '## <evolution>' section");
+  if (type === "knowledge" || type === "task") {
+    if (!/^##\s+Injected knowledge\s*$/m.test(body)) {
+      errors.push("missing '## Injected knowledge'");
+    }
+  }
+  if (type === "router" || type === "meta") {
+    if (!/^##\s+(Protocol|Procedure)\s*$/m.test(body)) {
+      errors.push("missing '## Protocol' or '## Procedure'");
+    }
+  }
+  if (type === "task") {
+    if (!/^##\s+Procedure\s*$/m.test(body)) errors.push("missing '## Procedure'");
+    if (!/^##\s+<evolution>\s*$/m.test(body)) {
+      errors.push("task skill must end with a '## <evolution>' section");
+    }
   }
 
   const prose = stripCodeFences(body);

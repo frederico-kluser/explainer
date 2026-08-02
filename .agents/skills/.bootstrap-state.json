@@ -26,8 +26,8 @@
     {
       "id": 4,
       "name": "Router + verified-evolution mechanism",
-      "done": false,
-      "gate_passed": false,
+      "done": true,
+      "gate_passed": true,
       "artifact": ".agents/skills/project-router/SKILL.md"
     },
     {
@@ -38,5 +38,5 @@
       "artifact": ".agents/artifacts/validation-report.md"
     }
   ],
-  "updated_by": "phase-3 gate: 7/7 linter, 44/44 eval cases green, baselines recorded"
+  "updated_by": "phase-4 gate: 14/14 hook scenarios, 10/10 linter, 9 eval suites green"
 }

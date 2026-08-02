@@ -1,0 +1,9 @@
+{
+  "skill": "meta-skill-evolution",
+  "results": {
+    "library-lints": true,
+    "hooks-behave-as-documented": true,
+    "write-gate-is-installed": true,
+    "citations-fresh": true
+  }
+}

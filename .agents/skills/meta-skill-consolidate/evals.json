@@ -1,0 +1,30 @@
+{
+  "skill": "meta-skill-consolidate",
+  "verification_signal": "lint-skills + provenance check",
+  "cases": [
+    {
+      "id": "library-lints",
+      "type": "command",
+      "run": "node .agents/skills/scripts/lint-skills.mjs --quiet",
+      "expect_exit": 0
+    },
+    {
+      "id": "no-stale-citations",
+      "type": "command",
+      "run": "node .agents/skills/scripts/provenance.mjs check",
+      "expect_exit": 0,
+      "why": "step 1 is the whole reason this skill exists; if the checker itself is red, consolidation is overdue"
+    },
+    {
+      "id": "budget-limits-enforced",
+      "type": "file_matches",
+      "file": ".agents/skills/scripts/lint-skills.mjs",
+      "pattern": "bodyLinesError: 500",
+      "why": "step 4 quotes the numbers; they have to be the numbers the linter actually uses"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}
