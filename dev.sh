@@ -21,7 +21,7 @@ C_OFF=$'\033[0m'
 
 for pkg in backend frontend; do
   if [ ! -d "$pkg/node_modules" ]; then
-    echo "${C_DIM}[dev] instalando dependências de $pkg…${C_OFF}"
+    echo "${C_DIM}[dev] instalando dependências de ${pkg}…${C_OFF}"
     npm --prefix "$pkg" install
   fi
 done
@@ -59,5 +59,7 @@ WEB_PID=$!
 
 echo "${C_API}[api]${C_OFF} http://localhost:${PORT:-3001}   ${C_WEB}[web]${C_OFF} http://localhost:5173"
 
-# Volta assim que QUALQUER um dos dois sair; o trap derruba o sobrevivente.
-wait -n
+# Espera qualquer filho sair; o trap derruba o sobrevivente.
+# `wait -n` não funciona no bash 3.2 do macOS — `wait` simples resolve:
+# quando um morre, o cleanup mata o outro e o wait retorna logo em seguida.
+wait
