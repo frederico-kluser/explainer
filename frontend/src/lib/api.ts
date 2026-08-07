@@ -9,6 +9,7 @@ import type {
   BrowseResult,
   MaterialsEnvelope,
   SourceSpec,
+  MessagesResponse,
 } from "@/types";
 
 // ----- Helpers -----
@@ -188,6 +189,21 @@ export async function appendMessages(
     { messages },
   );
   await handleEmpty(response);
+}
+
+
+/** Fetch stored messages for a conversation. */
+export async function fetchMessages(
+  convId: string,
+  options?: { limit?: number; before?: string; signal?: AbortSignal },
+): Promise<MessagesResponse> {
+  const params = new URLSearchParams();
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.before) params.set("before", options.before);
+  const query = params.toString();
+  const url = `/api/conversations/${encodeURIComponent(convId)}/messages${query ? `?${query}` : ""}`;
+  const response = await fetch(url, { method: "GET", signal: options?.signal });
+  return handleResponse<MessagesResponse>(response);
 }
 
 // ----- Costs and credits -----

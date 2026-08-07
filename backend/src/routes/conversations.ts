@@ -210,9 +210,13 @@ router.get("/:id/messages", async (req, res, next) => {
     if (typeof limitParam === "string") {
       const limit = parseInt(limitParam, 10);
       if (!isNaN(limit) && limit > 0) {
-        messages = messages.slice(0, limit);
+        messages = messages.slice(-limit);
       }
     }
+
+    // Return newest first so the initial fetch shows the most recent messages
+    // and "Carregar mais" works backward through progressively older batches.
+    messages = messages.reverse();
 
     res.json({ messages, total, has_more: messages.length < total });
   } catch (err) {

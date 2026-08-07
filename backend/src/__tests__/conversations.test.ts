@@ -102,8 +102,9 @@ describe("GET /api/conversations/:id/messages", () => {
     expect(status).toBe(200);
     const messages = body.messages as Message[];
     expect(messages).toHaveLength(2);
-    expect(messages[0]!.content).toBe("Olá");
-    expect(messages[1]!.content).toBe("Oi! Como posso ajudar?");
+    // Messages are returned newest-first.
+    expect(messages[0]!.content).toBe("Oi! Como posso ajudar?");
+    expect(messages[1]!.content).toBe("Olá");
     expect(body.total).toBe(2);
     expect(body.has_more).toBe(false);
   });
@@ -158,7 +159,8 @@ describe("GET /api/conversations/:id/messages pagination", () => {
     expect(status).toBe(200);
     const messages = body.messages as Message[];
     expect(messages).toHaveLength(2);
-    expect(messages[0]!.content).toBe("msg-1");
+    // slice(-2) then reverse: newest messages first.
+    expect(messages[0]!.content).toBe("msg-5");
     expect(body.total).toBe(5);
     expect(body.has_more).toBe(true);
   });
@@ -183,8 +185,9 @@ describe("GET /api/conversations/:id/messages pagination", () => {
     expect(status).toBe(200);
     const messages = body.messages as Message[];
     expect(messages).toHaveLength(2);
-    expect(messages[0]!.content).toBe("old");
-    expect(messages[1]!.content).toBe("mid");
+    // Filtered messages reversed: newest first among those before t3.
+    expect(messages[0]!.content).toBe("mid");
+    expect(messages[1]!.content).toBe("old");
     expect(body.total).toBe(2);
     expect(body.has_more).toBe(false);
   });
@@ -205,7 +208,7 @@ describe("GET /api/conversations/:id/messages pagination", () => {
     ];
     const convId = await createConvWithMessages("Combine Test", msgs);
 
-    // Before t5, limit 2 — should return t1, t2 (the oldest two before t5)
+    // Before t5, limit 2 — returns the two newest messages before t5, newest first
     const { status, body } = await fetchJSON(
       `${baseUrl}/api/conversations/${convId}/messages?before=${encodeURIComponent(t5)}&limit=2`,
     );
@@ -213,8 +216,10 @@ describe("GET /api/conversations/:id/messages pagination", () => {
     expect(status).toBe(200);
     const messages = body.messages as Message[];
     expect(messages).toHaveLength(2);
-    expect(messages[0]!.content).toBe("oldest");
-    expect(messages[1]!.content).toBe("older");
+    // slice(-2) of filtered [oldest, older, mid, newer] → [mid, newer];
+    // reversed → [newer, mid].
+    expect(messages[0]!.content).toBe("newer");
+    expect(messages[1]!.content).toBe("mid");
     expect(body.total).toBe(4); // 4 messages before t5
     expect(body.has_more).toBe(true);
   });

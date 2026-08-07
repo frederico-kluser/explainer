@@ -78,9 +78,15 @@ export interface TranscriptEntry {
 
 export interface Message {
   id: string;
-  role: "user" | "assistant" | "tool";
+  role: "user" | "assistant" | "agent" | "tool" | "system";
   content: string | null;
   timestamp: string;
+}
+
+export interface MessagesResponse {
+  messages: Message[];
+  total: number;
+  has_more: boolean;
 }
 
 export interface Conversation {

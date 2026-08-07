@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import * as api from "@/lib/api";
 import { useRealtimeSession } from "@/hooks/useRealtimeSession";
 import type {
+  Message,
   Conversation,
   ConversationSettings,
   CostSummary,
@@ -48,7 +49,16 @@ export function App() {
   const [creditsLoading, setCreditsLoading] = useState(false);
   const [textInput, setTextInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const historyAbortRef = useRef<AbortController | null>(null);
+  const historyEarliestRef = useRef<string | null>(null);
+  const historyLoadingMoreRef = useRef(false);
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // ── Conversation history (fetched from disk) ──────────────────
+  const [historyMessages, setHistoryMessages] = useState<Message[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
 
   // ── Live voice session ────────────────────────────────────────
   const {
@@ -231,12 +241,67 @@ export function App() {
     return () => clearTimeout(timer);
   }, [activeConvId, sessionUsd, finishedJobs]);
 
+  // Fetch stored messages whenever the active conversation changes.
+  // Aborts any in-flight fetch so rapid sidebar clicks don't queue stale loads.
+  useEffect(() => {
+    if (historyAbortRef.current) {
+      historyAbortRef.current.abort();
+    }
+    if (loadMoreAbortRef.current) {
+      loadMoreAbortRef.current.abort();
+    }
+    setHistoryMessages([]);
+    setHistoryHasMore(false);
+    historyEarliestRef.current = null;
+    setHistoryLoading(false);
+
+    if (!activeConvId) return;
+
+    const controller = new AbortController();
+    historyAbortRef.current = controller;
+    setHistoryLoading(true);
+
+    const load = async () => {
+      try {
+        const result = await api.fetchMessages(activeConvId, {
+          limit: 50,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        setHistoryMessages(result.messages);
+        setHistoryHasMore(result.has_more);
+        if (result.messages.length > 0) {
+          // With newest-first ordering, the oldest message in the loaded
+          // batch is the last element.
+          historyEarliestRef.current = result.messages[result.messages.length - 1]!.timestamp;
+        }
+      } catch (err) {
+        // AbortError is expected when the user switches conversations
+        // mid-load; everything else is a real failure worth logging.
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          console.error("Failed to fetch conversation messages:", err);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setHistoryLoading(false);
+        }
+      }
+    };
+    void load();
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeConvId]);
+
   // Follow the conversation as it grows.
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
+  // Only scroll on live transcript entries — loading history is a
+  // deliberate navigation, not something the user wants auto-scrolled away from.
   }, [transcript]);
 
   const creatingRef = useRef(false);
@@ -341,6 +406,47 @@ export function App() {
     },
     [activeConvId, showError],
   );
+
+  // ── Load more history ───────────────────────────────────────
+  const handleLoadMore = useCallback(async () => {
+    if (!activeConvId || !historyEarliestRef.current || historyLoadingMoreRef.current) return;
+
+    // Capture the conversation id before the await so we can detect whether the
+    // user switched conversations while the fetch was in flight.
+    const capturedConvId = activeConvId;
+    historyLoadingMoreRef.current = true;
+    loadMoreAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadMoreAbortRef.current = controller;
+
+    try {
+      const result = await api.fetchMessages(capturedConvId, {
+        limit: 50,
+        before: historyEarliestRef.current,
+        signal: controller.signal,
+      });
+      // Guard: if the user switched conversations, discard the stale response.
+      if (controller.signal.aborted || activeConvId !== capturedConvId) return;
+      setHistoryMessages((prev) => [...result.messages, ...prev]);
+      setHistoryHasMore(result.has_more);
+      if (result.messages.length > 0) {
+        // With newest-first ordering, the oldest message in the loaded
+        // batch is the last element.
+        historyEarliestRef.current =
+          result.messages[result.messages.length - 1]!.timestamp;
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      console.error("Failed to load more messages:", err);
+    } finally {
+      // Only clear the loading flag if our controller is still the current
+      // one — if a conversation switch aborted us and started a new load,
+      // the new load owns the flag.
+      if (loadMoreAbortRef.current === controller) {
+        historyLoadingMoreRef.current = false;
+      }
+    }
+  }, [activeConvId]);
 
   // ── Settings ──────────────────────────────────────────────────
   const handleVoiceChange = useCallback(
@@ -534,8 +640,84 @@ export function App() {
 
         {/* Transcript */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
-          {transcript.length > 0 ? (
+          {historyLoading && historyMessages.length === 0 ? (
+            <div className="flex h-full items-center justify-center">
+              <div className="mx-auto w-full max-w-3xl space-y-4 px-4">
+                <div className="flex justify-end">
+                  <div className="h-16 w-2/3 animate-pulse rounded-2xl bg-muted" />
+                </div>
+                <div className="flex justify-start">
+                  <div className="h-24 w-3/4 animate-pulse rounded-2xl bg-muted" />
+                </div>
+              </div>
+            </div>
+          ) : historyMessages.length > 0 || transcript.length > 0 ? (
             <div className="mx-auto max-w-3xl space-y-4" aria-live="polite">
+              {/* "Carregar mais" at the top — fetches older messages before the earliest loaded */}
+              {historyHasMore && (
+                <div className="flex justify-center">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void handleLoadMore()}
+                    className="text-xs text-muted-foreground"
+                  >
+                    Carregar mais
+                  </Button>
+                </div>
+              )}
+
+              {/* Historical messages from disk */}
+              {historyMessages.length > 0 && (
+                <>
+                  <div className="flex items-center gap-3 py-1">
+                    <div className="h-px flex-1 bg-border" />
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Historico
+                    </span>
+                    <div className="h-px flex-1 bg-border" />
+                  </div>
+                  {historyMessages.map((msg) => (
+                    <div key={msg.id} className="opacity-90">
+                      {msg.role === "tool" ? (
+                        <ToolTrace content={msg.content ?? ""} />
+                      ) : msg.role === "agent" ? (
+                        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+                          <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-primary">
+                            Agente pi
+                          </p>
+                          <p className="whitespace-pre-wrap text-sm text-foreground">
+                            {msg.content}
+                          </p>
+                        </div>
+                      ) : msg.role === "system" ? (
+                        <p className="text-xs italic text-muted-foreground">
+                          {msg.content}
+                        </p>
+                      ) : msg.content ? (
+                        <ChatBubble
+                          role={msg.role === "user" ? "user" : "assistant"}
+                          content={msg.content}
+                          timestamp={msg.timestamp}
+                        />
+                      ) : null}
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {/* Divider between history and what is happening right now */}
+              {historyMessages.length > 0 && transcript.length > 0 && (
+                <div className="flex items-center gap-3 py-1">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="shrink-0 text-xs font-medium text-emerald-400">
+                    Ao vivo
+                  </span>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+              )}
+
+              {/* Live transcript from the WebRTC session */}
               {transcript.map((entry) => (
                 <div key={entry.id}>
                   {entry.role === "tool" ? (
@@ -580,8 +762,8 @@ export function App() {
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {materials.length > 0
-                    ? "Clique no botão abaixo e comece a falar. Eu escuto, respondo em voz e uso ferramentas quando preciso."
-                    : "Aponte para um repositório do GitHub ou uma pasta desta máquina, cole um markdown, ou inclua a documentação do computador. Pode somar quantos quiser."}
+                    ? "Clique no botao abaixo e comece a falar. Eu escuto, respondo em voz e uso ferramentas quando preciso."
+                    : "Aponte para um repositorio do GitHub ou uma pasta desta maquina, cole um markdown, ou inclua a documentacao do computador. Pode somar quantos quiser."}
                 </p>
               </div>
             </motion.div>
