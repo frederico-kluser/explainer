@@ -303,9 +303,10 @@ describe("GET /api/conversations/:id/messages pagination", () => {
     expect(status).toBe(200);
     const messages = body.messages as Message[];
     expect(messages).toHaveLength(3);
-    expect(messages[0]!.role).toBe("user");
+    // Newest-first: tool (t3), assistant (t2), user (t1)
+    expect(messages[0]!.role).toBe("tool");
     expect(messages[1]!.role).toBe("assistant");
-    expect(messages[2]!.role).toBe("tool");
+    expect(messages[2]!.role).toBe("user");
   });
 
   it("respects before filter with exact boundary timestamp", async () => {
@@ -327,8 +328,9 @@ describe("GET /api/conversations/:id/messages pagination", () => {
     expect(status).toBe(200);
     const messages = body.messages as Message[];
     expect(messages).toHaveLength(2);
-    expect(messages[0]!.content).toBe("dup-a");
-    expect(messages[1]!.content).toBe("dup-b");
+    // Newest-first within the filtered set
+    expect(messages[0]!.content).toBe("dup-b");
+    expect(messages[1]!.content).toBe("dup-a");
   });
 
   it("returns has_more=true when limit trims the result after before filter", async () => {
@@ -349,7 +351,8 @@ describe("GET /api/conversations/:id/messages pagination", () => {
     expect(status).toBe(200);
     const messages = body.messages as Message[];
     expect(messages).toHaveLength(1);
-    expect(messages[0]!.content).toBe("a");
+    // Newest-first with limit=1: message "b" (t2) is newest before t3
+    expect(messages[0]!.content).toBe("b");
     expect(body.total).toBe(2);
     expect(body.has_more).toBe(true);
   });
