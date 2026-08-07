@@ -180,6 +180,46 @@ router.post("/:id/messages", async (req, res, next) => {
   }
 });
 
+// GET /api/conversations/:id/messages
+//
+// Returns the full message history for the conversation. The optional
+// `?limit=N` and `?before=ISO_DATE` query params let the frontend paginate
+// without loading years of history into memory.
+router.get("/:id/messages", async (req, res, next) => {
+  try {
+    validateUUID(req.params.id!);
+    const conversation = await getConversation(req.params.id!);
+    if (!conversation) {
+      const err = new Error("Conversation not found") as Error & { status: number };
+      err.status = 404;
+      throw err;
+    }
+
+    let messages = conversation.messages ?? [];
+
+    // Filter messages before a given timestamp — used for "load older" pagination.
+    const before = req.query.before;
+    if (typeof before === "string") {
+      messages = messages.filter((m) => m.timestamp < before);
+    }
+
+    const total = messages.length;
+
+    // Cap the number of returned messages.
+    const limitParam = req.query.limit;
+    if (typeof limitParam === "string") {
+      const limit = parseInt(limitParam, 10);
+      if (!isNaN(limit) && limit > 0) {
+        messages = messages.slice(0, limit);
+      }
+    }
+
+    res.json({ messages, total, has_more: messages.length < total });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/conversations/:id/settings
 router.get("/:id/settings", async (req, res, next) => {
   try {
