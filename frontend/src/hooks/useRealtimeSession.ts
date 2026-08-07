@@ -466,6 +466,12 @@ export function useRealtimeSession(
   );
 
   // ── Connect ────────────────────────────────────────────────────
+  //
+  // Everything that needs a user gesture (audio autoplay, mic capture, data
+  // channel) runs BEFORE the first `await`.  Once we yield to the network the
+  // browser discards the gesture context, and Chrome's autoplay policy or
+  // getUserMedia will silently block — no error, just no audio in either
+  // direction.
 
   const connect = useCallback(async () => {
     const id = convRef.current;
@@ -475,47 +481,67 @@ export function useRealtimeSession(
     setError(null);
     setStatus("connecting");
 
+    // ── Phase 1: user-gesture-sensitive setup (no awaits) ──────────
+    // We haven't yielded yet, so the button-press gesture is still live.
+
+    const audio = document.createElement("audio");
+    audio.autoplay = true;
+    audio.style.display = "none";
+    document.body.appendChild(audio);
+    audioRef.current = audio;
+
+    const pc = new RTCPeerConnection();
+    pcRef.current = pc;
+    pc.ontrack = (event) => {
+      audio.srcObject = event.streams[0] ?? null;
+    };
+
+    let stream: MediaStream;
     try {
-      const token = await api.createRealtimeSession(id);
-      modelRef.current = token.model;
-
-      const pc = new RTCPeerConnection();
-      pcRef.current = pc;
-
-      // The model's voice arrives as a media track — no decoding, no buffering
-      // in our code, no time-to-first-audio penalty.
-      const audio = document.createElement("audio");
-      audio.autoplay = true;
-      audio.style.display = "none";
-      document.body.appendChild(audio);
-      audioRef.current = audio;
-      pc.ontrack = (event) => {
-        audio.srcObject = event.streams[0] ?? null;
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
         },
       });
-      streamRef.current = stream;
-      const track = stream.getAudioTracks()[0];
-      if (track) pc.addTrack(track, stream);
+    } catch (err) {
+      // getUserMedia failed — clean up what we set up and surface the error.
+      audio.remove();
+      audioRef.current = null;
+      pc.close();
+      pcRef.current = null;
+      const message = err instanceof Error ? err.message : String(err);
+      setError(
+        /Permission denied|NotAllowedError/i.test(message)
+          ? "Preciso do microfone para conversar. Libere o acesso e tente de novo."
+          : message,
+      );
+      setStatus("error");
+      return;
+    }
+    streamRef.current = stream;
+    const track = stream.getAudioTracks()[0];
+    if (track) pc.addTrack(track, stream);
 
-      const dc = pc.createDataChannel(DATA_CHANNEL_NAME);
-      dcRef.current = dc;
-      dc.addEventListener("message", (message: MessageEvent<string>) => {
-        let parsed: RealtimeServerEvent;
-        try {
-          parsed = JSON.parse(message.data) as RealtimeServerEvent;
-        } catch {
-          return;
-        }
-        handleEvent(parsed);
-      });
-      dc.addEventListener("open", () => setStatus("live"));
+    const dc = pc.createDataChannel(DATA_CHANNEL_NAME);
+    dcRef.current = dc;
+    dc.addEventListener("message", (message: MessageEvent<string>) => {
+      let parsed: RealtimeServerEvent;
+      try {
+        parsed = JSON.parse(message.data) as RealtimeServerEvent;
+      } catch {
+        return;
+      }
+      handleEvent(parsed);
+    });
+    dc.addEventListener("open", () => setStatus("live"));
+
+    // ── Phase 2: network (user gesture no longer needed) ───────────
+
+    try {
+      const token = await api.createRealtimeSession(id);
+      modelRef.current = token.model;
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
