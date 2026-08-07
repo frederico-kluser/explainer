@@ -10,6 +10,7 @@ import sourcesRouter from "./routes/sources.js";
 import agentsRouter from "./routes/agents.js";
 import costsRouter, { creditsRouter } from "./routes/costs.js";
 import browseRouter from "./routes/browse.js";
+import chatRouter from "./routes/chat.js";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
@@ -48,6 +49,7 @@ app.use("/api/agents", agentsRouter);
 app.use("/api/costs", costsRouter);
 app.use("/api/credits", creditsRouter);
 app.use("/api/browse", browseRouter);
+app.use("/api/chat", chatRouter);
 
 // --- 404 for unknown API routes (JSON, not Express' HTML default) ---
 
