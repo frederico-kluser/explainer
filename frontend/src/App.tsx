@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion } from "motion/react";
 import { Plus, RefreshCw, Send } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useMotionUITransition } from "@/components/motion-ui/ui-theme";
 import {
   useToastStack,
@@ -11,6 +10,7 @@ import {
 import { Skeleton } from "@/components/motion-ui/skeleton";
 import { Sidebar } from "@/components/ui/Sidebar";
 import { ChatBubble } from "@/components/ui/ChatBubble";
+import { ChatResponse } from "@/components/ui/ChatResponse";
 import { ToolTrace } from "@/components/ui/ToolTrace";
 import { MicButton, type MicButtonState } from "@/components/ui/MicButton";
 import { MaterialPicker } from "@/components/ui/MaterialPicker";
@@ -20,6 +20,7 @@ import { CostPanel } from "@/components/ui/CostPanel";
 import { Button } from "@/components/ui/button";
 import * as api from "@/lib/api";
 import { useRealtimeSession } from "@/hooks/useRealtimeSession";
+import { useChatInput } from "@/hooks/useChatInput";
 import type {
   Message,
   Conversation,
@@ -76,6 +77,24 @@ export function App() {
     cancelJob,
     setSpeed,
   } = useRealtimeSession(activeConvId);
+
+  // ── Standalone chat (no live session) ──────────────────────────
+  const {
+    sendMessage,
+    isSending: chatSending,
+    reactEvents,
+    directAnswer,
+    error: chatError,
+    clearAnswer,
+  } = useChatInput(activeConvId);
+
+  const [showVoiceHint, setShowVoiceHint] = useState(false);
+
+  // Clear standalone chat state when switching conversations.
+  useEffect(() => {
+    clearAnswer();
+    setShowVoiceHint(false);
+  }, [activeConvId, clearAnswer]);
 
   const micState: MicButtonState =
     status === "connecting"
@@ -478,12 +497,27 @@ export function App() {
   );
 
   // ── Text input ────────────────────────────────────────────────
-  const handleTextSubmit = useCallback(() => {
-    if (!textInput.trim() || status !== "live") return;
-    sendText(textInput.trim());
+  const handleTextSubmit = useCallback(async () => {
+    const trimmed = textInput.trim();
+    if (!trimmed) return;
+
+    // Voice session active — route through the data channel.
+    if (status === "live") {
+      sendText(trimmed);
+      setTextInput("");
+      inputRef.current?.focus();
+      return;
+    }
+
+    // Standalone chat — call the text API.
+    const result = await sendMessage(trimmed);
     setTextInput("");
     inputRef.current?.focus();
-  }, [textInput, status, sendText]);
+
+    if (result?.kind === "conversation") {
+      setShowVoiceHint(true);
+    }
+  }, [textInput, status, sendText, sendMessage]);
 
   const runningJobs = jobs.filter((job) => job.status === "running");
 
@@ -768,6 +802,24 @@ export function App() {
               </div>
             </motion.div>
           )}
+
+          {/* Standalone chat response (no live session) */}
+          {status !== "live" && (
+            <div className="mx-auto mt-4 max-w-3xl">
+              <ChatResponse
+                directAnswer={directAnswer}
+                reactEvents={reactEvents}
+                error={chatError}
+                isSending={chatSending}
+                showVoiceHint={showVoiceHint}
+                canConnectVoice={materials.length > 0}
+                onConnectVoice={() => {
+                  setShowVoiceHint(false);
+                  void connect();
+                }}
+              />
+            </div>
+          )}
         </div>
 
         {/* ── Bottom bar ──────────────────────────────────────── */}
@@ -780,17 +832,12 @@ export function App() {
               disabled={materials.length === 0}
             />
 
-            <div
-              className={cn(
-                "flex flex-1 items-center gap-2 rounded-full border border-border bg-background px-4 py-2",
-                status !== "live" && "opacity-60",
-              )}
-            >
+            <div className="flex flex-1 items-center gap-2 rounded-full border border-border bg-background px-4 py-2">
               <input
                 ref={inputRef}
                 type="text"
                 value={textInput}
-                disabled={status !== "live"}
+                disabled={!activeConvId}
                 onChange={(e) => setTextInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -799,16 +846,18 @@ export function App() {
                   }
                 }}
                 placeholder={
-                  status === "live"
-                    ? "Ou digite, se preferir…"
-                    : "Conecte para conversar"
+                  !activeConvId
+                    ? "Selecione uma conversa para começar"
+                    : status === "live"
+                      ? "Fale ou digite algo..."
+                      : "Digite uma pergunta..."
                 }
                 className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
               <button
                 type="button"
                 onClick={handleTextSubmit}
-                disabled={!textInput.trim() || status !== "live"}
+                disabled={!textInput.trim() || !activeConvId}
                 className="inline-flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                 aria-label="Enviar"
               >

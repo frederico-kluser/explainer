@@ -1,5 +1,6 @@
 import type {
   AgentJob,
+  ChatResponse,
   Conversation,
   ConversationSettings,
   CostSummary,
@@ -45,11 +46,12 @@ async function handleEmpty(response: Response): Promise<void> {
   if (!response.ok) throw await readError(response);
 }
 
-function postJSON(path: string, body: unknown): Promise<Response> {
+function postJSON(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   return fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
@@ -279,4 +281,46 @@ export async function renameConversation(
     body: JSON.stringify({ title }),
   });
   return handleResponse<Conversation>(response);
+}
+
+// ----- Chat -----
+
+/**
+ * Send a text message to the chat endpoint.
+ *
+ * The server classifies the intent and routes accordingly:
+ * - conversation mode (JSON) — casual talk, use voice
+ * - direct task (JSON) — no tools needed, answer ready
+ * - ReAct task (SSE) — tools + reasoning loop, streamed
+ */
+export async function sendChatMessage(
+  message: string,
+  conversationId?: string,
+  signal?: AbortSignal,
+): Promise<ChatResponse> {
+  const response = await postJSON("/api/chat", { message, conversationId }, signal);
+
+  if (!response.ok) throw await readError(response);
+
+  const contentType = response.headers.get("Content-Type") ?? "";
+
+  if (contentType.includes("text/event-stream")) {
+    return { mode: "task", type: "react", stream: response };
+  }
+
+  const json = (await response.json()) as Record<string, unknown>;
+
+  if (json.mode === "conversation") {
+    return { mode: "conversation" };
+  }
+
+  if (json.mode === "task" && json.type === "direct") {
+    return {
+      mode: "task",
+      type: "direct",
+      answer: (json.answer as string) ?? "",
+    };
+  }
+
+  throw new Error("Unexpected chat response format");
 }

@@ -153,3 +153,19 @@ export interface ConversationSettings {
   speed: number;
   voices: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+/** An event from the ReAct SSE stream. */
+export interface ReactEvent {
+  type: "tool_call" | "tool_result" | "answer" | "error";
+  /** Raw JSON for tool events, plain text for answer/error. */
+  data: string;
+}
+
+export type ChatResponse =
+  | { mode: "conversation" }
+  | { mode: "task"; type: "direct"; answer: string }
+  | { mode: "task"; type: "react"; stream: Response };
