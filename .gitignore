@@ -8,6 +8,9 @@ dist/
 # Voice assistant data — stored at $XDG_DATA_HOME/voice-assistant
 # (typically ~/.local/share/voice-assistant on Linux)
 
+# Test coverage (build artifact)
+coverage/
+
 # Editor
 .idea/
 .vscode/

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Explainer — Sessão 2026-08-06</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --amber: #d2991d;
+    --red: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text); max-width: 860px;
+    margin: 40px auto; padding: 0 24px;
+  }
+  h1 { font-size: 1.6em; margin-bottom: 4px; }
+  h2 { font-size: 1.15em; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1em; margin: 18px 0 8px; color: var(--accent); }
+  .meta { color: var(--muted); font-size: 0.85em; margin-bottom: 24px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px 22px; margin: 14px 0;
+  }
+  .card h4 { margin: 0 0 6px; font-size: 0.95em; }
+  .card p { color: var(--muted); font-size: 0.88em; margin: 0; }
+  .wave-badge {
+    display: inline-block; font-size: 0.75em; font-weight: 600;
+    padding: 2px 8px; border-radius: 10px; margin-right: 6px;
+  }
+  .w1 { background: #1a3a2a; color: var(--green); }
+  .w2 { background: #2a2a1a; color: var(--amber); }
+  .w3 { background: #1a2a3a; color: var(--accent); }
+  ul { padding-left: 20px; }
+  li { margin: 4px 0; font-size: 0.92em; }
+  .tag {
+    display: inline-block; font-size: 0.72em; padding: 1px 7px;
+    border-radius: 4px; margin: 0 3px;
+    background: var(--border); color: var(--muted);
+  }
+  .stats { display: flex; gap: 18px; flex-wrap: wrap; margin: 10px 0; }
+  .stat { font-size: 0.88em; }
+  .stat strong { color: var(--accent); }
+  code { font-size: 0.85em; background: var(--border); padding: 1px 5px; border-radius: 3px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+  footer { color: var(--muted); font-size: 0.78em; text-align: center; margin-top: 48px; }
+</style>
+</head>
+<body>
+
+<h1>Explainer — Sessão de Desenvolvimento</h1>
+<p class="meta">6 de agosto de 2026 · 3 ondas · deep-orchestrator v2</p>
+
+<div class="stats">
+  <div class="stat">🖥️ <strong>33</strong> arquivos modificados</div>
+  <div class="stat">🧪 <strong>171</strong> testes backend</div>
+  <div class="stat">🧪 <strong>22</strong> testes frontend</div>
+  <div class="stat">🧩 <strong>~8.700</strong> linhas adicionadas</div>
+  <div class="stat">🔀 <strong>7</strong> squash commits</div>
+</div>
+
+<h2>🎯 Objetivo da Sessão</h2>
+
+<div class="card">
+  <p>Adicionar quatro funcionalidades interconectadas ao Explainer:</p>
+  <ol style="margin-top:8px">
+    <li><strong>Click na conversa → histórico:</strong> exibir mensagens salvas ao selecionar uma conversa na sidebar</li>
+    <li><strong>ReAct com DeepSeek + pi agent:</strong> loop de reasoning com tool calling para tarefas que precisam ler arquivos ou buscar contexto</li>
+    <li><strong>Geração direta + botão copiar:</strong> resposta direta com DeepSeek para tarefas que não envolvem leitura de arquivos</li>
+    <li><strong>Classificação inteligente:</strong> o sistema decide automaticamente se a entrada é conversa, tarefa-com-leitura ou tarefa-sem-leitura</li>
+  </ol>
+</div>
+
+<h2>📋 Ondas de Execução</h2>
+
+<!-- ONDA 1 -->
+<h3><span class="wave-badge w1">ONDA 1</span> Fundação Backend</h3>
+
+<div class="card">
+  <h4>onda1-messages-endpoint</h4>
+  <p><code>GET /api/conversations/:id/messages</code> com paginação (<code>?limit=N&before=ISO_DATE</code>). 18 testes de integração HTTP.</p>
+  <span class="tag">conversations.ts</span><span class="tag">conversations.test.ts</span>
+</div>
+
+<div class="card">
+  <h4>onda1-deepseek-service</h4>
+  <p>Serviço completo para API DeepSeek: <code>deepseekChat</code>, <code>deepseekChatStream</code>, <code>deepseekReasoner</code> com tool calling.
+  Retry em 5xx, timeout 120s, pricing integrado. 45 testes.</p>
+  <span class="tag">deepseek.ts</span><span class="tag">types/index.ts</span><span class="tag">pricing.ts</span><span class="tag">deepseek.test.ts</span><span class="tag">pricing.test.ts</span>
+</div>
+
+<div class="card">
+  <h4>test-onda1-backend-coverage</h4>
+  <p>44 testes adicionais — 100% de cobertura em deepseek.ts e pricing.ts.</p>
+</div>
+
+<hr>
+
+<!-- ONDA 2 -->
+<h3><span class="wave-badge w2">ONDA 2</span> Chat Endpoint + Histórico no Frontend</h3>
+
+<div class="card">
+  <h4>onda2-chat-endpoint</h4>
+  <p><code>POST /api/chat</code> — classificação de intent (conversation/task_with_reading/task_without_reading),
+  modo direto com DeepSeek chat, e ReAct SSE streaming com DeepSeek reasoner + 8 tools.
+  Pi agent async com polling. 14 testes.</p>
+  <span class="tag">chat.ts</span><span class="tag">chat.test.ts</span><span class="tag">index.ts</span>
+</div>
+
+<div class="card">
+  <h4>onda2-conv-history</h4>
+  <p>Exibição do histórico de mensagens ao clicar em uma conversa. Três estados: loading (pulse),
+  conteúdo (histórico + divisor "Ao vivo" + transcript), vazio. Paginação "Carregar mais"
+  com ordenação newest-first. 5 bugs corrigidos via revisão adversarial.</p>
+  <span class="tag">App.tsx</span><span class="tag">api.ts</span><span class="tag">types/index.ts</span><span class="tag">ChatBubble.tsx</span>
+</div>
+
+<hr>
+
+<!-- ONDA 3 -->
+<h3><span class="wave-badge w3">ONDA 3</span> Input Standalone + Chat UI + Botão Copiar</h3>
+
+<div class="card">
+  <h4>onda3-input-chat</h4>
+  <p>Input de texto standalone (funciona sem sessão de voz ativa). Integração com
+  <code>POST /api/chat</code>. Modo direto: card com resposta + CopyButton.
+  Modo ReAct: SSE streaming com tool traces + resposta final + CopyButton.
+  Modo conversa: sugestão para iniciar voz. 6 bugs corrigidos via revisão adversarial
+  (incluindo AbortController no SSE reader, timeout 120s, fallback clipboard).</p>
+  <span class="tag">useChatInput.ts</span><span class="tag">ChatResponse.tsx</span><span class="tag">CopyButton.tsx</span><span class="tag">App.tsx</span><span class="tag">api.ts</span><span class="tag">types/index.ts</span>
+</div>
+
+<h2>🔍 Revisão Adversarial</h2>
+<p style="color:var(--muted);font-size:0.88em">Cada onda passou por revisão adversarial com 2–3 revisores independentes tentando refutar o código.
+Total de bugs encontrados e corrigidos antes do merge: <strong>14</strong> (5 na Onda 2, 9 na Onda 3).</p>
+
+<h2>🏗️ Arquitetura Final</h2>
+
+<div class="card">
+  <h4>Fluxo de classificação</h4>
+  <pre style="font-size:0.82em;color:var(--muted);overflow-x:auto">
+Usuário digita → sendChatMessage() → POST /api/chat → classifyIntent()
+  ├─ "conversation" → sugere iniciar voz (WebRTC + OpenAI Realtime)
+  ├─ "task_without_reading" → deepseekChat() → resposta direta + CopyButton
+  └─ "task_with_reading" → deepseekReasoner() + tools → SSE ReAct stream
+       ├─ tool_call → executa ferramenta (search_source, read_source_file, etc.)
+       ├─ dispatch_pi_agent → pi agent async (read-only) + polling 180s
+       └─ answer → resposta final com CopyButton</pre>
+</div>
+
+<h2>🧪 Cobertura de Testes</h2>
+<ul>
+  <li><strong>Backend (171 testes):</strong> deepseek (45), conversations (18), chat (14), pricing (22), sandbox (19), sources (13), storage (12), source-store (11), tool-executor (9), settings (5), agent-jobs (3)</li>
+  <li><strong>Frontend (22 testes):</strong> api (16), realtime (6)</li>
+  <li><strong>Gate:</strong> lint (0 warnings), typecheck (no errors), build (clean)</li>
+</ul>
+
+<footer>
+  🤖 Construído com deep-orchestrator v2 · <code>do/explainer/20260806-215541-39495</code>
+</footer>
+</body>
+</html>
