@@ -130,3 +130,76 @@ export interface Attachment {
   path: string;
   added_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// DeepSeek API types (OpenAI-compatible chat completions)
+// ---------------------------------------------------------------------------
+
+export interface DeepSeekMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_call_id?: string;
+  tool_calls?: DeepSeekToolCall[];
+}
+
+export interface DeepSeekTool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface DeepSeekToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string; // JSON string
+  };
+}
+
+export interface DeepSeekOptions {
+  model?: string;
+  max_tokens?: number;
+  temperature?: number;
+}
+
+export interface DeepSeekResponse {
+  id: string;
+  choices: {
+    message: DeepSeekMessage;
+    finish_reason: string;
+  }[];
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
+
+export interface DeepSeekStreamChunk {
+  choices: {
+    delta: Partial<DeepSeekMessage>;
+    finish_reason: string | null;
+  }[];
+}
+
+/** Message returned by deepseek-reasoner — includes thinking tokens. */
+export interface DeepSeekReasonerMessage extends DeepSeekMessage {
+  reasoning_content?: string;
+}
+
+export interface DeepSeekReasonerResponse {
+  id: string;
+  choices: {
+    message: DeepSeekReasonerMessage;
+    finish_reason: string;
+  }[];
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}

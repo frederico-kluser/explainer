@@ -168,3 +168,19 @@ export function priceTextResponse(model: string, usage: TextUsage): number {
     per1M(usage.output_tokens ?? 0, rates.text.output)
   );
 }
+
+// ---------------------------------------------------------------------------
+// DeepSeek
+// ---------------------------------------------------------------------------
+
+// DeepSeek pricing (USD per 1M tokens), from https://api-docs.deepseek.com/quick_start/pricing
+// Checked 2026-08-06.
+// deepseek-chat: $0.27/M input, $1.10/M output
+// deepseek-reasoner: $0.55/M input, $2.19/M output (reasoning tokens included)
+const DEEPSEEK_RATES: Record<string, ModelRates> = {
+  "deepseek-chat": { text: { input: 0.27, cachedInput: 0.27, output: 1.1 } },
+  "deepseek-reasoner": { text: { input: 0.55, cachedInput: 0.55, output: 2.19 } },
+};
+
+// Merge DeepSeek rates into the main rate card so ratesFor() finds them.
+Object.assign(RATES, DEEPSEEK_RATES);
