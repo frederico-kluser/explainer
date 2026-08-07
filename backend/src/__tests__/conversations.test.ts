@@ -248,6 +248,160 @@ describe("GET /api/conversations/:id/messages pagination", () => {
   });
 });
 
+
+  it("computes has_more correctly when limit equals the filtered total", async () => {
+    const msgs = [
+      makeMessage("user", "msg-1"),
+      makeMessage("assistant", "msg-2"),
+      makeMessage("user", "msg-3"),
+    ];
+    const convId = await createConvWithMessages("ExactLimit Test", msgs);
+
+    const { status, body } = await fetchJSON(
+      `${baseUrl}/api/conversations/${convId}/messages?limit=3`,
+    );
+
+    expect(status).toBe(200);
+    expect(body.total).toBe(3);
+    expect((body.messages as Message[])).toHaveLength(3);
+    expect(body.has_more).toBe(false);
+  });
+
+  it("computes has_more correctly when limit is larger than total", async () => {
+    const msgs = [makeMessage("user", "only")];
+    const convId = await createConvWithMessages("OversizeLimit Test", msgs);
+
+    const { status, body } = await fetchJSON(
+      `${baseUrl}/api/conversations/${convId}/messages?limit=100`,
+    );
+
+    expect(status).toBe(200);
+    expect(body.total).toBe(1);
+    expect(body.has_more).toBe(false);
+  });
+
+  it("returns messages with tool role", async () => {
+    const t1 = "2025-06-01T00:00:00.000Z";
+    const t2 = "2025-06-01T00:00:01.000Z";
+    const t3 = "2025-06-01T00:00:02.000Z";
+    const msgs = [
+      makeMessage("user", "user msg", t1),
+      makeMessage("assistant", undefined as unknown as string, t2),
+      makeMessage("tool", "tool result", t3),
+    ];
+    const convId = await createConvWithMessages("ToolMsg Test", msgs);
+
+    const { status, body } = await fetchJSON(
+      `${baseUrl}/api/conversations/${convId}/messages`,
+    );
+
+    expect(status).toBe(200);
+    const messages = body.messages as Message[];
+    expect(messages).toHaveLength(3);
+    expect(messages[0]!.role).toBe("user");
+    expect(messages[1]!.role).toBe("assistant");
+    expect(messages[2]!.role).toBe("tool");
+  });
+
+  it("respects before filter with exact boundary timestamp", async () => {
+    const t1 = "2025-07-01T10:00:00.000Z";
+    const t2 = "2025-07-01T10:00:00.000Z";
+    const t3 = "2025-07-01T11:00:00.000Z";
+
+    const msgs = [
+      makeMessage("user", "dup-a", t1),
+      makeMessage("assistant", "dup-b", t2),
+      makeMessage("user", "later", t3),
+    ];
+    const convId = await createConvWithMessages("BeforeExact Test", msgs);
+
+    const { status, body } = await fetchJSON(
+      `${baseUrl}/api/conversations/${convId}/messages?before=${encodeURIComponent(t3)}`,
+    );
+
+    expect(status).toBe(200);
+    const messages = body.messages as Message[];
+    expect(messages).toHaveLength(2);
+    expect(messages[0]!.content).toBe("dup-a");
+    expect(messages[1]!.content).toBe("dup-b");
+  });
+
+  it("returns has_more=true when limit trims the result after before filter", async () => {
+    const t1 = "2025-01-01T00:00:00.000Z";
+    const t2 = "2025-01-02T00:00:00.000Z";
+    const t3 = "2025-01-03T00:00:00.000Z";
+    const msgs = [
+      makeMessage("user", "a", t1),
+      makeMessage("assistant", "b", t2),
+      makeMessage("user", "c", t3),
+    ];
+    const convId = await createConvWithMessages("HasMore Test", msgs);
+
+    const { status, body } = await fetchJSON(
+      `${baseUrl}/api/conversations/${convId}/messages?before=${encodeURIComponent(t3)}&limit=1`,
+    );
+
+    expect(status).toBe(200);
+    const messages = body.messages as Message[];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.content).toBe("a");
+    expect(body.total).toBe(2);
+    expect(body.has_more).toBe(true);
+  });
+
+  it("ignores before filter when it is an array (not a string)", async () => {
+    const msgs = [
+      makeMessage("user", "first"),
+      makeMessage("assistant", "second"),
+    ];
+    const convId = await createConvWithMessages("BeforeArray Test", msgs);
+
+    const { status, body } = await fetchJSON(
+      `${baseUrl}/api/conversations/${convId}/messages?before=a&before=b`,
+    );
+
+    expect(status).toBe(200);
+    expect(body.total).toBe(2);
+  });
+
+  it("excludes messages matching the before timestamp (exclusive comparison)", async () => {
+    const t1 = "2025-11-15T00:00:00.000Z";
+    const t2 = "2025-11-16T00:00:00.000Z";
+
+    const msgs = [
+      makeMessage("user", "keep", t1),
+      makeMessage("assistant", "drop", t2),
+    ];
+    const convId = await createConvWithMessages("ExclusiveBefore Test", msgs);
+
+    const { status, body } = await fetchJSON(
+      `${baseUrl}/api/conversations/${convId}/messages?before=${encodeURIComponent(t2)}`,
+    );
+
+    expect(status).toBe(200);
+    const messages = body.messages as Message[];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.content).toBe("keep");
+    expect(body.total).toBe(1);
+    expect(body.has_more).toBe(false);
+  });
+
+  it("returns the expected response shape", async () => {
+    const msg = makeMessage("user", "shape test");
+    const convId = await createConvWithMessages("Shape Test", [msg]);
+
+    const { status, body } = await fetchJSON(
+      `${baseUrl}/api/conversations/${convId}/messages`,
+    );
+
+    expect(status).toBe(200);
+    expect(body).toHaveProperty("messages");
+    expect(body).toHaveProperty("total");
+    expect(body).toHaveProperty("has_more");
+    expect(Array.isArray(body.messages)).toBe(true);
+    expect(typeof body.total).toBe("number");
+    expect(typeof body.has_more).toBe("boolean");
+  });
 describe("GET /api/conversations/:id (includes messages)", () => {
   it("returns the full conversation with messages array", async () => {
     const msg = makeMessage("user", "Full conv test");

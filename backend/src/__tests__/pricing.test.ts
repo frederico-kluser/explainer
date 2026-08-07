@@ -90,3 +90,151 @@ describe("WEB_SEARCH_CALL_USD", () => {
     expect(WEB_SEARCH_CALL_USD * 1000).toBeCloseTo(10, 6);
   });
 });
+
+describe("priceRealtimeResponse edge cases", () => {
+  it("prices a text-only model (no audio/image rates)", () => {
+    // gpt-5.2 only has text rates — audio and image rates are undefined.
+    const priced = priceRealtimeResponse("gpt-5.2", {
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      input_token_details: { text_tokens: 1_000_000 },
+      output_token_details: { text_tokens: 1_000_000 },
+    });
+
+    // 1M in @ $1.75 + 1M out @ $14 = $15.75
+    expect(priced.usd).toBeCloseTo(15.75, 6);
+    // Audio tokens should be 0 since the model has no audio rates.
+    expect(priced.audio_tokens).toBe(0);
+  });
+
+  it("prices a model with image rates", () => {
+    // gpt-realtime-2.1 has image rates: $5/M input, $0.50/M cached
+    const priced = priceRealtimeResponse("gpt-realtime-2.1", {
+      input_tokens: 1_000_000,
+      input_token_details: {
+        image_tokens: 1_000_000,
+      },
+    });
+
+    // 1M image in @ $5/M = $5.00
+    expect(priced.usd).toBeCloseTo(5.0, 6);
+  });
+
+  it("prices a model without image rates by not charging for image", () => {
+    // gpt-realtime-2 has no image rates defined.
+    const priced = priceRealtimeResponse("gpt-realtime-2", {
+      input_tokens: 1_000_000,
+      input_token_details: {
+        image_tokens: 1_000_000,
+        text_tokens: 1_000_000,
+      },
+    });
+
+    // Only text: 1M @ $4 = $4. No image charge.
+    expect(priced.usd).toBeCloseTo(4.0, 6);
+  });
+
+  it("prices cached image tokens at the cached rate", () => {
+    const priced = priceRealtimeResponse("gpt-realtime-2.1", {
+      input_tokens: 1_000_000,
+      input_token_details: {
+        image_tokens: 1_000_000,
+        cached_tokens: 500_000,
+        cached_tokens_details: { image_tokens: 500_000 },
+      },
+    });
+
+    // 500k fresh @ $5/M + 500k cached @ $0.50/M = $2.50 + $0.25 = $2.75
+    expect(priced.usd).toBeCloseTo(2.75, 6);
+  });
+
+  it("clamps negative token counts to 0 (fresh cannot go negative)", () => {
+    // cached_tokens_details reports more than input_token_details — a data bug.
+    // The Math.max prevents negative fresh counts.
+    const priced = priceRealtimeResponse("gpt-realtime-2.1", {
+      input_tokens: 100,
+      input_token_details: {
+        text_tokens: 100,
+        cached_tokens: 200,
+        cached_tokens_details: { text_tokens: 200 },
+      },
+    });
+
+    // Fresh text = max(0, 100-200) = 0 ; cached text = 200
+    // 0 fresh @ $4 + 200 cached @ $0.40 = $0.00008
+    expect(priced.usd).toBeCloseTo((200 / 1_000_000) * 0.4, 10);
+    expect(priced.input_tokens).toBe(100);
+  });
+
+  it("reports audio_tokens from input and output details", () => {
+    const priced = priceRealtimeResponse("gpt-realtime-2.1", {
+      input_token_details: { audio_tokens: 300 },
+      output_token_details: { audio_tokens: 700 },
+    });
+
+    expect(priced.audio_tokens).toBe(1000);
+  });
+});
+
+describe("ratesFor with DeepSeek models", () => {
+  it("resolves deepseek-chat with correct rates", () => {
+    const rates = ratesFor("deepseek-chat");
+    expect(rates).not.toBeNull();
+    expect(rates!.text.input).toBe(0.27);
+    expect(rates!.text.cachedInput).toBe(0.27);
+    expect(rates!.text.output).toBe(1.1);
+  });
+
+  it("resolves deepseek-reasoner with correct rates", () => {
+    const rates = ratesFor("deepseek-reasoner");
+    expect(rates).not.toBeNull();
+    expect(rates!.text.input).toBe(0.55);
+    expect(rates!.text.cachedInput).toBe(0.55);
+    expect(rates!.text.output).toBe(2.19);
+  });
+});
+
+describe("priceTextResponse edge cases", () => {
+  it("returns 0 for zero tokens", () => {
+    expect(priceTextResponse("gpt-5.2", {})).toBe(0);
+    expect(priceTextResponse("gpt-5.2", {
+      input_tokens: 0,
+      output_tokens: 0,
+    })).toBe(0);
+  });
+
+  it("handles partial cached input details", () => {
+    const usd = priceTextResponse("gpt-5.2", {
+      input_tokens: 1_000_000,
+      output_tokens: 0,
+      input_tokens_details: { cached_tokens: 500_000 },
+    });
+
+    // 500k fresh @ $1.75 + 500k cached @ $0.175 = $0.875 + $0.0875 = $0.9625
+    expect(usd).toBeCloseTo(0.9625, 6);
+  });
+
+  it("returns 0 for unknown model", () => {
+    expect(priceTextResponse("nonexistent-model", {
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+    })).toBe(0);
+  });
+
+  it("discounts cached input for deepseek-chat", () => {
+    // DeepSeek chat: cachedInput = input = $0.27, so cached and fresh cost the same.
+    const usdNoCache = priceTextResponse("deepseek-chat", {
+      input_tokens: 1_000_000,
+      output_tokens: 0,
+    });
+    const usdCached = priceTextResponse("deepseek-chat", {
+      input_tokens: 1_000_000,
+      output_tokens: 0,
+      input_tokens_details: { cached_tokens: 1_000_000 },
+    });
+
+    // Both should be $0.27 since cached rate equals input rate for DeepSeek.
+    expect(usdNoCache).toBeCloseTo(0.27, 6);
+    expect(usdCached).toBeCloseTo(0.27, 6);
+  });
+});
