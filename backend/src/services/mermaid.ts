@@ -243,14 +243,46 @@ function canonicalScan(decoded: string): string {
  * `<<interface>>` is a classDiagram annotation, not markup.
  *
  * mermaid's grammar eats the angle brackets and renders «interface» as text, so
- * the plain identifier form is folded away before the tag check. Anything with
- * `=`, a quote or a slash inside is not an annotation and stays put — that is
- * where an attribute payload would have to live.
+ * the annotation is folded away before the tag check. The fold is fenced in
+ * tightly, because `<<name>>` is not one inert construct to an HTML parser: it
+ * is a literal `<` followed by a *real* `<name>` element. A fold that only
+ * looked at the identifier walked `<<style>>*{position:fixed;…;background:url(…)}`
+ * straight through — a live stylesheet, which `innerHTML` applies even though it
+ * refuses to run `<script>`, so a whole-page defacement plus a network beacon.
+ * Neither an attribute nor an `=` is needed for that, which is why "no `=`
+ * inside" was never the boundary it looked like.
+ *
+ * Three conditions now hold together, and each one closes a way in:
+ *   - only in a classDiagram, the one grammar that has annotations at all;
+ *   - only where that grammar accepts one — a line of its own, or the
+ *     `<<interface>> Classe` form — which is what leaves no room for the
+ *     `*{…}` a stylesheet payload needs;
+ *   - only a plain identifier, so no quote, slash or angle bracket rides along.
+ * Anything else keeps its `<` and meets `HTML_TAG` unchanged.
  */
-const CLASS_ANNOTATION = /<<[A-Za-z0-9_.\- ]{1,40}>>/g;
+const CLASS_ANNOTATION =
+  /^[^\S\n]*<<[A-Za-z][A-Za-z0-9_ -]{0,39}>>[^\S\n]*(?:[A-Za-z_][A-Za-z0-9_~.]{0,63})?[^\S\n]*$/gm;
 
-/** Any tag at all. A list of six names did not contain `img` or `video`. */
-const HTML_TAG = /<\s*\/?\s*[a-zA-Z]/;
+/**
+ * Any tag at all. A list of six names did not contain `img` or `video`.
+ *
+ * No whitespace is tolerated between `<`, the optional `/` and the letter,
+ * because the HTML tokenizer tolerates none either: the tag-open state needs an
+ * ASCII letter *immediately* after `<`, so `< y` and `< 5` are text and never
+ * become an element. The earlier `<\s*\/?\s*[a-zA-Z]` rejected `A["x < y"]`, an
+ * ordinary mathematical comparison, and every false rejection here costs a paid
+ * retry on a diagram that was already correct.
+ *
+ * This does not reopen the escaped spellings: `&lt;script&gt;`, `#60;script#62;`
+ * and `"<\nscript>"` are all folded back to a bare `<script>` by `decodeLayers`
+ * and `canonicalScan` before this pattern ever runs.
+ *
+ * `<<name>>` is not an exception to the rule and only looks like one: the first
+ * `<` is inert and the second opens a live element. The only thing that ever
+ * removes it from this scan is `CLASS_ANNOTATION` above, inside the one grammar
+ * position where mermaid itself consumes the brackets.
+ */
+const HTML_TAG = /<\/?[a-zA-Z]/;
 
 /** Any handler. A list of nine names did not contain `onpointerover`. */
 const EVENT_HANDLER = /\bon[a-z]+\s*=/i;
@@ -324,7 +356,9 @@ function dangerousProblems(source: string, kind: MermaidDiagramKind | undefined)
   const problems: string[] = [];
   const decoded = decodeLayers(source);
   const scan = canonicalScan(decoded);
-  const markup = scan.replace(CLASS_ANNOTATION, " ");
+  // Only a classDiagram has annotations, and a diagram that never declared its
+  // kind is read under the strictest rule available — so neither gets the fold.
+  const markup = kind === "classDiagram" ? scan.replace(CLASS_ANNOTATION, " ") : scan;
 
   if (HTML_TAG.test(markup)) {
     problems.push(
@@ -670,6 +704,44 @@ function retryPrompt(
   ].join("\n");
 }
 
+/**
+ * The correction for a truncated answer, which is not the correction for a
+ * wrong one.
+ *
+ * Sending the fragment back with "fix these problems" asks the model to repair
+ * syntax that was never broken, and it answers with the same too-long diagram —
+ * so the fragment is not shown to it at all and the only instruction is: draw
+ * less.
+ */
+function shorterPrompt(request: MermaidRequest): string {
+  return [
+    firstPrompt(request),
+    "",
+    "A tentativa anterior foi CORTADA no meio: a resposta passou do limite de tokens.",
+    "Desenhe a MESMA ideia, bem menor: no maximo dez nos, rotulos de poucas palavras,",
+    "sem ramos secundarios e sem detalhe que nao mude o entendimento.",
+  ].join("\n");
+}
+
+/**
+ * The correction for an answer the provider itself stopped, which is neither of
+ * the other two.
+ *
+ * There is no syntax to point at — the fragment proves nothing about the
+ * model's mermaid — and nothing says the drawing was too big, so asking for a
+ * smaller one corrects a size that was never wrong. The only thing worth
+ * changing is the wording.
+ */
+function plainerPrompt(request: MermaidRequest, reason: string): string {
+  return [
+    firstPrompt(request),
+    "",
+    `A tentativa anterior foi interrompida pelo provedor. Motivo relatado: ${reason}.`,
+    "Desenhe a MESMA ideia com outras palavras: rotulos neutros e curtos, sem citar",
+    "nome proprio, dado pessoal ou termo que possa ser lido como conteudo sensivel.",
+  ].join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // The model call
 // ---------------------------------------------------------------------------
@@ -679,13 +751,45 @@ export interface MermaidCompletion {
   /** Absent when the caller injects a stub; present on the real API path. */
   usage?: TextUsage;
   model?: string;
+  /**
+   * The model ran out of output budget mid-answer, so `text` is a fragment.
+   *
+   * Kept apart from the validation problems because half a diagram fails the
+   * bracket scan and is then indistinguishable from a model that cannot write
+   * mermaid — and the correction the two need is not the same one.
+   *
+   * Only `max_output_tokens` sets this. The other reasons are `stoppedEarly`.
+   */
+  truncated?: boolean;
+  /**
+   * The answer stopped early for a reason that is not the token budget —
+   * `content_filter` being the one that actually happens.
+   *
+   * Separate from `truncated` because the two need opposite corrections and one
+   * of them is actively wrong for the other: answering a filtered stop with
+   * "the same drawing, smaller" tells the user their diagram was too big, and
+   * spends the retry shrinking something whose size was never the problem.
+   */
+  stoppedEarly?: string;
 }
 
-export type MermaidCompleteFn = (prompt: string) => Promise<MermaidCompletion>;
+export type MermaidCompleteFn = (
+  prompt: string,
+  signal?: AbortSignal,
+) => Promise<MermaidCompletion>;
 
 export interface MermaidOptions {
   /** Injected by tests and by any caller that already has a text client. */
   complete?: MermaidCompleteFn;
+  /**
+   * Attempts this call may spend, clamped into 1..MAX_ATTEMPTS.
+   *
+   * A caller that is holding a spoken turn open cannot afford the default: three
+   * sequential 45 s calls outlive the conversation waiting for them.
+   */
+  attempts?: number;
+  /** Cancels the in-flight call and stops the loop between attempts. */
+  signal?: AbortSignal;
 }
 
 const OPENAI_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
@@ -694,6 +798,9 @@ interface ResponsesPayload {
   model?: string;
   usage?: TextUsage;
   output?: Array<{ type?: string; content?: Array<{ text?: string }> }>;
+  /** `"completed"` | `"incomplete"` | … — a 200 does not mean a whole answer. */
+  status?: string;
+  incomplete_details?: { reason?: string };
 }
 
 /**
@@ -705,12 +812,20 @@ interface ResponsesPayload {
  * Widening that function belongs to whoever owns `openai.ts`; until then the
  * call lives here, sharing its model id and its error type.
  */
-async function completeWithUsage(prompt: string): Promise<MermaidCompletion> {
+async function completeWithUsage(
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<MermaidCompletion> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new OpenAIError(500, "OPENAI_API_KEY is not set on the server");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
+  // The caller's budget is shorter than this call's own, so its abort has to
+  // reach the socket: without the relay the fetch keeps a spoken turn waiting
+  // long after the caller gave up on it.
+  const relay = () => controller.abort();
+  signal?.addEventListener("abort", relay, { once: true });
 
   try {
     const response = await fetch(`${OPENAI_BASE}/responses`, {
@@ -751,10 +866,27 @@ async function completeWithUsage(prompt: string): Promise<MermaidCompletion> {
       }
     }
 
+    // `max_output_tokens` is shared with the reasoning tokens, so a diagram this
+    // model thought hard about arrives cut in half with a 200 and no error field.
+    // Any other reason is not a size problem, and the correction for a size
+    // problem is the wrong one for it — so the two are reported apart. A missing
+    // reason on an `incomplete` is read as the budget, which is what it is in
+    // every case the API documents.
+    const reason = payload.incomplete_details?.reason;
+    const incomplete = payload.status === "incomplete";
+    const truncated = incomplete && (reason === undefined || reason === "max_output_tokens");
+    if (incomplete && !truncated) {
+      console.warn(`[mermaid] the model stopped early: ${reason}`);
+    }
+
     return {
       text: chunks.join("\n").trim(),
       usage: payload.usage ?? {},
       model: payload.model ?? TEXT_MODEL,
+      ...(truncated ? { truncated: true } : {}),
+      // Never the empty string: the generation loop branches on this being
+      // truthy, and an unnamed reason is still not the token budget.
+      ...(incomplete && !truncated ? { stoppedEarly: reason || "desconhecido" } : {}),
     };
   } catch (err) {
     if (err instanceof OpenAIError) throw err;
@@ -764,6 +896,7 @@ async function completeWithUsage(prompt: string): Promise<MermaidCompletion> {
     throw new OpenAIError(502, err instanceof Error ? err.message : String(err));
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", relay);
   }
 }
 
@@ -792,7 +925,7 @@ async function bookCost(
     );
   }
   await addCost(conversationId, {
-    source: "text",
+    source: "mermaid",
     usd: priceTextResponse(model, usage),
     detail: `mermaid (tentativa ${attempt})`,
     tokens: {
@@ -803,9 +936,107 @@ async function bookCost(
   });
 }
 
+/**
+ * Roughly how many characters a token is worth, for the one call nobody will
+ * ever report usage for.
+ *
+ * Four is the ratio OpenAI publishes for English and it slightly over-counts
+ * Portuguese, which is the direction to err in here: the entry exists so an
+ * attempt that happened stops reading as free, not so it reads as exact.
+ */
+const CHARS_PER_TOKEN = 4;
+
+/**
+ * Bill an attempt whose answer we walked away from.
+ *
+ * The tool layer's 25 s ceiling aborts a call the provider is already serving:
+ * the prompt was read and tokens were being generated, and closing the socket
+ * un-charges neither. Leaving it at zero is exactly the failure this ledger
+ * documents everywhere else — a meter that reports nothing for work that
+ * happened — so the input side is priced from the prompt we know we sent. The
+ * output side stays at zero because nothing on this path ever reports it, which
+ * makes the entry an under-estimate and never an invented number.
+ */
+async function bookAbandoned(
+  conversationId: string,
+  prompt: string,
+  attempt: number,
+): Promise<void> {
+  const inputTokens = Math.ceil(prompt.length / CHARS_PER_TOKEN);
+  console.warn(
+    `[mermaid] attempt ${attempt} was abandoned in flight; booking an estimate of ` +
+      `${inputTokens} input token(s) and no output`,
+  );
+  // The same trap `bookCost` names: an id off the rate card prices at exactly
+  // zero, and an estimate that rounds to nothing is the zero we came to avoid.
+  if (!ratesFor(TEXT_MODEL)) {
+    console.warn(`[mermaid] model "${TEXT_MODEL}" is not on the rate card; the estimate books usd=0`);
+  }
+  await addCost(conversationId, {
+    source: "mermaid",
+    usd: priceTextResponse(TEXT_MODEL, { input_tokens: inputTokens }),
+    detail: `mermaid (tentativa ${attempt}, interrompida: estimativa)`,
+    tokens: { input: inputTokens, output: 0, cached: 0 },
+  });
+}
+
+/** Our own 45 s ceiling, which fires only after the request was served that long. */
+function servedThenDropped(err: unknown): boolean {
+  return err instanceof OpenAIError && err.status === 504;
+}
+
 // ---------------------------------------------------------------------------
 // Generation
 // ---------------------------------------------------------------------------
+
+/** What the truncation branch reports, as a problem and to the user. */
+const TRUNCATED_PROBLEM = "a resposta do modelo foi cortada no limite de tokens";
+const TRUNCATED_MESSAGE =
+  "O desenho ficou grande demais e foi cortado no meio antes de terminar. " +
+  "Me pede uma versao mais simples, com menos partes, que eu desenho na hora.";
+
+/** The same pair for an answer the provider stopped for a reason of its own. */
+const STOPPED_PROBLEM = "o provedor interrompeu a resposta, motivo";
+const STOPPED_MESSAGE =
+  "Nao consegui terminar esse desenho: a resposta parou antes do fim. " +
+  "Me pede a mesma ideia com outras palavras que eu tento de novo.";
+
+/**
+ * What the user hears when the attempts run out, which is not what the log gets.
+ *
+ * `problems` is the validator talking to itself: node ids, brackets, arrows and
+ * sixty verbatim characters of the source it just refused. The tool layer reads
+ * this message out loud exactly as written, so interpolating that diagnosis
+ * spoke `Veio "grafico TD A["Navegador"] --> B["Backend"]"` to a listener — the
+ * very thing `CAPTION_SYNTAX` exists to keep out of the caption, arriving one
+ * layer up. The diagnosis still exists; it goes to `problems` and to the log.
+ */
+function gaveUpMessage(attempts: number): string {
+  return (
+    `Tentei ${attempts} vezes e o desenho nao saiu do jeito certo. ` +
+    "Me explica de outro jeito o que voce quer no diagrama que eu tento de novo."
+  );
+}
+
+/** Which correction the next attempt gets, given how the last one failed. */
+function nextPrompt(
+  request: MermaidRequest,
+  attempt: number,
+  state: { cutShort: boolean; stoppedEarly: string; previous: string; problems: string[] },
+): string {
+  if (attempt === 1) return firstPrompt(request);
+  if (state.cutShort) return shorterPrompt(request);
+  if (state.stoppedEarly) return plainerPrompt(request, state.stoppedEarly);
+  return retryPrompt(request, state.previous, state.problems);
+}
+
+/** Cancelled from outside: spoken, because the tool layer reads this out. */
+function cancelledError(): MermaidError {
+  return new MermaidError(
+    "A geracao do diagrama foi interrompida antes de terminar.",
+    ["cancelado"],
+  );
+}
 
 /**
  * Turn instructions into a diagram, correcting the model with its own errors.
@@ -828,15 +1059,57 @@ export async function generateMermaid(
   }
 
   const complete = options.complete ?? completeWithUsage;
+  const signal = options.signal;
+  const limit = clampAttempts(options.attempts);
   let problems: string[] = [];
   let previous = "";
+  let cutShort = false;
+  let stoppedEarly = "";
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const prompt =
-      attempt === 1 ? firstPrompt(request) : retryPrompt(request, previous, problems);
+  for (let attempt = 1; attempt <= limit; attempt += 1) {
+    if (signal?.aborted) throw cancelledError();
 
-    const completion = await complete(prompt);
+    const prompt = nextPrompt(request, attempt, { cutShort, stoppedEarly, previous, problems });
+
+    let completion: MermaidCompletion;
+    try {
+      completion = await complete(prompt, signal);
+    } catch (err) {
+      // By the time either ceiling fires the provider has read the prompt and
+      // started generating, and it charges for both however the socket ends.
+      // Booking nothing here would hand the meter a call that cost real money
+      // and report it as free.
+      if (signal?.aborted || servedThenDropped(err)) {
+        await bookAbandoned(conversationId, prompt, attempt);
+      }
+      // An abort surfaces as whatever the client throws; the caller asked for a
+      // cancellation and should hear about a cancellation.
+      if (signal?.aborted) throw cancelledError();
+      throw err;
+    }
     await bookCost(conversationId, completion, attempt);
+
+    // A fragment is not evidence about the model's mermaid. Validating it would
+    // fill `problems` with bracket errors it never made and spend the next
+    // attempt correcting them instead of asking for a smaller drawing.
+    if (completion.truncated) {
+      cutShort = true;
+      stoppedEarly = "";
+      problems = [TRUNCATED_PROBLEM];
+      previous = "";
+      continue;
+    }
+    // Same reasoning, opposite correction: the fragment proves nothing, and the
+    // one thing we know is that its size was not the complaint.
+    if (completion.stoppedEarly) {
+      cutShort = false;
+      stoppedEarly = completion.stoppedEarly;
+      problems = [`${STOPPED_PROBLEM}: ${completion.stoppedEarly}`];
+      previous = "";
+      continue;
+    }
+    cutShort = false;
+    stoppedEarly = "";
 
     const { caption, source } = splitCompletion(completion.text ?? "");
     const cleaned = stripFences(source);
@@ -857,11 +1130,17 @@ export async function generateMermaid(
     previous = cleaned;
   }
 
-  throw new MermaidError(
-    `Tentei ${MAX_ATTEMPTS} vezes e o diagrama continuou invalido. ` +
-      `O que deu errado: ${problems.join(" ")} ` +
-      "Me explica de outro jeito o que voce quer no desenho que eu tento de novo.",
-    problems,
-    previous,
-  );
+  if (cutShort) throw new MermaidError(TRUNCATED_MESSAGE, problems, previous);
+  if (stoppedEarly) throw new MermaidError(STOPPED_MESSAGE, problems, previous);
+
+  // The diagnosis leaves here in `problems` and in the log, and nowhere else:
+  // see `gaveUpMessage` for why it must not leave in the message.
+  console.warn(`[mermaid] gave up after ${limit} attempt(s): ${problems.join(" ")}`);
+  throw new MermaidError(gaveUpMessage(limit), problems, previous);
+}
+
+/** A caller asking for more than three gets three; asking for none gets one. */
+function clampAttempts(requested: number | undefined): number {
+  if (requested === undefined || !Number.isFinite(requested)) return MAX_ATTEMPTS;
+  return Math.min(MAX_ATTEMPTS, Math.max(1, Math.trunc(requested)));
 }

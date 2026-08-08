@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll, vi } from "vitest";
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -338,9 +338,11 @@ describe("generateMermaid", () => {
 
     const summary = await costs.getCosts(conversationId);
     expect(summary.entries).toHaveLength(2);
-    expect(summary.entries.every((entry) => entry.source === "text")).toBe(true);
+    // Its own ledger source, so a diagram is never mistaken for a text call.
+    expect(summary.entries.every((entry) => entry.source === "mermaid")).toBe(true);
+    expect(summary.by_source.text).toBe(0);
     // 1000 input @ 0.35/1M + 200 output @ 2.8/1M, twice.
-    expect(summary.by_source.text).toBeCloseTo(0.00091 * 2, 8);
+    expect(summary.by_source.mermaid).toBeCloseTo(0.00091 * 2, 8);
     expect(summary.entries[0]?.detail).toMatch(/mermaid/);
   });
 
@@ -379,8 +381,331 @@ describe("generateMermaid", () => {
     // The entry is still written, at the only price the rate card can name.
     const summary = await costs.getCosts(conversationId);
     expect(summary.entries).toHaveLength(1);
-    expect(summary.by_source.text).toBe(0);
+    expect(summary.by_source.mermaid).toBe(0);
     warn.mockRestore();
+  });
+
+  it("spends only the attempts the caller allows", async () => {
+    const stub = scripted(["nao sei desenhar isso, desculpa"]);
+
+    await expect(
+      mermaid.generateMermaid(request, randomUUID(), { ...stub, attempts: 2 }),
+    ).rejects.toThrow(/Tentei 2 vezes/);
+    expect(stub.prompts).toHaveLength(2);
+  });
+
+  it("stops between attempts once the caller aborts", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+
+    const failure = await mermaid
+      .generateMermaid(request, randomUUID(), {
+        signal: controller.signal,
+        complete: async () => {
+          calls += 1;
+          controller.abort();
+          return { text: "nao sei desenhar isso" };
+        },
+      })
+      .catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(mermaid.MermaidError);
+    expect((failure as InstanceType<typeof mermaid.MermaidError>).message).toMatch(
+      /interrompida/,
+    );
+    // The second attempt never happens, which is the whole point of the signal.
+    expect(calls).toBe(1);
+  });
+});
+
+// A reasoning model shares `max_output_tokens` with its thinking, so a diagram
+// it thought hard about comes back cut in half — with a 200, no error, and
+// bracket errors the model never made. Corrected as a syntax problem it answers
+// with the same too-long diagram and burns the whole budget.
+describe("generateMermaid tells a truncated answer apart from a wrong one", () => {
+  const request = { instructions: "desenha a arquitetura inteira do sistema" };
+
+  it("asks for a smaller drawing instead of correcting syntax", async () => {
+    const prompts: string[] = [];
+    let call = 0;
+
+    const diagram = await mermaid.generateMermaid(request, randomUUID(), {
+      complete: async (prompt: string) => {
+        prompts.push(prompt);
+        call += 1;
+        return call === 1
+          ? { text: 'flowchart TD\n    A["Inicio"] --> B["Meio"] --> C["', truncated: true }
+          : { text: `LEGENDA: Versao curta do desenho.\nDIAGRAMA:\n${SIMPLE}` };
+      },
+    });
+
+    expect(diagram.source).toBe(SIMPLE);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toMatch(/CORTADA no meio/);
+    // The fragment is never handed back as a diagram to repair.
+    expect(prompts[1]).not.toMatch(/Diagrama recusado/);
+    expect(prompts[1]).not.toMatch(/Faltou fechar/);
+  });
+
+  it("gives up with its own message, not the invalid-syntax one", async () => {
+    const conversationId = randomUUID();
+    const failure = await mermaid
+      .generateMermaid(request, conversationId, {
+        attempts: 2,
+        complete: async () => ({
+          text: 'flowchart TD\n    A["Inicio',
+          truncated: true,
+          usage: { input_tokens: 1_000, output_tokens: 200 },
+          model: "gpt-5.2-mini",
+        }),
+      })
+      .catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(mermaid.MermaidError);
+    const message = (failure as InstanceType<typeof mermaid.MermaidError>).message;
+    expect(message).toMatch(/cortado no meio/);
+    expect(message).not.toMatch(/continuou invalido/);
+
+    // Cut short or not, the provider answered twice and charged for both.
+    const summary = await costs.getCosts(conversationId);
+    expect(summary.entries).toHaveLength(2);
+    expect(summary.by_source.mermaid).toBeCloseTo(0.00091 * 2, 8);
+  });
+});
+
+// `status: "incomplete"` is not one condition. `max_output_tokens` means the
+// drawing was too big and the fix is to draw less; `content_filter` means the
+// provider stopped for its own reasons and the size was never the complaint.
+// Answering the second like the first tells the user their diagram was too big
+// and spends the retry shrinking something that did not need shrinking.
+describe("generateMermaid tells the token budget apart from any other early stop", () => {
+  const request = { instructions: "desenha o fluxo de uma chamada de ferramenta" };
+
+  it("asks for different wording, not a smaller drawing, when the provider stops", async () => {
+    const prompts: string[] = [];
+    let call = 0;
+
+    const diagram = await mermaid.generateMermaid(request, randomUUID(), {
+      complete: async (prompt: string) => {
+        prompts.push(prompt);
+        call += 1;
+        return call === 1
+          ? { text: "flowchart TD\n    A[", stoppedEarly: "content_filter" }
+          : { text: `LEGENDA: Outra redacao do mesmo desenho.\nDIAGRAMA:\n${SIMPLE}` };
+      },
+    });
+
+    expect(diagram.source).toBe(SIMPLE);
+    expect(prompts[1]).toMatch(/interrompida pelo provedor/);
+    expect(prompts[1]).toMatch(/content_filter/);
+    // Neither of the other two corrections: nothing was too big and nothing
+    // about the fragment's syntax is evidence of anything.
+    expect(prompts[1]).not.toMatch(/CORTADA no meio/);
+    expect(prompts[1]).not.toMatch(/Diagrama recusado/);
+  });
+
+  it("gives up with a message that does not blame the size", async () => {
+    const failure = await mermaid
+      .generateMermaid(request, randomUUID(), {
+        attempts: 2,
+        complete: async () => ({ text: "flowchart TD\n    A[", stoppedEarly: "content_filter" }),
+      })
+      .catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(mermaid.MermaidError);
+    const error = failure as InstanceType<typeof mermaid.MermaidError>;
+    expect(error.message).toMatch(/parou antes do fim/);
+    expect(error.message).not.toMatch(/grande demais/);
+    expect(error.message).not.toMatch(/continuou invalido/);
+    // The reason is not lost, it is just not the sentence the user hears.
+    expect(error.problems.join(" ")).toMatch(/content_filter/);
+  });
+
+  // The mapping itself, at the only place it happens: a 200 whose body says
+  // `incomplete`. The old code read every reason as the token budget.
+  describe("reading `incomplete_details.reason` off the Responses payload", () => {
+    const originalFetch = globalThis.fetch;
+    const originalKey = process.env.OPENAI_API_KEY;
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalKey;
+    });
+
+    /** One canned Responses body, never a socket. */
+    function answerWith(reason: string | undefined): void {
+      process.env.OPENAI_API_KEY = "sk-test-not-a-real-key";
+      globalThis.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            model: "gpt-5.2-mini",
+            status: "incomplete",
+            ...(reason === undefined ? {} : { incomplete_details: { reason } }),
+            usage: { input_tokens: 10, output_tokens: 1 },
+            output: [{ type: "message", content: [{ text: "flowchart TD\n    A[" }] }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )) as typeof globalThis.fetch;
+    }
+
+    it("treats max_output_tokens as the drawing being too big", async () => {
+      answerWith("max_output_tokens");
+
+      const failure = await mermaid
+        .generateMermaid(request, randomUUID(), { attempts: 1 })
+        .catch((err: unknown) => err);
+
+      expect((failure as Error).message).toMatch(/grande demais/);
+    });
+
+    it("does not treat content_filter as the drawing being too big", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      answerWith("content_filter");
+
+      const failure = await mermaid
+        .generateMermaid(request, randomUUID(), { attempts: 1 })
+        .catch((err: unknown) => err);
+
+      expect((failure as Error).message).toMatch(/parou antes do fim/);
+      expect((failure as Error).message).not.toMatch(/grande demais/);
+      expect(warn.mock.calls.flat().join(" ")).toMatch(/stopped early: content_filter/);
+      warn.mockRestore();
+    });
+
+    // An `incomplete` with no reason at all is the budget in every case the API
+    // documents, so it keeps the correction it always had.
+    it("reads a missing reason as the token budget", async () => {
+      answerWith(undefined);
+
+      const failure = await mermaid
+        .generateMermaid(request, randomUUID(), { attempts: 1 })
+        .catch((err: unknown) => err);
+
+      expect((failure as Error).message).toMatch(/grande demais/);
+    });
+  });
+});
+
+// The ledger's rule, from `tracking-costs-and-credits`: a call the provider
+// served has to show up, and a zero is worse than an estimate because nothing
+// says it is wrong. The 25 s ceiling in the tool layer aborts a request that
+// was read and was already generating, and both halves are charged.
+describe("generateMermaid bills the attempt the ceiling cut off", () => {
+  const request = { instructions: "desenha a arquitetura inteira do sistema" };
+
+  it("books an estimate instead of nothing when the caller aborts mid-call", async () => {
+    const conversationId = randomUUID();
+    const controller = new AbortController();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const failure = await mermaid
+      .generateMermaid(request, conversationId, {
+        signal: controller.signal,
+        complete: async (_prompt: string, signal?: AbortSignal) => {
+          controller.abort();
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          void signal;
+          throw error;
+        },
+      })
+      .catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(mermaid.MermaidError);
+    expect((failure as Error).message).toMatch(/interrompida/);
+
+    const summary = await costs.getCosts(conversationId);
+    expect(summary.entries).toHaveLength(1);
+    expect(summary.entries[0]?.detail).toMatch(/interrompida: estimativa/);
+    // Priced from the prompt we know we sent — an under-estimate, never a zero.
+    expect(summary.by_source.mermaid).toBeGreaterThan(0);
+    expect(summary.entries[0]?.tokens?.input).toBeGreaterThan(0);
+    expect(summary.entries[0]?.tokens?.output).toBe(0);
+    expect(warn.mock.calls.flat().join(" ")).toMatch(/abandoned in flight/);
+    warn.mockRestore();
+  });
+
+  // A failure that never reached the provider is not a served call, and booking
+  // it would put money in the ledger for a request nobody answered.
+  it("books nothing when the call never left the process", async () => {
+    const conversationId = randomUUID();
+
+    await expect(
+      mermaid.generateMermaid(request, conversationId, {
+        complete: async () => {
+          throw new TypeError("fetch is not a function");
+        },
+      }),
+    ).rejects.toThrow(/fetch is not a function/);
+
+    const summary = await costs.getCosts(conversationId);
+    expect(summary.entries).toEqual([]);
+  });
+});
+
+// `problems` is the validator talking to itself — bracket counts, node ids and
+// sixty verbatim characters of the source it refused — and this message is read
+// out loud, verbatim, by `deliberation-tools.ts`. Interpolating one into the
+// other spoke `Veio "grafico TD A["Navegador"] --> B["Backend"]"` at a listener:
+// the very thing the caption filter above exists to prevent, one layer up.
+describe("the exhaustion message is spoken, and the diagnosis is not", () => {
+  const request = { instructions: "desenha o fluxo de uma chamada de ferramenta" };
+
+  // The same rule `cleanCaption` applies, so the two boundaries cannot drift.
+  const CAPTION_SYNTAX = /[[\]{}|<>`]|%%|-{1,2}\)|\(\(|\)\)|[A-Za-z0-9_]\(|::/;
+
+  const refused: Record<string, string> = {
+    "an undeclared type, with the source echoed back":
+      'grafico TD A["Navegador"] --> B["Backend do Explainer"] --> C["Modelo de voz"]',
+    "unbalanced brackets, which name the symbols":
+      'flowchart TD\n    A["Navegador" --> B{"Decide"\n    B --> C',
+    'the "graph" spelling, which names two keywords':
+      'graph TD\n    A["Navegador"] --> B["Backend"]',
+  };
+
+  for (const [name, answer] of Object.entries(refused)) {
+    it(`says nothing a listener cannot hear when the model sends ${name}`, async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const failure = await mermaid
+        .generateMermaid(request, randomUUID(), {
+          attempts: 2,
+          complete: async () => ({ text: `LEGENDA: ok\nDIAGRAMA:\n${answer}` }),
+        })
+        .catch((err: unknown) => err);
+
+      const error = failure as InstanceType<typeof mermaid.MermaidError>;
+      expect(error).toBeInstanceOf(mermaid.MermaidError);
+      expect(error.message).not.toMatch(CAPTION_SYNTAX);
+      expect(error.message).toMatch(/Tentei 2 vezes/);
+
+      // Nothing is lost: the diagnosis is on the error and in the log, which is
+      // what the retry loop and a human reading stderr actually need.
+      expect(error.problems.length).toBeGreaterThan(0);
+      expect(error.lastSource).toBe(answer.trim());
+      expect(warn.mock.calls.flat().join(" ")).toMatch(/gave up after 2 attempt/);
+      warn.mockRestore();
+    });
+  }
+
+  // The other two exhaustion messages were already spoken; they are asserted
+  // here so the three cannot drift apart.
+  it("keeps the truncation and early-stop messages speakable too", async () => {
+    for (const [completion, expected] of [
+      [{ text: "flowchart TD\n    A[", truncated: true }, /grande demais/],
+      [{ text: "flowchart TD\n    A[", stoppedEarly: "content_filter" }, /parou antes do fim/],
+    ] as const) {
+      const failure = await mermaid
+        .generateMermaid(request, randomUUID(), {
+          attempts: 1,
+          complete: async () => completion,
+        })
+        .catch((err: unknown) => err);
+
+      expect((failure as Error).message).toMatch(expected);
+      expect((failure as Error).message).not.toMatch(CAPTION_SYNTAX);
+    }
   });
 });
 
@@ -465,6 +790,15 @@ flowchart TD
     Navegador`,
     "a percent sign inside a label": `flowchart TD
     A["Cobertura de 50% dos casos"] --> B["Fim"]`,
+    // `<` only opens a tag when a letter follows it immediately, so a spaced
+    // comparison is arithmetic. The old check read it as markup and burned a
+    // paid retry on a diagram that was already right.
+    "a mathematical comparison in a label": `flowchart TD
+    A["tempo < 5 segundos"] --> B["tempo >= 5 segundos"]`,
+    "a comparison against a name, still spaced": `flowchart TD
+    A["custo < receita"] --> B["ok"]`,
+    "a less-than glued to a digit": `flowchart TD
+    A["latencia <5ms"] --> B["ok"]`,
   };
 
   for (const [name, source] of Object.entries(realistic)) {
@@ -475,14 +809,55 @@ flowchart TD
     });
   }
 
-  it("accepts every legitimate diagram in the corpus, all 23 of them", () => {
+  it("accepts every legitimate diagram in the corpus, all 27 of them", () => {
     const corpus = { ...VALID, ...realistic };
     const rejected = Object.entries(corpus)
       .filter(([, source]) => !mermaid.validateMermaid(source).ok)
       .map(([name]) => name);
 
-    expect(Object.keys(corpus).length).toBeGreaterThanOrEqual(23);
+    expect(Object.keys(corpus).length).toBeGreaterThanOrEqual(27);
     expect(rejected).toEqual([]);
+  });
+
+  // The other side of the same boundary. `<` is only text when what follows it
+  // cannot open a tag; relaxing it any further than that is a hole.
+  it("still rejects a `<` glued to a letter, which is a tag", () => {
+    for (const source of [
+      'flowchart TD\n    A["x <y"] --> B',
+      'flowchart TD\n    A["</b>"] --> B',
+      'flowchart TD\n    A["<b>oi</b>"] --> B',
+      // Whitespace the browser itself removes from an attribute value is folded
+      // away first, so hiding the letter behind a tab does not help.
+      'flowchart TD\n    A["<\tscript>alert(1)</script>"] --> B',
+    ]) {
+      const result = mermaid.validateMermaid(source);
+      expect(result.ok).toBe(false);
+      expect(result.problems.join(" ")).toMatch(/tag HTML/);
+    }
+  });
+
+  // Where the line is drawn, written down so moving it is a decision.
+  //
+  // The HTML tokenizer's tag-open state accepts only `!`, `/`, `?` or an ASCII
+  // letter after `<`; anything else emits a literal `<` and goes back to reading
+  // text. So `< script>` never becomes an element in any parser mermaid or
+  // DOMPurify runs on — it renders as the five visible characters. Matching that
+  // rule exactly is what keeps `A["custo < receita"]` from costing a retry, and
+  // a payload that needs more than an inert `<` still trips one of the checks
+  // that do not care about tags at all.
+  it("accepts a `<` that cannot open a tag, and still catches the payload behind it", () => {
+    expect(mermaid.validateMermaid('flowchart TD\n    A["< script>"] --> B').ok).toBe(true);
+    expect(mermaid.validateMermaid('flowchart TD\n    A["<5script>"] --> B').ok).toBe(true);
+
+    for (const [source, expected] of [
+      ['flowchart TD\n    A["< img src=x onerror=alert(1)>"] --> B', /atributo de evento/],
+      ['flowchart TD\n    A["< a href=javascript:alert(1)>"] --> B', /javascript:/],
+      ['flowchart TD\n    A["< a href=\'x\'>oi"] --> B', /href/],
+    ] as const) {
+      const result = mermaid.validateMermaid(source);
+      expect(result.ok).toBe(false);
+      expect(result.problems.join(" ")).toMatch(expected);
+    }
   });
 });
 
@@ -544,6 +919,105 @@ A["oi"] --> B["fim"]`,
       expect(result.problems.length).toBeGreaterThan(0);
     });
   }
+
+  // The eighteen above are the contract, so they are also asserted as a set: a
+  // future relaxation that lets one back through has to delete a line here, not
+  // merely fail to notice.
+  it("lets none of the eighteen through, as a set", () => {
+    const accepted = Object.entries(attacks)
+      .filter(([, source]) => mermaid.validateMermaid(source).ok)
+      .map(([name]) => name);
+
+    expect(Object.keys(attacks)).toHaveLength(18);
+    expect(accepted).toEqual([]);
+  });
+});
+
+// `<<style>>` walked past every one of the checks above, in `main` and in the
+// first version of this branch, and it is the worst of the family: to an HTML
+// parser `<<name>>` is not one construct but a literal `<` followed by a real
+// `<name>` element, and `<style>` is applied by `innerHTML` even though
+// `<script>` is not. So a label carrying
+// `<<style>>*{position:fixed;…;background:url(//evil/beacon)}` was a full-page
+// defacement plus a network beacon that validated ok:true — no attribute and no
+// `=` needed, which is exactly what the old "anything with an `=` stays put"
+// rule assumed would be there.
+describe("validateMermaid closes the `<<name>>` hole in the annotation fold", () => {
+  const label = (payload: string) => `flowchart TD\n    A["${payload}"] --> B`;
+
+  const holes: Record<string, string> = {
+    "a stylesheet that covers the page and beacons out": label(
+      "<<style>>*{position:fixed;top:0;left:0;width:100vw;height:100vh;" +
+        "background:url(//evil.example/beacon)}",
+    ),
+    "a script tag": label("<<script>>alert(1)"),
+    "an iframe": label("<<iframe>>"),
+    "a textarea, which swallows everything after it": label("<<textarea>>"),
+    "a base tag, which repoints every relative URL": label("<<base>>"),
+  };
+
+  for (const [name, source] of Object.entries(holes)) {
+    it(`rejects ${name}`, () => {
+      const result = mermaid.validateMermaid(source);
+      expect(result.ok).toBe(false);
+      expect(result.problems.join(" ")).toMatch(/tag HTML/);
+    });
+  }
+
+  // The fold only exists for the classDiagram grammar, so that is the one place
+  // it can be reached — and even there it is the grammar's own shape or nothing.
+  const inClassDiagram: Record<string, string> = {
+    "a payload glued to the annotation":
+      "classDiagram\n    class X\n    <<style>>*{position:fixed;background:url(//evil.example/b)}",
+    "a payload inside a class body":
+      "classDiagram\n    class X {\n        <<style>>*{color:red}\n    }",
+    "a call after the annotation": "classDiagram\n    class X\n    <<script>>alert(1)",
+    // `;` is a statement separator, and folding it away is what let the old
+    // pattern match anywhere on a line instead of only where a statement starts.
+    "an annotation smuggled in after a semicolon":
+      "classDiagram\n    class X; <<style>>*{position:fixed}",
+    "a tag inside the annotation itself": "classDiagram\n    class X\n    <<a<b>>",
+  };
+
+  for (const [name, source] of Object.entries(inClassDiagram)) {
+    it(`rejects ${name} even in a classDiagram`, () => {
+      const result = mermaid.validateMermaid(source);
+      expect(result.ok).toBe(false);
+      expect(result.problems.join(" ")).toMatch(/tag HTML/);
+    });
+  }
+
+  const legitimate: Record<string, string> = {
+    "<<interface>> in a class body": `classDiagram
+    class Ferramenta {
+        <<interface>>
+        +String nome
+        +executar(args) String
+    }
+    Ferramenta <|-- LeitorDeArquivo`,
+    "<<abstract>>": "classDiagram\n    class Base {\n        <<abstract>>\n    }",
+    "<<enumeration>>":
+      "classDiagram\n    class Cor {\n        <<enumeration>>\n        VERMELHO\n    }",
+    // mermaid's other spelling: the annotation on its own line, naming the class.
+    "the `<<interface>> Classe` form": "classDiagram\n    class Forma\n    <<interface>> Forma",
+    "a stereotype of two words": "classDiagram\n    class X {\n        <<Data Class>>\n    }",
+  };
+
+  for (const [name, source] of Object.entries(legitimate)) {
+    it(`still accepts ${name}`, () => {
+      const result = mermaid.validateMermaid(source);
+      expect(result.problems).toEqual([]);
+      expect(result.ok).toBe(true);
+    });
+  }
+
+  // The same annotation outside the one grammar that has annotations is markup,
+  // and mermaid does not eat it there — it goes to `innerHTML` as written.
+  it("does not fold an annotation in a flowchart, where mermaid would not eat it", () => {
+    const result = mermaid.validateMermaid(label("<<interface>>"));
+    expect(result.ok).toBe(false);
+    expect(result.problems.join(" ")).toMatch(/tag HTML/);
+  });
 });
 
 // The caption is the one string in this module that is spoken to the user, and

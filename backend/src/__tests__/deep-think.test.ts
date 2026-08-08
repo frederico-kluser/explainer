@@ -20,6 +20,7 @@ process.env.OPENAI_API_KEY = "sk-test-nao-e-uma-chave-real";
 process.env.OPENAI_DEEPTHINK_MODEL = "gpt-5.2-mini";
 
 const mod = await import("../services/deep-think.js");
+const costs = await import("../services/costs.js");
 
 const MODEL = "gpt-5.2-mini";
 const USAGE = {
@@ -604,6 +605,45 @@ describe("dispatchDeepThink", () => {
     expect(job.status).toBe("error");
     expect(job.cost_usd).toBeCloseTo(billedByApi(), 12);
     expect(job.cost_usd).toBeGreaterThan(billedByApi() / 2);
+  });
+
+  // A round is the most expensive thing this app can do. Booked under `text` it
+  // shared a bucket with every other completion and the panel could not show
+  // what deep thinking had actually cost.
+  it("books the round on its own cost source, not on the shared text bucket", async () => {
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload('[{"angle":"evidencia","prompt":"p"}]');
+        case "thinker":
+          return textPayload("Concluo que sim, com confianca media.");
+        default:
+          return textPayload("Os pensadores concordaram que vale a pena.");
+      }
+    };
+
+    const conversationId = randomUUID();
+    const job = mod.dispatchDeepThink({
+      conversationId,
+      scenario: "vale a pena trocar o banco?",
+      thinkerCount: 1,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    // `finish` books the charge without awaiting it, so the round is done a tick
+    // before the ledger is.
+    let summary = await costs.getCosts(conversationId);
+    for (let attempt = 0; attempt < 50 && summary.entries.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      summary = await costs.getCosts(conversationId);
+    }
+
+    expect(summary.entries).toHaveLength(1);
+    expect(summary.entries[0]?.source).toBe("deep_think");
+    expect(summary.entries[0]?.detail).toMatch(/deep_think: vale a pena/);
+    expect(summary.by_source.deep_think).toBeCloseTo(billedByApi(), 12);
+    expect(summary.by_source.text).toBe(0);
   });
 
   // --- what the round claims about the web ---------------------------------

@@ -841,10 +841,11 @@ function finish(
     rounds.delete(job.id);
   }
 
-  // `text` because `CostSource` has no deep_think member yet — see the handoff.
+  // Its own source, not `text`: a round is the most expensive thing the app can
+  // do, and folded into the shared text bucket nobody could see it happen.
   if (job.cost_usd !== undefined && job.cost_usd > 0) {
     void addCost(job.conversation_id, {
-      source: "text",
+      source: "deep_think",
       usd: job.cost_usd,
       detail: `deep_think: ${job.scenario.slice(0, 140)}`,
     });
