@@ -7,7 +7,13 @@ import { getConversation, updateConversation } from "./storage.js";
 // exists in the agent's JSONL. This module is where the three meet, so the
 // sidebar can show one honest number.
 
-export type CostSource = "realtime" | "web_search" | "pi_agent" | "text";
+export type CostSource =
+  | "realtime"
+  | "web_search"
+  | "pi_agent"
+  | "text"
+  | "deep_think"
+  | "mermaid";
 
 export interface CostEntry {
   source: CostSource;
@@ -31,7 +37,14 @@ const ledgers = new Map<string, CostEntry[]>();
 let processTotal = 0;
 
 function emptyBySource(): Record<CostSource, number> {
-  return { realtime: 0, web_search: 0, pi_agent: 0, text: 0 };
+  return {
+    realtime: 0,
+    web_search: 0,
+    pi_agent: 0,
+    text: 0,
+    deep_think: 0,
+    mermaid: 0,
+  };
 }
 
 /**
