@@ -16,11 +16,15 @@ export interface CostPanelProps {
   onRefresh: () => void;
 }
 
+// Keyed loosely on purpose: an unmapped source falls back to its raw id, so a
+// new `CostSource` shows up as an ugly name rather than as a blank line.
 const SOURCE_LABELS: Record<string, string> = {
   realtime: "conversa por voz",
   web_search: "busca na web",
   pi_agent: "agentes pi",
   text: "texto",
+  deep_think: "pensamento profundo",
+  mermaid: "diagramas",
 };
 
 /** Fractions of a cent are the normal case here, so never round them away. */
