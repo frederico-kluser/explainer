@@ -1,4 +1,5 @@
 import type { ResolvedSource } from "./types/index.js";
+import type { MemoryResume } from "./types/deep-tools.js";
 
 // The session instructions, written to the structure OpenAI's Realtime Prompting
 // Guide prescribes: labelled sections, bullets instead of paragraphs, sample
@@ -49,12 +50,63 @@ const SPEECH_FORMAT = `# Output Format
 - Ao citar um arquivo, fale so o nome dele ("o arquivo index ponto ts"), a menos que peçam o caminho completo.
 - Ao citar um site, diga "no site" seguido do nome, sem soletrar a URL.`;
 
-const TOOLS_SECTION = `# Tools
+const TOOLS_PREAMBLE = `# Tools
 - ANTES DE CADA CHAMADA DE FERRAMENTA, diga UMA frase curta do que vai fazer e chame a ferramenta imediatamente. Exemplos: "deixa eu procurar isso aqui", "vou abrir o arquivo pra confirmar", "ja busco isso na internet".
 - Varie essa frase; nao use sempre a mesma.
 - NUNCA afirme conteudo de arquivo, versao, numero ou configuracao sem ter consultado a ferramenta. Se nao consultou, diga que vai consultar.
 - Se uma ferramenta falhar, diga em uma frase o que falhou e ofereca um caminho alternativo.
 - NAO mencione ferramentas que nao estao na sua lista.`;
+
+/**
+ * The paragraph each tool needs, keyed by the name the session was given.
+ *
+ * Only the tools whose *behaviour* is surprising are in here. The rest are
+ * described well enough by their own `description` in `tools/index.ts`; these
+ * three are not, because what they need from the model happens outside the call:
+ * two of them answer immediately and conclude minutes later, and the third draws
+ * on a screen the model cannot see.
+ *
+ * Keyed and filtered rather than written as one block, for two reasons:
+ *
+ *   - The tool list is decided per session and frozen into the client secret.
+ *     `deep_think` and `check_deep_think` are behind `BRAVE_API_KEY` (see
+ *     `deliberationTools` in `tools/index.ts`), so with no key the model is not
+ *     given them — and teaching it to "avisar que colocou varios pensadores no
+ *     assunto e CONTINUAR CONVERSANDO" then promises a conclusion that no round
+ *     can ever produce, while the preamble above tells it not to mention tools
+ *     it does not have. The instructions would contradict themselves.
+ *   - Instructions are re-billed on every single response. A paragraph about a
+ *     tool the session does not hold is paid for on every turn of the call.
+ *
+ * Iterated in declaration order, not in the caller's: the session config is
+ * cached upstream by content, so the same tool set must always produce the same
+ * bytes.
+ */
+const TOOL_GUIDANCE: Record<string, string> = {
+  deep_think: `## deep_think — pensar fundo sem parar a conversa
+- Use para pergunta que pede analise de verdade: comparar caminhos, decidir entre opcoes, achar o risco escondido. NAO use para consulta simples; para isso ja existem as outras ferramentas.
+- Ela responde NA HORA dizendo que a rodada comecou. A conclusao chega SOZINHA, depois, e ai voce a explica com suas palavras.
+- Ao chamar, avise em voz alta que colocou varios pensadores no assunto e CONTINUE CONVERSANDO. NUNCA fique em silencio esperando a conclusao.
+- Quando a conclusao chegar, retome dizendo que a analise ficou pronta antes de explicar.`,
+
+  check_deep_think: `## check_deep_think — so quando perguntarem
+- Chame APENAS se a pessoa perguntar como esta a rodada ("e ai, ja pensou?", "como ta aquilo?").
+- NAO fique consultando por conta propria: a conclusao chega sozinha e consultar de novo nao acelera nada.`,
+
+  generate_diagram: `## generate_diagram — desenhar em vez de descrever
+- Use quando a explicacao ficar mais clara desenhada: um fluxo, uma sequencia de passos, como as partes se ligam.
+- O diagrama aparece NA TELA da pessoa. Fale a legenda com suas palavras e diga que esta na tela.
+- NUNCA leia a sintaxe do diagrama em voz alta: nada de setas, colchetes, nomes de nos ou a palavra mermaid.`,
+};
+
+function toolsSection(toolNames: readonly string[]): string {
+  const held = new Set(toolNames);
+  const taught = Object.entries(TOOL_GUIDANCE)
+    .filter(([name]) => held.has(name))
+    .map(([, guidance]) => guidance);
+
+  return [TOOLS_PREAMBLE, ...taught].join("\n\n");
+}
 
 const RULES = `# Instructions / Rules
 ## Unclear audio
@@ -150,8 +202,125 @@ function referenceSection(sources: ResolvedSource[]): string[] {
   });
 }
 
-/** Build the session instructions for everything the conversation is pointed at. */
-export function buildInstructions(sources: ResolvedSource[]): string {
+// ---------------------------------------------------------------------------
+// Memory
+// ---------------------------------------------------------------------------
+
+/**
+ * What a resumed conversation may carry, in characters.
+ *
+ * Its own budget rather than a share of `DOC_BUDGET`, because the two compete
+ * for the same scarce thing: the instructions are re-billed on *every* response,
+ * so every character here is paid for again on every turn of the new session.
+ * That is also the reason this section is built from `MemoryResume` and never
+ * from `MemoryFile.events` — a transcript pasted in here would be the single
+ * most expensive string in the app, and `buildResume` exists precisely to
+ * compress it once instead.
+ */
+const RESUME_BUDGET = 6_000;
+const RESUME_SUMMARY_BUDGET = 2_600;
+const RESUME_REFLECTIONS_BUDGET = 2_000;
+const RESUME_REFLECTION_CHARS = 400;
+const RESUME_FINDINGS_BUDGET = 1_000;
+const RESUME_FINDING_CHARS = 240;
+const RESUME_MATERIALS_CHARS = 300;
+
+/** The ellipsis counts against the limit: these are budgets, not suggestions. */
+function clip(value: string, limit: number): string {
+  const text = value.trim();
+  return text.length <= limit
+    ? text
+    : `${text.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+/**
+ * Keep whole entries while the budget lasts, newest first.
+ *
+ * Read backwards and then restored to chronological order: what a resumed
+ * conversation needs most is the last thing it concluded, and cutting from the
+ * front would drop exactly that.
+ */
+function fitEntries(entries: string[], perEntry: number, total: number): string[] {
+  const kept: string[] = [];
+  let used = 0;
+
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const text = clip(entries[i]!, perEntry);
+    if (!text) continue;
+    if (used + text.length > total) break;
+    kept.push(text);
+    used += text.length;
+  }
+
+  return kept.reverse();
+}
+
+function memorySection(resume: MemoryResume): string {
+  const header = [
+    "- Esta conversa JA ACONTECEU antes e voce esta RETOMANDO ela agora.",
+    "- Isto substitui o passo 1 do Conversation Flow: NAO se apresente de novo, NAO recomece do zero. Retome de onde parou.",
+    "- Trate o que vem abaixo como sua propria memoria: fale como quem lembra, nao como quem acabou de ler um relatorio.",
+    "- Se algum ponto estiver vago e for importante agora, confirme com a pessoa antes de tratar como certo.",
+    `- Eventos registrados ate aqui: ${resume.event_count}.`,
+  ];
+
+  if (resume.materials.length > 0) {
+    header.push(
+      `- Materiais que a conversa usava: ${clip(resume.materials.join(", "), RESUME_MATERIALS_CHARS)}.`,
+    );
+  }
+
+  const parts = [
+    `# Memoria desta conversa\n${header.join("\n")}`,
+    `## Resumo do que ja foi conversado\n${clip(resume.summary, RESUME_SUMMARY_BUDGET)}`,
+  ];
+
+  const reflections = fitEntries(
+    resume.reflections,
+    RESUME_REFLECTION_CHARS,
+    RESUME_REFLECTIONS_BUDGET,
+  );
+  if (reflections.length > 0) {
+    parts.push(
+      `## Conclusoes que a conversa ja tirou\n${reflections.map((text) => `- ${text}`).join("\n")}`,
+    );
+  }
+
+  const findings = fitEntries(
+    resume.tool_findings,
+    RESUME_FINDING_CHARS,
+    RESUME_FINDINGS_BUDGET,
+  );
+  if (findings.length > 0) {
+    parts.push(
+      `## O que as ferramentas ja estabeleceram\n${findings.map((text) => `- ${text}`).join("\n")}`,
+    );
+  }
+
+  // The parts are each bounded above; this is the ceiling on their sum, so the
+  // section cannot grow by adding one more part later.
+  return clip(parts.join("\n\n"), RESUME_BUDGET);
+}
+
+/**
+ * Build the session instructions for everything the conversation is pointed at.
+ *
+ * `resume` is the compressed form of the conversation file — never the file
+ * itself. See `memorySection` for why the raw events cannot come in here.
+ *
+ * `toolNames` is the list the same session is being minted with — the caller
+ * already computed it for the `tools` field, and passing it here is what keeps
+ * the Tools section describing tools the model was actually given. Omitted, no
+ * tool is described: an unknown list is not a licence to promise behaviour, and
+ * the preamble forbids naming a tool that is not in the model's own list.
+ */
+export function buildInstructions(
+  sources: ResolvedSource[],
+  resume?: MemoryResume | null,
+  toolNames: readonly string[] = [],
+): string {
+  const memory = resume ? [memorySection(resume)] : [];
+
   if (sources.length === 0) {
     return [
       ROLE_AND_OBJECTIVE,
@@ -159,6 +328,7 @@ export function buildInstructions(sources: ResolvedSource[]): string {
       SPEECH_FORMAT,
       "# Context\n- Nenhum material foi adicionado ainda. Peca ao usuario para adicionar um repositorio, colar um markdown ou incluir a documentacao do computador.",
       RULES,
+      ...memory,
     ].join("\n\n");
   }
 
@@ -167,9 +337,12 @@ export function buildInstructions(sources: ResolvedSource[]): string {
     PERSONALITY_AND_TONE,
     SPEECH_FORMAT,
     materialsSection(sources),
-    TOOLS_SECTION,
+    toolsSection(toolNames),
     RULES,
     CONVERSATION_FLOW,
+    // After the flow on purpose: the memory section cancels its step 1, and the
+    // later instruction is the one that wins.
+    ...memory,
     ...referenceSection(sources),
   ].join("\n\n");
 }

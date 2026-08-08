@@ -9,6 +9,8 @@ import {
   appendMessages,
 } from "../services/storage.js";
 import { getSettings, setSettings, VOICES } from "../services/settings.js";
+import { clearMemory } from "../services/memory.js";
+import { recordTurn } from "../services/memory-recorder.js";
 import { isUUID } from "../middleware/sandbox.js";
 import type { Conversation, Message } from "../types/index.js";
 
@@ -174,6 +176,24 @@ router.post("/:id/messages", async (req, res, next) => {
     });
 
     const conversation = await appendMessages(req.params.id!, messages);
+
+    // The same turns, into the conversation file this time. `storage.ts` keeps
+    // the record the UI reads back; the memory file is the durable trace a later
+    // session is *rebuilt* from, and this route is the only moment a spoken turn
+    // reaches the server at all.
+    //
+    // Tool messages are left out: `POST /api/realtime/tool` already records each
+    // exchange with its arguments, which this copy would not carry. Blank text
+    // is not filtered here — `recordTurn` drops it, and doing it twice would put
+    // that decision in two places.
+    const turns = messages.filter(
+      (item): item is Message & { role: "user" | "assistant" } =>
+        item.role === "user" || item.role === "assistant",
+    );
+    await Promise.all(
+      turns.map((item) => recordTurn(req.params.id!, item.role, item.content ?? "")),
+    );
+
     res.status(201).json({ appended: messages.length, updated_at: conversation.updated_at });
   } catch (err) {
     next(err);
@@ -210,6 +230,11 @@ router.delete("/:id", async (req, res, next) => {
   try {
     validateUUID(req.params.id!);
     await deleteConversation(req.params.id!);
+    // `deleteConversation` sweeps messages, attachments and generated audio; it
+    // has never heard of the memory file, which lives in its own directory. So
+    // without this the trace of a deleted conversation — turns, tool arguments,
+    // reflections — outlives it on disk forever. Absent memory is not an error.
+    await clearMemory(req.params.id!);
     res.status(204).send();
   } catch (err) {
     next(err);

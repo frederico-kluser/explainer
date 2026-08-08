@@ -96,6 +96,25 @@ export const MEMORY_MAX_MATERIALS = 50;
 export const MEMORY_MAX_DIAGRAM_SOURCE_CHARS = 20_000;
 export const MEMORY_MAX_DIAGRAM_CAPTION_CHARS = 1_000;
 
+/**
+ * How many diagrams the file keeps. Override with `EXPLAINER_MEMORY_MAX_DIAGRAMS`.
+ *
+ * The ceiling above bounds one diagram; this one bounds their number, which is
+ * the half that was missing. `diagrams` is the only unbounded list left in the
+ * file, and the file is read-modify-written whole on *every* append — a spoken
+ * turn, a tool exchange — so an oversized `diagrams` array is not a one-off
+ * cost: it is a permanent tax on every later write of that conversation,
+ * measured at 20× on a saturated file. Newest are kept, for the same reason
+ * pruning keeps the newest events.
+ *
+ * The trade is the same one `truncateDiagramSource` makes, and it has the same
+ * shape: an event whose `diagram_id` points at a dropped diagram keeps its
+ * caption and loses its drawing. Fifty is generous for a spoken conversation —
+ * `MEMORY_MAX_MATERIALS` is the same number for the same reason — and it holds
+ * the diagram list under a megabyte even when every entry is at its own ceiling.
+ */
+export const MEMORY_MAX_DIAGRAMS_DEFAULT = 50;
+
 /** Longest `tool` / `diagram_id` an imported event may carry; both are ids. */
 const MEMORY_MAX_ID_CHARS = 200;
 
@@ -131,6 +150,15 @@ function maxEvents(): number {
   return Number.isFinite(raw) && raw >= 2
     ? Math.floor(raw)
     : MEMORY_MAX_EVENTS_DEFAULT;
+}
+
+function maxDiagrams(): number {
+  // Read at call time, like `maxEvents`. One is the floor: a conversation that
+  // draws must be able to keep the drawing it is talking about.
+  const raw = Number(process.env.EXPLAINER_MEMORY_MAX_DIAGRAMS);
+  return Number.isFinite(raw) && raw >= 1
+    ? Math.floor(raw)
+    : MEMORY_MAX_DIAGRAMS_DEFAULT;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +240,27 @@ export class MemoryFormatError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "MemoryFormatError";
+  }
+}
+
+/**
+ * An import that would destroy a memory nobody asked to destroy. Carries HTTP
+ * 409; the message is in Portuguese and names the way out.
+ *
+ * Importing *replaces* — the file being taken in is the conversation's whole
+ * memory, and merging two independently-written sequences would interleave two
+ * conversations that never happened together. So the danger is not in the
+ * replacement, it is in doing it silently: what disappears includes the
+ * reflections, which cost a deep-think round each to reproduce, and nothing in
+ * this module keeps a copy (`clearMemory` unlinks; there is no backup). The
+ * caller has to say the word.
+ */
+export class MemoryConflictError extends Error {
+  public readonly status: number = 409;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "MemoryConflictError";
   }
 }
 
@@ -609,6 +658,12 @@ function sanitizeDiagrams(value: unknown): MermaidDiagram[] {
   });
 }
 
+/** Keep the newest `maxDiagrams()` entries. See MEMORY_MAX_DIAGRAMS_DEFAULT. */
+function capDiagrams(diagrams: MermaidDiagram[]): MermaidDiagram[] {
+  const max = maxDiagrams();
+  return diagrams.length <= max ? diagrams : diagrams.slice(-max);
+}
+
 function normalizeMaterials(materials: string[]): string[] {
   return materials
     .slice(0, MEMORY_MAX_MATERIALS)
@@ -836,7 +891,10 @@ export async function recordDiagram(
     const diagrams = sanitizeDiagrams(file.diagrams);
     // Re-recording the same id replaces it: a regenerated diagram is a
     // correction, not a second drawing.
-    file.diagrams = [...diagrams.filter((d) => d.id !== stored.id), stored];
+    file.diagrams = capDiagrams([
+      ...diagrams.filter((d) => d.id !== stored.id),
+      stored,
+    ]);
     file.events.push(event);
   });
 }
@@ -986,6 +1044,17 @@ function validateImportedDiagram(value: unknown, index: number): MermaidDiagram 
   return normalizeDiagram(diagram);
 }
 
+export interface ImportMemoryOptions {
+  /**
+   * Allow the import to replace a memory that already holds events.
+   *
+   * Off by default, and checked inside the write lock: see
+   * `MemoryConflictError` for why replacing is right and doing it silently is
+   * not. `DELETE /api/conversations/:id/memory` is the other way to say it.
+   */
+  overwrite?: boolean;
+}
+
 /**
  * Take a file back in and make it this conversation's memory.
  *
@@ -995,9 +1064,17 @@ function validateImportedDiagram(value: unknown, index: number): MermaidDiagram 
  * in: an imported file gets the same ids, timestamps, truncation, cap and
  * stripped trust markers as one written here.
  *
+ * The result is the imported file and nothing else. A conversation that already
+ * had a memory keeps none of it, which is why `overwrite` exists.
+ *
  * @throws {MemoryFormatError} 400, with a message in Portuguese.
+ * @throws {MemoryConflictError} 409, when the target already holds events and
+ *   `overwrite` was not asked for.
  */
-export async function importMemory(file: MemoryFile): Promise<MemoryFile> {
+export async function importMemory(
+  file: MemoryFile,
+  { overwrite = false }: ImportMemoryOptions = {},
+): Promise<MemoryFile> {
   const candidate: unknown = file;
   if (!isPlainObject(candidate)) {
     throw importError("o conteúdo não é um objeto.");
@@ -1048,11 +1125,28 @@ export async function importMemory(file: MemoryFile): Promise<MemoryFile> {
     typeof candidate.created_at === "string" ? candidate.created_at : isoNow();
 
   return mutate(conversationId, (current) => {
+    // Inside the lock, against what is on disk right now: a check in the route
+    // would be a read the writer of the next event can win.
+    if (!overwrite && current.events.length > 0) {
+      const events = current.events.length;
+      const reflections = current.events.filter(isReflection).length;
+      throw new MemoryConflictError(
+        `Esta conversa já tem memória gravada (${events} ${events === 1 ? "evento" : "eventos"}, ` +
+          `${reflections} ${reflections === 1 ? "reflexão" : "reflexões"}). Importar por cima ` +
+          "apaga tudo isso e não há como desfazer. Repita com ?overwrite=true, ou apague " +
+          "a memória atual antes (DELETE /api/conversations/:id/memory).",
+      );
+    }
+
     current.title = title;
     current.materials = materials;
     current.created_at = createdAt;
     current.events = events;
-    if (diagrams) current.diagrams = diagrams;
+    // Assigned in both directions. `if (diagrams)` left the previous memory's
+    // diagrams in a file whose events had all been replaced — drawings no
+    // surviving event referred to, carried by every later write.
+    if (diagrams && diagrams.length > 0) current.diagrams = capDiagrams(diagrams);
+    else delete current.diagrams;
   });
 }
 
@@ -1163,8 +1257,35 @@ function deterministicSummary(file: MemoryFile): string {
   return parts.join("\n\n");
 }
 
+/**
+ * Resolve with `null` when the budget runs out first.
+ *
+ * The losing call is *not* abandoned: its rejection handler is already attached
+ * when the timer fires, so a late failure settles a promise nobody reads
+ * instead of becoming an unhandled rejection — which, under Node's default
+ * `--unhandled-rejections=throw`, would take the backend down.
+ */
+function withinBudget<T>(work: Promise<T>, budgetMs: number): Promise<T | null> {
+  return new Promise<T | null>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), budgetMs);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 /** Null when no model should be asked; throws only if the call itself fails. */
-async function summariseWithModel(file: MemoryFile): Promise<string | null> {
+async function summariseWithModel(
+  file: MemoryFile,
+  budgetMs?: number,
+): Promise<string | null> {
   if (process.env.EXPLAINER_MEMORY_LLM_SUMMARY === "0") return null;
   if (!process.env.OPENAI_API_KEY) return null;
 
@@ -1178,7 +1299,7 @@ async function summariseWithModel(file: MemoryFile): Promise<string | null> {
     })
     .join("\n");
 
-  const answer = await completeText(
+  const call = completeText(
     "Resuma a conversa abaixo em portugues do Brasil, em no maximo dez frases, " +
       "para que outro assistente possa retomá-la. Diga o que foi discutido, o que " +
       "ficou decidido e o que ficou pendente. Não invente nada que não esteja no " +
@@ -1189,28 +1310,63 @@ async function summariseWithModel(file: MemoryFile): Promise<string | null> {
       // tokens are spent and the ledger books nothing — the silent zero
       // `tracking-costs-and-credits` documents.
       conversationId: file.conversation_id,
+      // Bound the request itself as well as the wait: `completeText` defaults to
+      // 30 s and aborts the fetch on its own timeout, which is what stops the
+      // caller's budget from leaving a request running for another 26 seconds.
+      ...(budgetMs ? { timeoutMs: budgetMs } : {}),
     },
   );
 
+  const answer = budgetMs ? await withinBudget(call, budgetMs) : await call;
+  if (answer === null) {
+    console.warn(
+      `[memory] ${file.conversation_id}: the summariser did not answer within ${budgetMs}ms; using the deterministic resume`,
+    );
+    return null;
+  }
+
   return answer.trim() === "" ? null : answer.trim();
+}
+
+export interface BuildResumeOptions {
+  /**
+   * The file, when the caller has already read it.
+   *
+   * The session mint reads it to decide whether there is anything to resume at
+   * all; without this it would be read, parsed and thrown away a second time,
+   * and this file is the one that grows.
+   */
+  file?: MemoryFile | null;
+
+  /**
+   * How long the model summary may take before the free one wins, in ms.
+   *
+   * Unset means `completeText`'s own 30 s, which is right for a background
+   * caller and wrong for anything a person is waiting on. There is nothing to
+   * lose by cutting it short: the deterministic summary is already built by the
+   * time the call starts.
+   */
+  summaryBudgetMs?: number;
 }
 
 /**
  * The compressed form a resumed session is seeded with.
  *
- * Never throws for want of a summary. A failed model call degrades to
- * `deterministicSummary` — losing the resume because the summariser was
- * unavailable would defeat the file's whole purpose.
+ * Never throws for want of a summary. A failed model call — or one that runs
+ * past `summaryBudgetMs` — degrades to `deterministicSummary`; losing the
+ * resume because the summariser was slow or unavailable would defeat the file's
+ * whole purpose.
  */
 export async function buildResume(
   conversationId: string,
+  { file: preloaded, summaryBudgetMs }: BuildResumeOptions = {},
 ): Promise<MemoryResume | null> {
-  const file = await readMemory(conversationId);
+  const file = preloaded ?? (await readMemory(conversationId));
   if (!file) return null;
 
   let summary = deterministicSummary(file);
   try {
-    const written = await summariseWithModel(file);
+    const written = await summariseWithModel(file, summaryBudgetMs);
     if (written) summary = written;
   } catch (err) {
     console.warn(
