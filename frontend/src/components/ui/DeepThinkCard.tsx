@@ -18,7 +18,7 @@ import {
   useMotionUITheme,
   useMotionUITransition,
 } from "@/components/motion-ui/ui-theme";
-import type { DeepThinkJob, ThinkerResult, ThinkerStatus } from "./contracts";
+import type { DeepThinkJob, ThinkerResult, ThinkerStatus } from "@/types";
 
 export interface DeepThinkCardProps {
   job: DeepThinkJob;

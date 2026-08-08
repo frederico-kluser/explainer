@@ -307,10 +307,16 @@ export function memoryDownloadUrl(conversationId: string): string {
  * remembers something is answered with 409 and a message that names both ways
  * out — that message is the product, so it is propagated untouched rather than
  * flattened into "falha ao importar".
+ *
+ * `file` is `unknown` and not `MemoryFile` because the only caller holds a
+ * `JSON.parse` of a file the user picked off their disk. The shape check belongs
+ * to the server, which answers 400 naming the offending event; a `MemoryFile`
+ * parameter could only be satisfied with a cast, and a cast here would be the
+ * browser asserting something it never looked at.
  */
 export async function importMemory(
   conversationId: string,
-  file: MemoryFile,
+  file: unknown,
   options: { overwrite?: boolean } = {},
 ): Promise<MemoryFile> {
   const query = options.overwrite ? "/import?overwrite=true" : "/import";

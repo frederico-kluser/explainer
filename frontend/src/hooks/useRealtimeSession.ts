@@ -16,12 +16,15 @@ import {
 import type {
   AgentJob,
   AgentJobEvent,
+  BraveResult,
   DeepThinkEvent,
   DeepThinkJob,
   MermaidDiagram,
   MermaidDiagramKind,
   RealtimeSessionToken,
   SessionStreamEvent,
+  ThinkerResult,
+  ThinkerStatus,
   TranscriptEntry,
 } from "@/types";
 
@@ -55,6 +58,14 @@ export interface RealtimeSessionState {
   disconnect: () => void;
   sendText: (text: string) => void;
   cancelJob: (jobId: string) => void;
+  /**
+   * Re-read the stored memory and re-seed the gallery from it.
+   *
+   * For the caller that lets the user import or erase a memory file: an import
+   * replaces the whole file, drawings included, so the gallery on screen is
+   * stale the moment it lands.
+   */
+  reloadMemory: () => void;
   /** Playback speed, pushable mid-call (unlike the voice, which is frozen). */
   setSpeed: (speed: number) => void;
 }
@@ -147,6 +158,74 @@ export function appendDiagram(
   return next;
 }
 
+/**
+ * Put the diagrams a conversation already had back in front of the live ones.
+ *
+ * Without this the gallery dies with the tab: `MemoryFile.diagrams` persists
+ * every drawing and `GET …/memory` hands them all back, but nothing was reading
+ * them, so reloading the page left the model referring out loud to pictures that
+ * no longer existed.
+ *
+ * Remembered first, because they are older, and a live redraw of the same id
+ * wins — it is the version the user is looking at. The ceiling is the same
+ * `MAX_DIAGRAMS`, applied from the end so that what survives is the newest.
+ */
+export function seedDiagrams(
+  live: MermaidDiagram[],
+  remembered: readonly MermaidDiagram[],
+): MermaidDiagram[] {
+  const known = new Set(live.map((diagram) => diagram.id));
+  const restored = remembered.filter((diagram) => !known.has(diagram.id));
+  if (restored.length === 0) return live;
+  return [...restored, ...live].slice(-MAX_DIAGRAMS);
+}
+
+/**
+ * The transcript and the gallery as one column, in the order things happened.
+ *
+ * A diagram is not an aside to the conversation — it is the answer to the turn
+ * that asked for it, and the model says its caption out loud while it appears.
+ * Appending the gallery after the transcript reads fine until a conversation is
+ * resumed, at which point every drawing from last week sits underneath today's
+ * first sentence.
+ *
+ * Both lists are already ordered by their own clock, so this is a merge, not a
+ * sort: a diagram goes ahead of the first transcript line stamped later than it.
+ * Ties go to the transcript, so a drawing lands after the turn that asked for it
+ * rather than before it.
+ */
+export type ConversationItem =
+  | { kind: "entry"; key: string; entry: TranscriptEntry }
+  | { kind: "diagram"; key: string; diagram: MermaidDiagram };
+
+export function mergeConversationItems(
+  transcript: readonly TranscriptEntry[],
+  diagrams: readonly MermaidDiagram[],
+): ConversationItem[] {
+  const items: ConversationItem[] = [];
+  let next = 0;
+
+  for (const entry of transcript) {
+    const at = Date.parse(entry.timestamp);
+    while (next < diagrams.length) {
+      const diagram = diagrams[next]!;
+      const drawn = Date.parse(diagram.created_at);
+      // An unparseable stamp keeps its arrival order instead of jumping to the
+      // front, which is where `NaN < at` would never put it anyway.
+      if (!Number.isFinite(drawn) || !Number.isFinite(at) || drawn >= at) break;
+      items.push({ kind: "diagram", key: `diagram-${diagram.id}`, diagram });
+      next += 1;
+    }
+    items.push({ kind: "entry", key: entry.id, entry });
+  }
+
+  for (; next < diagrams.length; next += 1) {
+    const diagram = diagrams[next]!;
+    items.push({ kind: "diagram", key: `diagram-${diagram.id}`, diagram });
+  }
+  return items;
+}
+
 // ---------------------------------------------------------------------------
 // Tool bridge
 // ---------------------------------------------------------------------------
@@ -223,6 +302,110 @@ export function isReplay(event: SessionStreamEvent): boolean {
     : false;
 }
 
+// ---------------------------------------------------------------------------
+// Reading the stream's own fields
+// ---------------------------------------------------------------------------
+//
+// Every event below is declared in `@/types` and guaranteed by nothing: the
+// stream is a network boundary, the declarations describe what the server
+// *means* to send, and a field that arrives absent or as the wrong type is a
+// deploy skew away at all times. Each helper turns one such field into a value
+// the rest of this file — and the cards downstream of it — can use without
+// checking again.
+
+/**
+ * A text field as text.
+ *
+ * An absent `synthesis` reached `${event.synthesis}` and injected the literal
+ * string "undefined" into the conversation, which the model then read out loud
+ * as if it were the conclusion. `result` and `error` sit in the same sentences.
+ */
+function textOf(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * A money field as money.
+ *
+ * Both cards render it as `cost_usd.toFixed(4)`, which throws on a string and
+ * takes the whole sidebar down with it — React unmounts the tree that threw.
+ */
+function costOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+const THINKER_STATUSES: ReadonlySet<string> = new Set<ThinkerStatus>([
+  "pending",
+  "running",
+  "done",
+  "error",
+]);
+
+/** A citation is only useful if it can be linked to and named. */
+function citationsOf(value: unknown): BraveResult[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const citations = value.filter(
+    (candidate): candidate is BraveResult =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      typeof (candidate as BraveResult).url === "string" &&
+      typeof (candidate as BraveResult).title === "string",
+  );
+  return citations.length > 0 ? citations : undefined;
+}
+
+/**
+ * The thinker list as a list of thinkers.
+ *
+ * `thinkers: undefined` breaks the `.map` that draws the fan, and a poisoned
+ * element does the same from one step further in — `thinker.status` on a `null`
+ * throws inside the render. So the entries are rebuilt field by field rather
+ * than trusted, the way `sanitizeDiagrams` rebuilds the memory file's.
+ */
+function thinkersOf(value: unknown): ThinkerResult[] {
+  if (!Array.isArray(value)) return [];
+
+  const thinkers: ThinkerResult[] = [];
+  value.forEach((candidate, index) => {
+    if (typeof candidate !== "object" || candidate === null) return;
+    const draft = candidate as Partial<ThinkerResult>;
+
+    const thinker: ThinkerResult = {
+      // The card keys its rows on `id`; two thinkers arriving without one would
+      // collapse into a single row and React would reuse the wrong state.
+      id: typeof draft.id === "string" && draft.id !== "" ? draft.id : `thinker-${index}`,
+      angle: textOf(draft.angle),
+      status:
+        typeof draft.status === "string" && THINKER_STATUSES.has(draft.status)
+          ? draft.status
+          : "pending",
+    };
+
+    if (typeof draft.thinking === "string") thinker.thinking = draft.thinking;
+    if (typeof draft.error === "string") thinker.error = draft.error;
+    const citations = citationsOf(draft.citations);
+    if (citations) thinker.citations = citations;
+    const searches = costOf(draft.searches);
+    if (searches !== undefined) thinker.searches = searches;
+    const usd = costOf(draft.usd);
+    if (usd !== undefined) thinker.usd = usd;
+
+    thinkers.push(thinker);
+  });
+  return thinkers;
+}
+
+/**
+ * A job in one of these has already ended, and a job ends exactly once.
+ *
+ * `cancelled` is in the set even though the stream never sends it: a job list
+ * seeded from `GET /api/agents` can already hold one, and a late `activity`
+ * frame for it would otherwise show it working again after the user stopped it.
+ */
+const TERMINAL_AGENT_JOB: ReadonlySet<AgentJob["status"]> = new Set<
+  AgentJob["status"]
+>(["done", "error", "cancelled"]);
+
 export function applyAgentJobEvent(
   jobs: AgentJob[],
   event: AgentJobEvent,
@@ -243,23 +426,35 @@ export function applyAgentJobEvent(
         }
       : jobs[index]!;
 
+  // The same one-way transition `applyDeepThinkEvent` makes below, for the same
+  // reason: SSE promises delivery, not order. An `activity` frame overtaking the
+  // `done` it precedes used to drag a finished agent back to "rodando", and an
+  // error followed by a done left one card holding both an error and a result.
+  if (index !== -1 && TERMINAL_AGENT_JOB.has(base.status)) return jobs;
+
   let updated: AgentJob;
   switch (event.type) {
     case "activity":
-      updated = { ...base, activity: event.activity };
+      updated = { ...base, activity: textOf(event.activity) };
       break;
     case "done":
       updated = {
         ...base,
         status: "done",
         activity: "concluido",
-        result: event.result,
-        cost_usd: event.cost_usd,
+        result: textOf(event.result),
+        cost_usd: costOf(event.cost_usd),
         finished_at: at,
       };
       break;
     case "error":
-      updated = { ...base, status: "error", activity: "falhou", error: event.error, finished_at: at };
+      updated = {
+        ...base,
+        status: "error",
+        activity: "falhou",
+        error: textOf(event.error),
+        finished_at: at,
+      };
       break;
     default:
       // An event this client does not know is not a failed job. Ignoring it
@@ -277,18 +472,6 @@ export function applyAgentJobEvent(
 const TERMINAL_DEEP_THINK: ReadonlySet<DeepThinkJob["status"]> = new Set<
   DeepThinkJob["status"]
 >(["done", "error", "cancelled"]);
-
-/**
- * The synthesis as text, whatever the server actually sent.
- *
- * The stream is a network boundary, and `synthesis` is declared but not
- * guaranteed: an absent one reached `${event.synthesis}` and injected the
- * literal string "undefined" into the conversation, which the model then read
- * out loud as if it were the conclusion.
- */
-function synthesisOf(event: { synthesis?: unknown }): string {
-  return typeof event.synthesis === "string" ? event.synthesis : "";
-}
 
 export function applyDeepThinkEvent(
   jobs: DeepThinkJob[],
@@ -321,16 +504,20 @@ export function applyDeepThinkEvent(
   let updated: DeepThinkJob;
   switch (event.type) {
     case "deep_think_activity":
-      updated = { ...base, activity: event.activity, thinkers: event.thinkers };
+      updated = {
+        ...base,
+        activity: textOf(event.activity),
+        thinkers: thinkersOf(event.thinkers),
+      };
       break;
     case "deep_think_done":
       updated = {
         ...base,
         status: "done",
         activity: "concluido",
-        thinkers: event.thinkers,
-        synthesis: synthesisOf(event),
-        cost_usd: event.cost_usd,
+        thinkers: thinkersOf(event.thinkers),
+        synthesis: textOf(event.synthesis),
+        cost_usd: costOf(event.cost_usd),
         finished_at: at,
       };
       break;
@@ -339,7 +526,7 @@ export function applyDeepThinkEvent(
         ...base,
         status: "error",
         activity: "falhou",
-        error: event.error,
+        error: textOf(event.error),
         finished_at: at,
       };
       break;
@@ -408,14 +595,30 @@ export function sessionStreamHandler(deps: SessionStreamDeps): (raw: string) => 
   };
 }
 
+/**
+ * What to say about a failure the server described in no words.
+ *
+ * `${event.error}` on an absent field is how "undefined" got spoken; an empty
+ * string in its place only moves the problem, because "O agente falhou: " reads
+ * as a sentence the server cut off mid-way.
+ */
+function reasonOf(value: unknown): string {
+  return textOf(value).trim() || "o servidor nao disse o motivo";
+}
+
 function handleAgentJobEvent(event: AgentJobEvent, deps: SessionStreamDeps): void {
   const at = nowISO();
   deps.setJobs((previous) => applyAgentJobEvent(previous, event, deps.conversationId, at));
 
   if (event.type === "done") {
-    deps.upsertEntry(`agent-${event.job_id}`, "agent", () => event.result, true);
+    // A finished agent with nothing to report leaves its card and stops there,
+    // exactly like a round that concluded in silence below.
+    const result = textOf(event.result);
+    if (!result.trim()) return;
+
+    deps.upsertEntry(`agent-${event.job_id}`, "agent", () => result, true);
     if (isReplay(event)) return;
-    deps.persist("tool", `[agente pi] ${event.result}`);
+    deps.persist("tool", `[agente pi] ${result}`);
 
     // Hand the answer back to the model as a user turn and ask it to speak.
     // This is the whole reason a slow tool does not block a conversation: the
@@ -423,7 +626,7 @@ function handleAgentJobEvent(event: AgentJobEvent, deps: SessionStreamDeps): voi
     deps.send(
       userTextEvent(
         "O agente de codigo terminou a investigacao. Resultado:\n\n" +
-          `${event.result}\n\n` +
+          `${result}\n\n` +
           "Explique isso para mim em voz alta, com suas palavras, de forma curta.",
       ),
     );
@@ -432,17 +635,16 @@ function handleAgentJobEvent(event: AgentJobEvent, deps: SessionStreamDeps): voi
   }
 
   if (event.type === "error") {
+    const reason = reasonOf(event.error);
     deps.upsertEntry(
       `agent-${event.job_id}`,
       "agent",
-      () => `O agente falhou: ${event.error}`,
+      () => `O agente falhou: ${reason}`,
       true,
     );
     if (isReplay(event)) return;
     deps.send(
-      userTextEvent(
-        `O agente de codigo falhou: ${event.error}. Me avise disso em uma frase.`,
-      ),
+      userTextEvent(`O agente de codigo falhou: ${reason}. Me avise disso em uma frase.`),
     );
     deps.requestResponse();
   }
@@ -470,7 +672,7 @@ function handleDeepThinkEvent(
   if (event.type === "deep_think_done") {
     // A round that ended with nothing to say leaves the card and stops there.
     // Injecting an empty conclusion is how "undefined" got read out loud.
-    const synthesis = synthesisOf(event);
+    const synthesis = textOf(event.synthesis);
     if (!synthesis.trim()) return;
 
     deps.upsertEntry(`deep-${event.job_id}`, "agent", () => synthesis, true);
@@ -490,16 +692,17 @@ function handleDeepThinkEvent(
     return;
   }
 
+  const reason = reasonOf(event.error);
   deps.upsertEntry(
     `deep-${event.job_id}`,
     "agent",
-    () => `A deliberacao falhou: ${event.error}`,
+    () => `A deliberacao falhou: ${reason}`,
     true,
   );
   if (isReplay(event)) return;
   deps.send(
     userTextEvent(
-      `A rodada de deliberacao falhou: ${event.error}. Me avise disso em uma frase.`,
+      `A rodada de deliberacao falhou: ${reason}. Me avise disso em uma frase.`,
     ),
   );
   deps.requestResponse();
@@ -690,6 +893,9 @@ export function useRealtimeSession(
   const [resumed, setResumed] = useState(false);
   const [memoryEvents, setMemoryEvents] = useState(0);
   const [sessionUsd, setSessionUsd] = useState(0);
+  // Bumped to re-read the stored memory. Held here rather than taken as an
+  // argument so the caller does not have to own a counter it never reads.
+  const [memoryToken, setMemoryToken] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -1122,6 +1328,8 @@ export function useRealtimeSession(
     void api.cancelAgentJob(jobId).catch(() => {});
   }, []);
 
+  const reloadMemory = useCallback(() => setMemoryToken((token) => token + 1), []);
+
   // Switching conversations tears the session down; a live call belongs to the
   // conversation it was opened for.
   useEffect(() => {
@@ -1134,6 +1342,34 @@ export function useRealtimeSession(
     setSessionUsd(0);
     return () => disconnect();
   }, [conversationId, disconnect]);
+
+  // Bring the gallery back. Declared after the reset above so React runs it
+  // second: opening a conversation empties the list and then refills it from the
+  // file, rather than filling a list that is about to be emptied.
+  useEffect(() => {
+    if (!conversationId) return;
+
+    let cancelled = false;
+    void api
+      .getMemory(conversationId)
+      .then((file) => {
+        // Re-read after the await: the user may have moved on, and seeding one
+        // conversation's drawings into another is worse than seeding none.
+        if (cancelled || convRef.current !== conversationId) return;
+        const remembered = file?.diagrams;
+        if (!Array.isArray(remembered) || remembered.length === 0) return;
+        setDiagrams((live) => seedDiagrams(live, remembered));
+      })
+      .catch(() => {
+        // A conversation with no memory answers `null`, not an error, so this is
+        // a real failure — and one the memory panel is already reporting in
+        // words. Making the transcript shout about it too would say nothing new.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, memoryToken]);
 
   return {
     status,
@@ -1152,6 +1388,7 @@ export function useRealtimeSession(
     disconnect,
     sendText,
     cancelJob,
+    reloadMemory,
     setSpeed,
   };
 }

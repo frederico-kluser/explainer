@@ -6,7 +6,13 @@ import { AlertTriangle, Loader } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useMotionUITransition } from "@/components/motion-ui/ui-theme";
-import type { MermaidDiagramData } from "./contracts";
+// The canonical name of the data is `MermaidDiagram`, and so is the name of the
+// component below it — one module cannot export both. The component keeps the
+// bare name because that is what every call site writes, and the type is
+// aliased on the way in: a renamed import is local to this file, while a renamed
+// export would make `@/types` disagree with `backend/src/types/deep-tools.ts`
+// about what the contract is called.
+import type { MermaidDiagram as MermaidDiagramType } from "@/types";
 import {
   MERMAID_SECURITY_CONFIG,
   describeRenderFailure,
@@ -15,7 +21,7 @@ import {
 } from "./mermaid-safety";
 
 export interface MermaidDiagramProps {
-  diagram: MermaidDiagramData;
+  diagram: MermaidDiagramType;
   className?: string;
 }
 
@@ -41,10 +47,11 @@ export interface MermaidDiagramProps {
  * microphone is +7,38 kB raw / +2,92 kB gzip of JavaScript, plus +1,18 kB of CSS
  * that Tailwind emits for these files whether or not anything imports them.
  *
- * The middle row is the trap, and it is worth naming: building this branch on
- * its own reports +0,05 kB, two orders of magnitude below the real figure.
- * Nothing imports the component there, so Rollup tree-shakes it out and the
- * build measures its own absence.
+ * The middle row is the trap, and it is worth naming: while this component
+ * existed but no screen rendered it, the build reported +0,05 kB — two orders of
+ * magnitude below the real figure. Rollup tree-shook it out, and the build
+ * measured its own absence. `App.tsx` renders it now, so the third row is the
+ * one in force and the figure can be trusted again.
  *
  * The promise is memoised rather than the module, so ten diagrams arriving at
  * once share one download and one `initialize` — and, more importantly, none of

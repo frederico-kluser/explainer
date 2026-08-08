@@ -17,9 +17,15 @@ import { MaterialPicker } from "@/components/ui/MaterialPicker";
 import { AgentJobCard } from "@/components/ui/AgentJobCard";
 import { VoiceSettings } from "@/components/ui/VoiceSettings";
 import { CostPanel } from "@/components/ui/CostPanel";
+import { DeepThinkCard } from "@/components/ui/DeepThinkCard";
+import { MemoryPanel } from "@/components/ui/MemoryPanel";
+import { MermaidDiagram } from "@/components/ui/MermaidDiagram";
 import { Button } from "@/components/ui/button";
 import * as api from "@/lib/api";
-import { useRealtimeSession } from "@/hooks/useRealtimeSession";
+import {
+  mergeConversationItems,
+  useRealtimeSession,
+} from "@/hooks/useRealtimeSession";
 import type {
   Conversation,
   ConversationSettings,
@@ -59,11 +65,16 @@ export function App() {
     assistantSpeaking,
     activeTool,
     jobs,
+    deepThinkJobs,
+    diagrams,
+    resumed,
+    memoryEvents,
     sessionUsd,
     connect,
     disconnect,
     sendText,
     cancelJob,
+    reloadMemory,
     setSpeed,
   } = useRealtimeSession(activeConvId);
 
@@ -77,6 +88,14 @@ export function App() {
           : assistantSpeaking
             ? "speaking"
             : "listening";
+
+  // One column, in the order things happened: a diagram belongs to the turn
+  // that asked for it, and a resumed conversation brings its old drawings back
+  // dated before today's first sentence.
+  const conversationItems = useMemo(
+    () => mergeConversationItems(transcript, diagrams),
+    [transcript, diagrams],
+  );
 
   // ── Toast queue ───────────────────────────────────────────────
   const { toasts, add: addToast, dismiss: dismissToast } = useToastStack();
@@ -231,13 +250,14 @@ export function App() {
     return () => clearTimeout(timer);
   }, [activeConvId, sessionUsd, finishedJobs]);
 
-  // Follow the conversation as it grows.
+  // Follow the conversation as it grows. A diagram is taller than a turn, so it
+  // is the one thing that most needs scrolling to.
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [transcript]);
+  }, [transcript, diagrams]);
 
   const creatingRef = useRef(false);
 
@@ -466,13 +486,25 @@ export function App() {
         onRename={handleRename}
         onOpenPalette={openCommandPalette}
       >
-        {jobs.length > 0 && (
+        {/* Both kinds of background work under one heading: the user dispatched
+            "um agente" either way, and two headings would suggest two places to
+            look. `deepThinkJobs` stays empty for good on a server without a
+            BRAVE_API_KEY — the tools simply are not in the session — so an empty
+            list here is the ordinary case and never an error. */}
+        {(jobs.length > 0 || deepThinkJobs.length > 0) && (
           <div className="space-y-2 border-t border-border px-3 py-3">
             <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Agentes
             </p>
             {jobs.map((job) => (
               <AgentJobCard key={job.id} job={job} onCancel={cancelJob} />
+            ))}
+            {/* No `onCancel`: `POST /api/agents/:jobId/cancel` resolves the id
+                through the pi job registry, so a round's id 404s there. The card
+                hides the button when the prop is absent rather than offering one
+                that cannot work. */}
+            {deepThinkJobs.map((job) => (
+              <DeepThinkCard key={job.id} job={job} />
             ))}
           </div>
         )}
@@ -491,6 +523,16 @@ export function App() {
           refreshing={creditsLoading}
           onRefresh={() => void refreshCredits()}
         />
+
+        {/* `status` as the reload trigger: the memory grows during a call, so
+            the count on this line is stale exactly when a call ends. Importing
+            or erasing replaces the file — drawings included — which is why
+            `onChanged` re-seeds the gallery instead of only redrawing here. */}
+        <MemoryPanel
+          conversationId={activeConvId}
+          refreshToken={status}
+          onChanged={reloadMemory}
+        />
       </Sidebar>
 
       {/* ── Main area ───────────────────────────────────────────── */}
@@ -504,6 +546,22 @@ export function App() {
                   <span className="size-1.5 rounded-full bg-emerald-400" />
                   ao vivo
                 </span>
+
+                {/* The one thing the user cannot otherwise tell apart: a session
+                    that starts fresh and one that was handed the summary of
+                    everything said before. The resume itself never leaves the
+                    server, so this count is all the evidence there is that it
+                    happened. */}
+                {resumed && (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary"
+                    title="Esta conversa foi retomada: o modelo recebeu um resumo do que já foi dito."
+                  >
+                    <span className="size-1.5 rounded-full bg-primary" />
+                    retomando · {memoryEvents}{" "}
+                    {memoryEvents === 1 ? "evento" : "eventos"}
+                  </span>
+                )}
                 {materials.map((material) => (
                   <span
                     key={material.id}
@@ -534,32 +592,42 @@ export function App() {
 
         {/* Transcript */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
-          {transcript.length > 0 ? (
+          {conversationItems.length > 0 ? (
             <div className="mx-auto max-w-3xl space-y-4" aria-live="polite">
-              {transcript.map((entry) => (
-                <div key={entry.id}>
-                  {entry.role === "tool" ? (
-                    <ToolTrace content={entry.text} />
-                  ) : entry.role === "agent" ? (
-                    <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
-                      <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-primary">
-                        Agente pi
-                      </p>
-                      <p className="whitespace-pre-wrap text-sm text-foreground">
-                        {entry.text}
-                      </p>
-                    </div>
-                  ) : (
-                    entry.text && (
-                      <ChatBubble
-                        role={entry.role === "user" ? "user" : "assistant"}
-                        content={entry.text}
-                        timestamp={entry.timestamp}
-                      />
-                    )
-                  )}
-                </div>
-              ))}
+              {conversationItems.map((item) => {
+                // Full width, in the flow, and not inside a ChatBubble: a
+                // drawing is the answer to the turn that asked for it, and the
+                // model has already spoken its caption by the time it lands.
+                if (item.kind === "diagram") {
+                  return <MermaidDiagram key={item.key} diagram={item.diagram} />;
+                }
+
+                const entry = item.entry;
+                return (
+                  <div key={item.key}>
+                    {entry.role === "tool" ? (
+                      <ToolTrace content={entry.text} />
+                    ) : entry.role === "agent" ? (
+                      <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+                        <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-primary">
+                          Agente pi
+                        </p>
+                        <p className="whitespace-pre-wrap text-sm text-foreground">
+                          {entry.text}
+                        </p>
+                      </div>
+                    ) : (
+                      entry.text && (
+                        <ChatBubble
+                          role={entry.role === "user" ? "user" : "assistant"}
+                          content={entry.text}
+                          timestamp={entry.timestamp}
+                        />
+                      )
+                    )}
+                  </div>
+                );
+              })}
 
               {activeTool && (
                 <p className="text-xs text-muted-foreground">

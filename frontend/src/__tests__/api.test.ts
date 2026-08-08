@@ -391,6 +391,22 @@ describe("importMemory", () => {
     await expect(api.importMemory(CONV, MEMORY_FILE)).rejects.toBeInstanceOf(api.ApiError);
   });
 
+  it("takes the raw JSON of a file the user picked, unvalidated", async () => {
+    // What `MemoryPanel` actually holds: a `JSON.parse` of a file off the disk.
+    // The shape check is the server's — it answers 400 naming the offending
+    // event — so narrowing this parameter back to `MemoryFile` would force the
+    // only caller to cast, which is the browser asserting what it never read.
+    mockFetchResponse({ ok: true, status: 201, json: MEMORY_FILE });
+
+    const parsed: unknown = JSON.parse('{"version":1,"events":[]}');
+    await api.importMemory(CONV, parsed);
+
+    expect(fetch).toHaveBeenCalledWith(
+      `/api/conversations/${CONV}/memory/import`,
+      expect.objectContaining({ body: '{"version":1,"events":[]}' }),
+    );
+  });
+
   it("propagates the 400 the format check writes", async () => {
     mockFetchResponse({
       ok: false,

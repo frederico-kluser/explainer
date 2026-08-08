@@ -10,7 +10,9 @@ import {
   executeToolCalls,
   isDeepThinkEvent,
   isReplay,
+  mergeConversationItems,
   openRealtimeSession,
+  seedDiagrams,
   sessionStreamHandler,
   type SessionStreamDeps,
 } from "@/hooks/useRealtimeSession";
@@ -890,5 +892,368 @@ describe("openRealtimeSession", () => {
     expect(peer.setRemoteDescription).not.toHaveBeenCalled();
     expect(track.stop).toHaveBeenCalledTimes(1);
     expect(peer.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The stream is a network boundary, and every field on it is optional in
+// practice. Each case below is a frame the server should never send, and the
+// assertion is that the browser survives it — the cards render these values
+// straight into `.map`, `.toFixed` and a spoken sentence.
+// ---------------------------------------------------------------------------
+
+describe("a deliberation event with no thinkers in it", () => {
+  it("folds an absent list into an empty one instead of undefined", () => {
+    const jobs = applyDeepThinkEvent(
+      [],
+      { type: "deep_think_activity", job_id: "d1", activity: "pensando" } as never,
+      CONV,
+      AT,
+    );
+
+    // The card does `job.thinkers.filter(...)` before it renders anything.
+    expect(jobs[0]?.thinkers).toEqual([]);
+    expect(() => jobs[0]!.thinkers.map((t) => t.id)).not.toThrow();
+  });
+
+  it("refuses a thinkers field that is not a list at all", () => {
+    const jobs = applyDeepThinkEvent(
+      [],
+      {
+        type: "deep_think_done",
+        job_id: "d1",
+        synthesis: SYNTHESIS,
+        thinkers: "dois pensadores",
+      } as never,
+      CONV,
+      AT,
+    );
+
+    expect(jobs[0]?.thinkers).toEqual([]);
+    expect(jobs[0]?.synthesis).toBe(SYNTHESIS);
+  });
+
+  it("drops a poisoned entry rather than letting the row throw on it", () => {
+    const jobs = applyDeepThinkEvent(
+      [],
+      {
+        type: "deep_think_activity",
+        job_id: "d1",
+        activity: "pensando",
+        thinkers: [null, "nao e um pensador", { id: "t1", angle: "riscos", status: "done" }],
+      } as never,
+      CONV,
+      AT,
+    );
+
+    expect(jobs[0]?.thinkers).toHaveLength(1);
+    expect(jobs[0]?.thinkers[0]?.id).toBe("t1");
+  });
+
+  it("gives a thinker with no id one, so two of them are not the same row", () => {
+    const jobs = applyDeepThinkEvent(
+      [],
+      {
+        type: "deep_think_activity",
+        job_id: "d1",
+        activity: "pensando",
+        thinkers: [{ angle: "riscos" }, { angle: "custo" }],
+      } as never,
+      CONV,
+      AT,
+    );
+
+    const ids = jobs[0]!.thinkers.map((thinker) => thinker.id);
+    expect(new Set(ids).size).toBe(2);
+    // Unknown state reads as "not started yet", the one status that promises
+    // nothing about what the thinker found.
+    expect(jobs[0]?.thinkers.every((thinker) => thinker.status === "pending")).toBe(true);
+  });
+
+  it("keeps a number out of the fields both cards call .toFixed on", () => {
+    const jobs = applyDeepThinkEvent(
+      [],
+      {
+        type: "deep_think_done",
+        job_id: "d1",
+        synthesis: SYNTHESIS,
+        thinkers: [{ id: "t1", angle: "riscos", status: "done", usd: "0.02", searches: null }],
+        cost_usd: "1.50",
+      } as never,
+      CONV,
+      AT,
+    );
+
+    expect(jobs[0]?.cost_usd).toBeUndefined();
+    expect(jobs[0]?.thinkers[0]?.usd).toBeUndefined();
+    expect(jobs[0]?.thinkers[0]?.searches).toBeUndefined();
+  });
+
+  it("keeps a citation only when it can be linked to and named", () => {
+    const jobs = applyDeepThinkEvent(
+      [],
+      {
+        type: "deep_think_done",
+        job_id: "d1",
+        synthesis: SYNTHESIS,
+        thinkers: [
+          {
+            id: "t1",
+            angle: "riscos",
+            status: "done",
+            citations: [{ url: "https://a.example", title: "A" }, { snippet: "sem url" }, null],
+          },
+        ],
+      } as never,
+      CONV,
+      AT,
+    );
+
+    expect(jobs[0]?.thinkers[0]?.citations).toEqual([
+      { url: "https://a.example", title: "A" },
+    ]);
+  });
+});
+
+describe("a failure the server described in no words", () => {
+  it("never speaks the string 'undefined' for a round", () => {
+    const r = record();
+    sessionStreamHandler(r.deps)(JSON.stringify({ type: "deep_think_error", job_id: "d1" }));
+
+    expect(r.deepThinkJobs()[0]?.status).toBe("error");
+    expect(r.deepThinkJobs()[0]?.error).toBe("");
+
+    const spoken = JSON.stringify(r.sent) + JSON.stringify(r.entries);
+    expect(spoken).not.toContain("undefined");
+    expect(spoken).toContain("o servidor nao disse o motivo");
+  });
+
+  it("never speaks the string 'undefined' for a pi agent either", () => {
+    const r = record();
+    sessionStreamHandler(r.deps)(JSON.stringify({ type: "error", job_id: "a1" }));
+
+    expect(r.jobs()[0]?.status).toBe("error");
+    expect(r.jobs()[0]?.error).toBe("");
+
+    const spoken = JSON.stringify(r.sent) + JSON.stringify(r.entries);
+    expect(spoken).not.toContain("undefined");
+  });
+
+  it("says nothing at all about an agent that finished with no result", () => {
+    const r = record();
+    sessionStreamHandler(r.deps)(JSON.stringify({ type: "done", job_id: "a1" }));
+
+    // The card still closes; it is only the spoken turn that is withheld, the
+    // same rule a round with an empty synthesis follows.
+    expect(r.jobs()[0]?.status).toBe("done");
+    expect(r.jobs()[0]?.result).toBe("");
+    expect(r.entries).toHaveLength(0);
+    expect(r.sent).toHaveLength(0);
+    expect(r.responses()).toBe(0);
+  });
+
+  it("keeps a non-string result out of the sentence handed to the model", () => {
+    const r = record();
+    sessionStreamHandler(r.deps)(
+      JSON.stringify({ type: "done", job_id: "a1", result: { text: "achei" } }),
+    );
+
+    expect(r.jobs()[0]?.result).toBe("");
+    expect(r.sent).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A pi job ends exactly once, for the same reason a round does
+// ---------------------------------------------------------------------------
+
+describe("applyAgentJobEvent is monotonic too", () => {
+  it("does not let a late activity drag a finished agent back to running", () => {
+    const done = applyAgentJobEvent(
+      [],
+      { type: "done", job_id: "a1", result: "achei o bug" },
+      CONV,
+      AT,
+    );
+    const late = applyAgentJobEvent(
+      done,
+      { type: "activity", job_id: "a1", activity: "lendo o repositorio" },
+      CONV,
+      AT,
+    );
+
+    expect(late).toBe(done);
+    expect(late[0]?.status).toBe("done");
+    expect(late[0]?.activity).toBe("concluido");
+  });
+
+  it("never lets one card carry both an error and a result", () => {
+    const failed = applyAgentJobEvent(
+      [],
+      { type: "error", job_id: "a1", error: "o agente estourou o tempo" },
+      CONV,
+      AT,
+    );
+    const late = applyAgentJobEvent(
+      failed,
+      { type: "done", job_id: "a1", result: "achei o bug" },
+      CONV,
+      AT,
+    );
+
+    expect(late[0]?.status).toBe("error");
+    expect(late[0]?.result).toBeUndefined();
+  });
+
+  it("leaves a job the user cancelled cancelled", () => {
+    const cancelled: AgentJob[] = [
+      {
+        id: "a1",
+        conversation_id: CONV,
+        prompt: "",
+        cwd: "",
+        status: "cancelled",
+        activity: "cancelado",
+        started_at: AT,
+      },
+    ];
+
+    const late = applyAgentJobEvent(
+      cancelled,
+      { type: "activity", job_id: "a1", activity: "lendo o repositorio" },
+      CONV,
+      AT,
+    );
+
+    expect(late).toBe(cancelled);
+  });
+
+  it("still folds the three events in the order they normally arrive", () => {
+    let jobs = applyAgentJobEvent(
+      [],
+      { type: "activity", job_id: "a1", activity: "lendo o repositorio" },
+      CONV,
+      AT,
+    );
+    expect(jobs[0]?.status).toBe("running");
+
+    jobs = applyAgentJobEvent(
+      jobs,
+      { type: "done", job_id: "a1", result: "achei o bug", cost_usd: 0.02 },
+      CONV,
+      AT,
+    );
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.result).toBe("achei o bug");
+    expect(jobs[0]?.cost_usd).toBe(0.02);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The gallery survives a reload
+// ---------------------------------------------------------------------------
+
+function diagram(id: string, createdAt: string): MermaidDiagram {
+  return {
+    id,
+    kind: "flowchart",
+    source: "flowchart TD\n  A --> B",
+    caption: `desenho ${id}`,
+    created_at: createdAt,
+  };
+}
+
+describe("seedDiagrams", () => {
+  it("puts what the conversation remembered in front of what it just drew", () => {
+    const live = [diagram("novo", "2026-08-08T12:00:00.000Z")];
+    const seeded = seedDiagrams(live, [
+      diagram("antigo-1", "2026-08-01T10:00:00.000Z"),
+      diagram("antigo-2", "2026-08-01T11:00:00.000Z"),
+    ]);
+
+    expect(seeded.map((d) => d.id)).toEqual(["antigo-1", "antigo-2", "novo"]);
+  });
+
+  it("lets the live redraw win over the remembered version of the same id", () => {
+    const live = [{ ...diagram("d1", "2026-08-08T12:00:00.000Z"), caption: "redesenhado" }];
+    const seeded = seedDiagrams(live, [diagram("d1", "2026-08-01T10:00:00.000Z")]);
+
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0]?.caption).toBe("redesenhado");
+  });
+
+  it("does not touch the list when the file has nothing new to add", () => {
+    const live = [diagram("d1", "2026-08-08T12:00:00.000Z")];
+    expect(seedDiagrams(live, [])).toBe(live);
+    expect(seedDiagrams(live, [diagram("d1", "2026-08-01T10:00:00.000Z")])).toBe(live);
+  });
+
+  it("respects the same ceiling the live gallery has, keeping the newest", () => {
+    const live = [diagram("novo", "2026-08-08T12:00:00.000Z")];
+    const remembered = Array.from({ length: MAX_DIAGRAMS + 10 }, (_, i) =>
+      diagram(`antigo-${i}`, "2026-08-01T10:00:00.000Z"),
+    );
+
+    const seeded = seedDiagrams(live, remembered);
+    expect(seeded).toHaveLength(MAX_DIAGRAMS);
+    expect(seeded[seeded.length - 1]?.id).toBe("novo");
+  });
+});
+
+describe("mergeConversationItems", () => {
+  const entry = (id: string, timestamp: string): TranscriptEntry => ({
+    id,
+    role: "assistant",
+    text: id,
+    final: true,
+    timestamp,
+  });
+
+  it("puts a diagram after the turn that asked for it", () => {
+    const items = mergeConversationItems(
+      [entry("pergunta", "2026-08-08T12:00:00.000Z"), entry("resposta", "2026-08-08T12:00:10.000Z")],
+      [diagram("d1", "2026-08-08T12:00:05.000Z")],
+    );
+
+    expect(items.map((item) => item.key)).toEqual([
+      "pergunta",
+      "diagram-d1",
+      "resposta",
+    ]);
+  });
+
+  it("puts a resumed conversation's old drawings above today's first sentence", () => {
+    const items = mergeConversationItems(
+      [entry("hoje", "2026-08-08T12:00:00.000Z")],
+      [diagram("semana-passada", "2026-08-01T09:00:00.000Z")],
+    );
+
+    expect(items[0]?.kind).toBe("diagram");
+    expect(items[1]?.key).toBe("hoje");
+  });
+
+  it("keeps a drawing that arrives after the last turn at the end", () => {
+    const items = mergeConversationItems(
+      [entry("pergunta", "2026-08-08T12:00:00.000Z")],
+      [diagram("d1", "2026-08-08T12:00:30.000Z")],
+    );
+
+    expect(items.map((item) => item.key)).toEqual(["pergunta", "diagram-d1"]);
+  });
+
+  it("renders each list on its own when the other one is empty", () => {
+    expect(mergeConversationItems([], [diagram("d1", "2026-08-08T12:00:00.000Z")])).toHaveLength(1);
+    expect(mergeConversationItems([entry("a", "2026-08-08T12:00:00.000Z")], [])).toHaveLength(1);
+    expect(mergeConversationItems([], [])).toEqual([]);
+  });
+
+  it("does not lose a diagram whose timestamp cannot be read", () => {
+    const items = mergeConversationItems(
+      [entry("pergunta", "2026-08-08T12:00:00.000Z")],
+      [diagram("quebrado", "nao e uma data")],
+    );
+
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.key)).toContain("diagram-quebrado");
   });
 });

@@ -11,8 +11,9 @@ import {
   Upload,
 } from "lucide-react";
 
+import * as api from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { MemoryFile } from "./contracts";
+import type { MemoryFile } from "@/types";
 
 export interface MemoryPanelProps {
   /** `null` closes the panel: there is nothing to remember yet. */
@@ -27,46 +28,22 @@ export interface MemoryPanelProps {
 // The four routes this panel drives
 // ---------------------------------------------------------------------------
 //
-// Called from here rather than through `lib/api.ts`, and the honest reason is a
-// worktree boundary, not a technical one. `lib/api.ts` was being written on a
-// parallel branch that does not exist in this checkout; it now exports an
-// `ApiError` carrying `status`, plus `getMemory`, `memoryDownloadUrl`,
-// `importMemory(…, { overwrite })` and `clearMemory` — added for exactly the 409
-// this panel depends on. So these four are a duplicate, and consolidating them
-// onto that client belongs to the wave that merges both branches. An earlier
-// version of this comment claimed `lib/api.ts` would collapse the 409 into a
-// generic error. That was wrong.
+// All four go through `lib/api.ts`: `getMemory` (404 → `null`),
+// `memoryDownloadUrl`, `importMemory(…, { overwrite })` and `clearMemory`. That
+// client exports `ApiError` with its `status` for exactly the 409 below, so the
+// panel reads a status instead of re-parsing a body.
 //
-// What must survive the consolidation is the 409 itself: the backend answers it
-// with a sentence written for the user, counting what an overwrite would
-// destroy, and any client that reduces it to `Error("HTTP 409")` takes the
-// decision away from the person making it.
+// What the client must never do, and does not, is flatten that 409: the backend
+// answers it with a sentence written for the user, counting what an overwrite
+// would destroy and naming both ways out. Reduced to `Error("HTTP 409")` it
+// takes the decision away from the person making it, which is why the message is
+// shown here exactly as it arrived.
 
-function memoryUrl(conversationId: string, suffix = ""): string {
-  // Encoded, because a conversation id reaches this function from a URL, from
-  // storage and from a JSON file, and the one that arrives with a `/` or a `?`
-  // in it would otherwise address a different route entirely.
-  return `/api/conversations/${encodeURIComponent(conversationId)}/memory${suffix}`;
-}
-
-interface RequestFailure {
-  status: number;
-  message: string;
-}
-
-async function readFailure(response: Response): Promise<RequestFailure> {
-  const body = await response.text().catch(() => "");
-  let message = `HTTP ${response.status}`;
-  try {
-    const parsed: unknown = JSON.parse(body);
-    if (parsed && typeof parsed === "object" && "error" in parsed) {
-      const detail = (parsed as { error: unknown }).error;
-      if (typeof detail === "string" && detail.length > 0) message = detail;
-    }
-  } catch {
-    // Not JSON — the status code is all there is to report.
-  }
-  return { status: response.status, message };
+/** The server's own words when it has them, a generic line when it does not. */
+function describeFailure(err: unknown): string {
+  return err instanceof api.ApiError
+    ? err.message
+    : "Não consegui falar com o servidor.";
 }
 
 /** What the header line shows, distilled from the file. */
@@ -146,21 +123,13 @@ export function MemoryPanel({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(memoryUrl(conversationId));
-      // A conversation nobody has spoken to yet has no file. That is the
-      // starting state of every conversation, not a failure to report.
-      if (response.status === 404) {
-        setSummary(null);
-        return;
-      }
-      if (!response.ok) {
-        const failure = await readFailure(response);
-        setError(failure.message);
-        return;
-      }
-      setSummary(summarise((await response.json()) as MemoryFile));
-    } catch {
-      setError("Não consegui falar com o servidor.");
+      // A conversation nobody has spoken to yet has no file, and `getMemory`
+      // answers `null` for it. That is the starting state of every conversation,
+      // not a failure to report — a broken server still throws.
+      const file = await api.getMemory(conversationId);
+      setSummary(file ? summarise(file) : null);
+    } catch (err) {
+      setError(describeFailure(err));
     } finally {
       setLoading(false);
     }
@@ -183,41 +152,24 @@ export function MemoryPanel({
       setError(null);
       setNotice(null);
       try {
-        const response = await fetch(
-          memoryUrl(
-            conversationId,
-            overwrite ? "/import?overwrite=true" : "/import",
-          ),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          },
-        );
-
-        if (response.ok) {
-          setConflict(null);
-          setPendingImport(null);
-          setNotice("Memória importada.");
-          await load();
-          onChanged?.();
-          return;
-        }
-
-        const failure = await readFailure(response);
-        if (failure.status === 409) {
+        await api.importMemory(conversationId, payload, { overwrite });
+        setConflict(null);
+        setPendingImport(null);
+        setNotice("Memória importada.");
+        await load();
+        onChanged?.();
+      } catch (err) {
+        if (err instanceof api.ApiError && err.status === 409) {
           // Shown as written. The message counts the events and reflections
           // that would be lost and names both ways out; a summary of it would
           // drop exactly the numbers that make the decision.
-          setConflict(failure.message);
+          setConflict(err.message);
           setPendingImport(payload);
           return;
         }
         setConflict(null);
         setPendingImport(null);
-        setError(failure.message);
-      } catch {
-        setError("Não consegui falar com o servidor.");
+        setError(describeFailure(err));
       } finally {
         setBusy(false);
       }
@@ -268,21 +220,15 @@ export function MemoryPanel({
     setError(null);
     setNotice(null);
     try {
-      const response = await fetch(memoryUrl(conversationId), {
-        method: "DELETE",
-      });
-      if (!response.ok) {
-        setError((await readFailure(response)).message);
-        return;
-      }
+      await api.clearMemory(conversationId);
       setConfirmingDelete(false);
       setConflict(null);
       setPendingImport(null);
       setNotice("Memória apagada.");
       await load();
       onChanged?.();
-    } catch {
-      setError("Não consegui falar com o servidor.");
+    } catch (err) {
+      setError(describeFailure(err));
     } finally {
       setBusy(false);
     }
@@ -340,7 +286,7 @@ export function MemoryPanel({
                 second, worse filename in front of the one the server chose. */}
             {summary && (
               <a
-                href={memoryUrl(conversationId, "?download")}
+                href={api.memoryDownloadUrl(conversationId)}
                 className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-muted-foreground transition-colors hover:text-foreground"
               >
                 <Download className="size-3" />
