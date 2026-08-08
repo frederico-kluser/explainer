@@ -3,6 +3,8 @@ import type {
   Conversation,
   ConversationSettings,
   CostSummary,
+  MemoryFile,
+  MemoryResume,
   Message,
   ProviderCredit,
   RealtimeSessionToken,
@@ -13,7 +15,15 @@ import type {
 
 // ----- Helpers -----
 
-class ApiError extends Error {
+/**
+ * A refusal the server wrote, carried with the status that classifies it.
+ *
+ * Exported because some statuses are not failures: a 409 from the memory import
+ * is the backend protecting a file the user cannot get back, and its message —
+ * already in Portuguese, already naming both ways out — is what the UI must
+ * show. Callers tell that apart with `instanceof ApiError && err.status === 409`.
+ */
+export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
@@ -44,11 +54,24 @@ async function handleEmpty(response: Response): Promise<void> {
   if (!response.ok) throw await readError(response);
 }
 
-function postJSON(path: string, body: unknown): Promise<Response> {
+/**
+ * Like `handleResponse`, except a 404 is an answer.
+ *
+ * The memory routes 404 a conversation nobody has said anything in yet. That is
+ * the ordinary state of every new conversation, so turning it into a thrown
+ * error would make the empty case indistinguishable from a broken server.
+ */
+async function handleMissingAsNull<T>(response: Response): Promise<T | null> {
+  if (response.status === 404) return null;
+  return handleResponse<T>(response);
+}
+
+function postJSON(path: string, body: unknown, init?: RequestInit): Promise<Response> {
   return fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    ...init,
   });
 }
 
@@ -99,26 +122,81 @@ export async function browse(path?: string): Promise<BrowseResult> {
 // ----- Realtime -----
 
 /**
+ * How long the mint may hang before the UI gives up on it, in ms.
+ *
+ * The mint is not a plain lookup: for a conversation with memory it asks the
+ * summariser to compress the file before it answers. That call has its own
+ * server-side budget, but a stalled socket has none — and this request sits
+ * between the user pressing "Conectar" and anything at all happening, with no
+ * `AbortSignal` anywhere in `fetch`'s defaults to end it.
+ */
+export const REALTIME_MINT_TIMEOUT_MS = 20_000;
+
+/**
  * Mint the ephemeral token for a WebRTC session.
  *
  * The standard API key never reaches the browser: the backend configures the
  * whole session (model, voice, instructions, tools) and hands back a token that
  * is only good for that one session.
+ *
+ * `signal` lets a caller drop the mint when the user navigates away; the
+ * timeout is the floor under that, so no caller can forget it.
  */
 export async function createRealtimeSession(
   conversationId: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<RealtimeSessionToken> {
-  const response = await postJSON("/api/realtime/session", {
-    conversation_id: conversationId,
-  });
-  return handleResponse<RealtimeSessionToken>(response);
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, options.timeoutMs ?? REALTIME_MINT_TIMEOUT_MS);
+
+  const caller = options.signal;
+  const forwardAbort = () => controller.abort();
+  if (caller) {
+    if (caller.aborted) controller.abort();
+    else caller.addEventListener("abort", forwardAbort, { once: true });
+  }
+
+  try {
+    const response = await postJSON(
+      "/api/realtime/session",
+      { conversation_id: conversationId },
+      { signal: controller.signal },
+    );
+    return await handleResponse<RealtimeSessionToken>(response);
+  } catch (err) {
+    // Our own deadline, not the caller's: say so in words the user can act on
+    // instead of surfacing a bare AbortError.
+    if (timedOut) {
+      throw new Error(
+        "O servidor demorou demais para preparar a sessao. Tente conectar de novo.",
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    caller?.removeEventListener("abort", forwardAbort);
+  }
 }
+
+/**
+ * The side channel of a tool result.
+ *
+ * Everything the model must not read out loud travels here instead of in
+ * `output`: `generate_diagram` puts the whole mermaid source in `meta.diagram`
+ * and leaves only the spoken caption in `output`, and `deep_think` puts the job
+ * id here so the model never recites a uuid digit by digit.
+ */
+export type ToolMeta = Record<string, unknown>;
 
 export interface ToolResult {
   call_id: string | null;
   name: string;
   output: string;
-  meta: Record<string, unknown> | null;
+  meta: ToolMeta | null;
 }
 
 /** Run one of the model's function calls on the server. */
@@ -187,6 +265,75 @@ export async function appendMessages(
     `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
     { messages },
   );
+  await handleEmpty(response);
+}
+
+// ----- Memory -----
+//
+// The conversation as a file the user owns: readable, downloadable, importable
+// somewhere else, and deletable without deleting the conversation.
+
+function memoryPath(conversationId: string, suffix = ""): string {
+  return `/api/conversations/${encodeURIComponent(conversationId)}/memory${suffix}`;
+}
+
+/**
+ * The whole memory file, or `null` when the conversation has no past yet.
+ *
+ * `null` is not an error path. Every conversation starts here, and the caller
+ * that shows "nada gravado ainda" needs to tell that apart from a server that
+ * is down — which still throws.
+ */
+export async function getMemory(conversationId: string): Promise<MemoryFile | null> {
+  const response = await fetch(memoryPath(conversationId));
+  return handleMissingAsNull<MemoryFile>(response);
+}
+
+/**
+ * The URL that makes the browser save the file instead of parsing it.
+ *
+ * Handed to an `<a download>` rather than fetched: `Content-Disposition` is
+ * instruction for the browser's own downloader, and reading the body through
+ * `fetch` would throw it away.
+ */
+export function memoryDownloadUrl(conversationId: string): string {
+  return memoryPath(conversationId, "?download");
+}
+
+/**
+ * Take a memory file back in, against the conversation in the URL.
+ *
+ * An import *replaces*. Without `overwrite`, a conversation that already
+ * remembers something is answered with 409 and a message that names both ways
+ * out — that message is the product, so it is propagated untouched rather than
+ * flattened into "falha ao importar".
+ */
+export async function importMemory(
+  conversationId: string,
+  file: MemoryFile,
+  options: { overwrite?: boolean } = {},
+): Promise<MemoryFile> {
+  const query = options.overwrite ? "/import?overwrite=true" : "/import";
+  const response = await postJSON(memoryPath(conversationId, query), file);
+  return handleResponse<MemoryFile>(response);
+}
+
+/**
+ * The compressed form a resumed session would be seeded with.
+ *
+ * This one costs money — it pays the summariser to compress the file — so it is
+ * a deliberate request, never a poll.
+ */
+export async function getMemoryResume(
+  conversationId: string,
+): Promise<MemoryResume | null> {
+  const response = await fetch(memoryPath(conversationId, "/resume"));
+  return handleMissingAsNull<MemoryResume>(response);
+}
+
+/** Forget, without deleting the conversation. */
+export async function clearMemory(conversationId: string): Promise<void> {
+  const response = await fetch(memoryPath(conversationId), { method: "DELETE" });
   await handleEmpty(response);
 }
 
