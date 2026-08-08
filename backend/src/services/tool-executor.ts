@@ -7,6 +7,11 @@ import {
   searchSource,
 } from "../tools/source-tools.js";
 import { executeWebSearch } from "../tools/web-search.js";
+import {
+  checkDeepThink,
+  runDeepThink,
+  runGenerateDiagram,
+} from "../tools/deliberation-tools.js";
 import { toolsForSources } from "../tools/index.js";
 import type { ResolvedSource, ToolName } from "../types/index.js";
 
@@ -79,6 +84,41 @@ function optionalString(
   return value.trim().length === 0 ? undefined : value;
 }
 
+/**
+ * The tools that answer with no material in the conversation.
+ *
+ * Thinking and drawing do not read a repository, so the "add a material first"
+ * reply below would refuse them for nothing — and that reply is not a log line,
+ * it is a sentence the model reads out loud, so the user would be told to add a
+ * repository in order to be shown a drawing.
+ *
+ * `web_search` is deliberately absent from this set even though
+ * `toolsForSources` offers it on an empty conversation: a conversation with
+ * nothing added is one the user has not started yet, and asking for a material
+ * is the useful answer there. That is also the behaviour the existing suite
+ * pins.
+ */
+const MATERIAL_FREE_TOOLS = new Set<string>([
+  "deep_think",
+  "check_deep_think",
+  "generate_diagram",
+] satisfies ToolName[]);
+
+/**
+ * What the model is told when it reaches for a material that is not there.
+ *
+ * Spoken out loud, so it names the three ways to add one instead of reporting a
+ * failure the user cannot act on.
+ */
+function noMaterial(): ToolOutcome {
+  return {
+    output:
+      "Nenhum material foi adicionado a esta conversa. Peca ao usuario para " +
+      "adicionar um repositorio, colar um markdown ou incluir a documentacao " +
+      "do computador.",
+  };
+}
+
 /** One line per material, for the model to choose from. */
 function describeMaterials(sources: ResolvedSource[]): string {
   return sources
@@ -108,14 +148,7 @@ export async function executeTool(
   const args = parseToolArguments(rawArguments);
   const sources = await listSources(conversationId);
 
-  if (sources.length === 0) {
-    return {
-      output:
-        "Nenhum material foi adicionado a esta conversa. Peca ao usuario para " +
-        "adicionar um repositorio, colar um markdown ou incluir a documentacao " +
-        "do computador.",
-    };
-  }
+  if (sources.length === 0 && !MATERIAL_FREE_TOOLS.has(name)) return noMaterial();
 
   const allowed = new Set(toolsForSources(sources).map((t) => t.name));
   if (!allowed.has(name as ToolName)) {
@@ -128,8 +161,14 @@ export async function executeTool(
 
   // Every material-scoped tool resolves the same way, and a reference the model
   // invented falls back to the first material instead of failing the turn.
+  //
+  // Left nullable on purpose. The material-free tools skip the early return
+  // above, so `sources` can be empty here and `pickSource` answers null — and an
+  // assertion would let the next tool added to MATERIAL_FREE_TOOLS read
+  // `source.label` off null, compile clean and throw mid-sentence. Each branch
+  // below that needs a material says so, and `tsc` is what enforces it.
   const reference = optionalString(args, "material", name);
-  const source = pickSource(sources, reference)!;
+  const source = pickSource(sources, reference);
 
   switch (name as ToolName) {
     case "list_materials":
@@ -146,13 +185,16 @@ export async function executeTool(
         ),
       };
 
-    case "read_source_doc":
+    case "read_source_doc": {
+      if (!source) return noMaterial();
       return {
         output: await readSourceDoc(source, optionalString(args, "path", name)),
         meta: { material: source.label },
       };
+    }
 
-    case "search_source":
+    case "search_source": {
+      if (!source) return noMaterial();
       return {
         output: await searchSource(
           source,
@@ -161,26 +203,33 @@ export async function executeTool(
         ),
         meta: { material: source.label },
       };
+    }
 
-    case "read_source_file":
+    case "read_source_file": {
+      if (!source) return noMaterial();
       return {
         output: await readSourceFile(source, requireString(args, "path", name)),
         meta: { material: source.label },
       };
+    }
 
-    case "list_source_files":
+    case "list_source_files": {
+      if (!source) return noMaterial();
       return {
         output: await listSourceFiles(source, optionalString(args, "path", name)),
         meta: { material: source.label },
       };
+    }
 
-    case "dispatch_pi_agent":
+    case "dispatch_pi_agent": {
+      if (!source) return noMaterial();
       return dispatchAgent(
         conversationId,
         source,
         requireString(args, "question", name),
         optionalString(args, "context", name),
       );
+    }
 
     case "check_pi_agent": {
       const job = getJob(requireString(args, "job_id", name));
@@ -196,6 +245,17 @@ export async function executeTool(
         meta: { job_id: job.id, status: job.status },
       };
     }
+
+    // The three deliberation handlers own their own validation and never throw,
+    // so there is nothing to pull apart here and nothing to catch.
+    case "deep_think":
+      return runDeepThink(args, conversationId);
+
+    case "check_deep_think":
+      return checkDeepThink(args, conversationId);
+
+    case "generate_diagram":
+      return runGenerateDiagram(args, conversationId);
 
     default: {
       const unknown: string = name;

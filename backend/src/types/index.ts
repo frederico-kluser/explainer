@@ -64,7 +64,10 @@ export type ToolName =
   | "read_source_file"
   | "list_source_files"
   | "dispatch_pi_agent"
-  | "check_pi_agent";
+  | "check_pi_agent"
+  | "deep_think"
+  | "check_deep_think"
+  | "generate_diagram";
 
 export interface ToolCall {
   id: string;

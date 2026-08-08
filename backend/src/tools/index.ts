@@ -1,3 +1,5 @@
+import { MERMAID_KINDS } from "../services/mermaid.js";
+import { MAX_THINKERS } from "../types/deep-tools.js";
 import type { ResolvedSource, ToolName } from "../types/index.js";
 
 /**
@@ -179,6 +181,137 @@ const CHECK_PI_AGENT: RealtimeTool = {
   },
 };
 
+const DEEP_THINK: RealtimeTool = {
+  type: "function",
+  name: "deep_think",
+  description:
+    "Dispara uma rodada de pensamento profundo: varios pensadores atacam o mesmo " +
+    "cenario por angulos diferentes, pesquisam na internet e no fim tudo vira uma " +
+    "conclusao unica. Retorna na hora com o aviso de que disparou; a conclusao " +
+    "chega depois, sozinha, sem voce precisar perguntar. Use em decisoes dificeis, " +
+    "trade-offs, riscos e planos com muitas variaveis. Avise o usuario em voz alta " +
+    "que voce disparou os pensadores e continue a conversa enquanto eles trabalham.",
+  parameters: {
+    type: "object",
+    properties: {
+      scenario: {
+        type: "string",
+        description:
+          "O cenario, a decisao ou o problema sobre o qual pensar, escrito por extenso.",
+      },
+      reflection: {
+        type: "string",
+        description:
+          "Opcional: o que voce ja concluiu ou suspeita, para os pensadores partirem dai.",
+      },
+      thinker_count: {
+        type: "integer",
+        minimum: 1,
+        // Ceiling and prose both come from MAX_THINKERS, the way `kind` below
+        // comes from MERMAID_KINDS. `deliberation-tools.ts` clamps against the
+        // same constant, so a literal here would eventually promise the model a
+        // number the clamp silently takes away.
+        maximum: MAX_THINKERS,
+        description:
+          `Opcional: quantos pensadores usar, de 1 a ${MAX_THINKERS}. Omita para ` +
+          "deixar a ferramenta escolher pelo tamanho do problema.",
+      },
+    },
+    required: ["scenario"],
+  },
+};
+
+const CHECK_DEEP_THINK: RealtimeTool = {
+  type: "function",
+  name: "check_deep_think",
+  description:
+    "Consulta o estado da rodada de pensamento profundo desta conversa. Use apenas " +
+    "se o usuario perguntar; normalmente a conclusao chega sozinha quando fica pronta.",
+  parameters: {
+    type: "object",
+    properties: {
+      job_id: {
+        type: "string",
+        description:
+          "Opcional: o identificador de uma rodada especifica. Omita para pegar a " +
+          "rodada desta conversa.",
+      },
+    },
+  },
+};
+
+const GENERATE_DIAGRAM: RealtimeTool = {
+  type: "function",
+  name: "generate_diagram",
+  description:
+    "Desenha um diagrama na tela do usuario. Descreva o desenho em linguagem " +
+    "natural — as caixas, as setas, as etapas, quem fala com quem — e a ferramenta " +
+    "devolve o diagrama pronto para a tela; voce nao escreve o codigo do desenho, " +
+    "ela escreve por voce. Use quando o usuario pedir para ver algo, ou quando uma " +
+    "arquitetura, um fluxo ou uma sequencia ficar mais clara desenhada do que falada.",
+  parameters: {
+    type: "object",
+    properties: {
+      instructions: {
+        type: "string",
+        description:
+          "O que o diagrama deve mostrar, em linguagem natural: as caixas, as " +
+          "setas, as etapas e o que liga cada coisa a cada coisa.",
+      },
+      kind: {
+        type: "string",
+        // The closed list comes from mermaid.ts so the schema and the generator's
+        // own prompt can never drift into disagreeing about what exists.
+        enum: [...MERMAID_KINDS],
+        description:
+          "Opcional: o tipo de diagrama, se voce ja souber qual quer. Omita para " +
+          "deixar a ferramenta escolher pela descricao.",
+      },
+      title: {
+        type: "string",
+        description: "Opcional: titulo para aparecer acima do diagrama.",
+      },
+    },
+    required: ["instructions"],
+  },
+};
+
+/**
+ * The tools that need no material at all.
+ *
+ * Thinking and drawing do not read a repository, so they ride next to
+ * `web_search` in every conversation — including one with nothing added yet.
+ *
+ * `deep_think` is behind the Brave key because a thinker's only tool *is* a
+ * Brave search (`services/deep-think.ts` gives it `brave_search` and nothing
+ * else) and with no key `services/brave.ts` throws before the request leaves the
+ * process. That failure does not kill the round: `deep-think.ts` catches it,
+ * records a web failure and hands the thinker back "A busca falhou (…). Siga
+ * raciocinando sem a web", so the round runs to the end — planner, every
+ * thinker, synthesiser — and bills all of it to deliver a conclusion assembled
+ * without a single source, while the tool's own description promises the model
+ * that the thinkers "pesquisam na internet". A round that silently degrades to
+ * an opinion costs more than a tool the model never had. Offering the tool is
+ * the promise, so the gate is here rather than in an error further down.
+ *
+ * `check_deep_think` shares the gate because nothing else can start a round:
+ * `dispatchDeepThink` is called only from `runDeepThink`, and `runDeepThink`
+ * only from this tool list. Published alone it is dead weight in a frozen list,
+ * and its one possible answer — "nenhuma rodada […] dispare uma nova" — is read
+ * out loud, telling the model to reach for a tool it was not given.
+ *
+ * The env is read on every call instead of captured at import: this list is
+ * rebuilt at each session mint, and a key exported after the process came up
+ * still counts. The `trim()` matches `services/brave.ts`, so a key set to the
+ * empty string is absent in both places rather than in only one.
+ */
+function deliberationTools(): RealtimeTool[] {
+  const tools: RealtimeTool[] = [];
+  if (process.env.BRAVE_API_KEY?.trim()) tools.push(DEEP_THINK, CHECK_DEEP_THINK);
+  tools.push(GENERATE_DIAGRAM);
+  return tools;
+}
+
 /**
  * Which tools the model gets, decided by what is actually in the conversation.
  *
@@ -189,7 +322,7 @@ const CHECK_PI_AGENT: RealtimeTool = {
  * tool can reach.
  */
 export function toolsForSources(sources: ResolvedSource[]): RealtimeTool[] {
-  if (sources.length === 0) return [WEB_SEARCH];
+  if (sources.length === 0) return [WEB_SEARCH, ...deliberationTools()];
 
   const hasFiles = sources.some((source) => Boolean(source.root));
   const tools: RealtimeTool[] = [READ_SOURCE_DOC];
@@ -204,7 +337,7 @@ export function toolsForSources(sources: ResolvedSource[]): RealtimeTool[] {
     );
   }
 
-  tools.push(WEB_SEARCH);
+  tools.push(WEB_SEARCH, ...deliberationTools());
 
   // Naming a material only makes sense when there is more than one to name.
   if (sources.length > 1) tools.unshift(LIST_MATERIALS);
@@ -221,4 +354,7 @@ export const ALL_TOOLS: RealtimeTool[] = [
   DISPATCH_PI_AGENT,
   CHECK_PI_AGENT,
   WEB_SEARCH,
+  DEEP_THINK,
+  CHECK_DEEP_THINK,
+  GENERATE_DIAGRAM,
 ];
