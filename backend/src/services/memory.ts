@@ -38,6 +38,7 @@ import { readFile, writeFile, rename, unlink, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ensureDir, isUUID, validateMemoryPath } from "../middleware/sandbox.js";
+import { validateMermaid } from "./mermaid.js";
 import { completeText } from "./openai.js";
 import type {
   MemoryEvent,
@@ -953,6 +954,9 @@ function requireShortId(value: unknown, field: string, where: string): string {
  *   4. Trust markers are always stripped: see RESERVED_META_KEYS.
  *   5. Oversized values are truncated to exactly the ceilings a locally written
  *      file gets, in `normalizeEvent`.
+ *   6. A value that the browser executes rather than displays — a mermaid
+ *      `source` — has to clear the same gate a locally drawn one cleared. Type
+ *      alone is not a check for it; see `validateImportedDiagram`.
  */
 function validateImportedEvent(value: unknown, index: number): MemoryEventInput {
   const where = `no evento ${index + 1}`;
@@ -1025,12 +1029,43 @@ function validateImportedDiagram(value: unknown, index: number): MermaidDiagram 
     );
   }
 
+  const source = requireString(value.source, "source", where);
+
+  // A mermaid source is an executable document in the browser that opens the
+  // memory, and until this call the import checked only that `source` was a
+  // string — so a file received from a third party could put `themeCSS`,
+  // `%%{init: securityLevel}%%` or a smuggled tag on the user's disk, and from
+  // there onto their screen. `validateMermaid` is the same gate a locally drawn
+  // diagram passes in `generateMermaid`, which is what makes re-importing an
+  // export a no-op: everything this module ever wrote was validated on the way
+  // out. Running it on the raw string rather than on the truncated one is not a
+  // gap — `MAX_DIAGRAM_CHARS` is well under `MEMORY_MAX_DIAGRAM_SOURCE_CHARS`,
+  // so anything long enough to be truncated is rejected for its length first.
+  //
+  // Rejecting the whole file rather than dropping the diagram, which is rule 2
+  // of the policy above and worth restating because the opposite is tempting
+  // here: pruning discards junk when the alternative is losing a conversation
+  // that is already on disk, and on import there is no such cost — nothing has
+  // been written yet, the user still holds the file, and `mutate` is never
+  // reached. Dropping would also mean the one case that matters most, a file
+  // crafted to attack the person importing it, is the case they are never told
+  // about; and every event pointing at the diagram through `diagram_id` would
+  // survive as a dangling reference. The message names the index so a large
+  // file with one bad diagram stays fixable.
+  const validation = validateMermaid(source);
+  if (!validation.ok) {
+    throw importError(
+      `o diagrama ${index + 1} tem um "source" que o validador de mermaid recusa, ` +
+        `então ele não vai ser gravado: ${validation.problems.join(" ")}`,
+    );
+  }
+
   // The id stays verbatim: events point at it through `diagram_id`, so minting a
   // new one here would break the link the file exists to preserve.
   const diagram: MermaidDiagram = {
     id: requireShortId(value.id, "id", where),
     kind: value.kind,
-    source: requireString(value.source, "source", where),
+    source,
     caption: requireString(value.caption, "caption", where),
     created_at:
       typeof value.created_at === "string" && !Number.isNaN(Date.parse(value.created_at))

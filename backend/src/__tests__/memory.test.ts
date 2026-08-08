@@ -722,6 +722,85 @@ describe("memory", () => {
       ).rejects.toThrow("diagrams precisa ser uma lista");
     });
 
+    /** One imported diagram with `source`, and nothing else worth varying. */
+    function withDiagramSource(
+      id: string,
+      source: string,
+      kind = "flowchart",
+    ): MemoryFile {
+      return importable(id, {
+        diagrams: [{ id: randomUUID(), kind, source, caption: "Legenda." }],
+      });
+    }
+
+    // The source a Chromium-headless review actually got a network beacon out
+    // of: mermaid compiles the frontmatter's `themeCSS` into the SVG's <style>,
+    // so merely opening the imported memory made the browser fetch the
+    // attacker's URL. The client refuses it in three places now — this asserts
+    // the bytes never reach the user's disk to begin with.
+    const BEACON_SOURCE =
+      '---\n{config: {themeCSS: "#x{background:url(https://evil.example/p)}"}}\n---\nflowchart LR\n A-->B';
+
+    it("refuses the themeCSS beacon and writes nothing to disk", async () => {
+      const id = randomUUID();
+      const failure = await memory
+        .importMemory(withDiagramSource(id, BEACON_SOURCE))
+        .then(
+          () => null,
+          (err: unknown) => err,
+        );
+
+      expect(failure).toBeInstanceOf(memory.MemoryFormatError);
+      expect((failure as { status: number }).status).toBe(400);
+      expect((failure as Error).message).toContain("o diagrama 1");
+      expect((failure as Error).message).toMatch(/themeCSS|securityLevel/);
+      // The whole point: nothing was persisted, so nothing can be rendered.
+      expect(await memory.readMemory(id)).toBeNull();
+    });
+
+    it("refuses an init directive that reconfigures the renderer", async () => {
+      const id = randomUUID();
+      const source =
+        '%%{init: {"securityLevel": "loose"}}%%\nflowchart TD\n  A --> B';
+      await expect(
+        memory.importMemory(withDiagramSource(id, source)),
+      ).rejects.toThrow("o diagrama 1");
+      expect(await memory.readMemory(id)).toBeNull();
+    });
+
+    it("refuses a stylesheet smuggled in as a classDiagram annotation", async () => {
+      const id = randomUUID();
+      const source =
+        "classDiagram\n  <<style>>*{background:url(https://evil.example/p)}\n  class A";
+      await expect(
+        memory.importMemory(withDiagramSource(id, source, "classDiagram")),
+      ).rejects.toThrow("o diagrama 1");
+      expect(await memory.readMemory(id)).toBeNull();
+    });
+
+    it("refuses a script tag written in mermaid's own escapes", async () => {
+      const id = randomUUID();
+      // `#60;` and `#62;` are `<` and `>` by the time mermaid renders the label,
+      // which is why the check cannot be a search for the literal "<script".
+      const source = 'flowchart TD\n  A["#60;script#62;alert(1)#60;/script#62;"]';
+      await expect(
+        memory.importMemory(withDiagramSource(id, source)),
+      ).rejects.toThrow("o diagrama 1");
+      expect(await memory.readMemory(id)).toBeNull();
+    });
+
+    it("still imports a legitimate diagram, source untouched", async () => {
+      const id = randomUUID();
+      const source = "flowchart TD\n  A[Início] --> B[Fim]";
+
+      const imported = await memory.importMemory(withDiagramSource(id, source));
+      expect(imported.diagrams).toHaveLength(1);
+      expect(imported.diagrams![0]!.source).toBe(source);
+
+      const reloaded = await memory.readMemory(id);
+      expect(reloaded!.diagrams![0]!.source).toBe(source);
+    });
+
     it("refuses a material label that is not text", async () => {
       const id = randomUUID();
       await expect(
