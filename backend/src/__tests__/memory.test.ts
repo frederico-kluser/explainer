@@ -25,6 +25,7 @@ delete process.env.OPENAI_API_KEY;
 
 const memory = await import("../services/memory.js");
 const sandbox = await import("../middleware/sandbox.js");
+const costs = await import("../services/costs.js");
 
 function makeDiagram(): MermaidDiagram {
   return {
@@ -420,6 +421,67 @@ describe("memory", () => {
       ]);
       expect(resume!.summary).toContain("Quero entender o pipeline.");
       expect(resume!.summary).toContain("Ele tem três etapas.");
+    });
+
+    it("prefers the model's summary when the call succeeds, and bills it", async () => {
+      const id = randomUUID();
+      await memory.appendMemoryEvents(id, [
+        { kind: "user", text: "Quero entender o pipeline." },
+        { kind: "assistant", text: "Ele tem três etapas." },
+        { kind: "reflection", text: "A etapa 2 é o gargalo real." },
+      ]);
+
+      process.env.OPENAI_API_KEY = "sk-test-not-real";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  model: "gpt-5.2-mini",
+                  usage: {
+                    input_tokens: 1000,
+                    output_tokens: 100,
+                    input_tokens_details: { cached_tokens: 200 },
+                  },
+                  output: [
+                    {
+                      type: "message",
+                      content: [{ text: "O usuário quer entender o pipeline em três etapas." }],
+                    },
+                  ],
+                }),
+              ),
+          }),
+        ),
+      );
+
+      try {
+        const resume = await memory.buildResume(id);
+        expect(resume!.summary).toBe(
+          "O usuário quer entender o pipeline em três etapas.",
+        );
+        // It replaced the deterministic summary rather than being appended to it.
+        expect(resume!.summary).not.toContain("Últimos turnos da conversa");
+        // Reflections never come from the model; they travel verbatim either way.
+        expect(resume!.reflections).toEqual(["A etapa 2 é o gargalo real."]);
+
+        // The summariser is a real charge. `completeText` books it only when it
+        // is told which conversation to bill — without that the tokens are spent
+        // and the ledger reads zero.
+        const ledger = await costs.getCosts(id);
+        expect(ledger.by_source.text).toBeGreaterThan(0);
+        expect(ledger.entries.at(-1)!.tokens).toEqual({
+          input: 1000,
+          output: 100,
+          cached: 200,
+        });
+      } finally {
+        delete process.env.OPENAI_API_KEY;
+      }
     });
 
     it("never fails the resume when the model call blows up", async () => {

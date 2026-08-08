@@ -1183,7 +1183,13 @@ async function summariseWithModel(file: MemoryFile): Promise<string | null> {
       "para que outro assistente possa retomá-la. Diga o que foi discutido, o que " +
       "ficou decidido e o que ficou pendente. Não invente nada que não esteja no " +
       `registro.\n\n${transcript}`,
-    { maxTokens: 500 },
+    {
+      maxTokens: 500,
+      // Resuming a long conversation is a real charge on it. Without the id the
+      // tokens are spent and the ledger books nothing — the silent zero
+      // `tracking-costs-and-credits` documents.
+      conversationId: file.conversation_id,
+    },
   );
 
   return answer.trim() === "" ? null : answer.trim();

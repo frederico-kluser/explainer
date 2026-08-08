@@ -12,7 +12,8 @@
 // faster than the npm package does, and a 20-line wrapper is easier to pin to
 // the documented request shape than a version range is.
 
-import type { TextUsage } from "./pricing.js";
+import { addCost } from "./costs.js";
+import { priceTextResponse, ratesFor, type TextUsage } from "./pricing.js";
 
 const OPENAI_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 
@@ -256,10 +257,59 @@ export async function webSearch(
 // Responses: plain text completion (titles, session re-seeding)
 // ---------------------------------------------------------------------------
 
+export interface CompleteTextOptions {
+  maxTokens?: number;
+  timeoutMs?: number;
+  /**
+   * Charge the call to this conversation. Omitted, the tokens are spent and
+   * nothing is booked — which is what every call site did before this parameter
+   * existed, and why the ledger under-reported.
+   */
+  conversationId?: string;
+}
+
+/**
+ * Book what a completion cost, from the `usage` the response carried.
+ *
+ * Mirrors `bookCost` in `mermaid.ts` on purpose, including both warnings: the
+ * silent zero is this ledger's documented failure mode, and it has two doors —
+ * a payload with no `usage`, and a model id the rate card has never heard of.
+ * `OPENAI_TEXT_MODEL` makes the second one reachable by configuration.
+ */
+function bookCost(conversationId: string, payload: ResponsesPayload): void {
+  if (!payload.usage) {
+    console.warn(
+      "[openai] completeText was not billed: the response carried no usage",
+    );
+    return;
+  }
+
+  const usage = payload.usage;
+  const model = payload.model ?? TEXT_MODEL;
+  if (!ratesFor(model)) {
+    console.warn(
+      `[openai] model "${model}" is not on the rate card; this completion books usd=0`,
+    );
+  }
+
+  // Fire and forget: `addCost` swallows its own storage failures, and a summary
+  // must not wait on the ledger.
+  void addCost(conversationId, {
+    source: "text",
+    usd: priceTextResponse(model, usage),
+    detail: `completeText (${model})`,
+    tokens: {
+      input: usage.input_tokens ?? 0,
+      output: usage.output_tokens ?? 0,
+      cached: usage.input_tokens_details?.cached_tokens ?? 0,
+    },
+  });
+}
+
 /** One-shot text completion. Used for conversation titles and summaries. */
 export async function completeText(
   prompt: string,
-  { maxTokens = 400, timeoutMs = 30_000 }: { maxTokens?: number; timeoutMs?: number } = {},
+  { maxTokens = 400, timeoutMs = 30_000, conversationId }: CompleteTextOptions = {},
 ): Promise<string> {
   const payload = await request<ResponsesPayload>(
     "/responses",
@@ -270,6 +320,8 @@ export async function completeText(
     },
     timeoutMs,
   );
+
+  if (conversationId) bookCost(conversationId, payload);
 
   const chunks: string[] = [];
   for (const item of payload.output ?? []) {
