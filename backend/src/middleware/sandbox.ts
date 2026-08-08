@@ -164,6 +164,29 @@ export function validateConversationPath(convId?: string): string {
 }
 
 /**
+ * Build and validate the path for conversation memory JSON files.
+ *
+ * Mirrors `validateConversationPath` rather than the attachment validator: a
+ * memory file is the same shape of thing — one JSON per conversation, named by
+ * UUID, with the bare directory returned when no id is given — so it reports a
+ * bad id the same way (400) and a route can treat both identically.
+ *
+ * @throws {Error & { status: 400 }} if convId is not a UUID.
+ */
+export function validateMemoryPath(convId?: string): string {
+  if (convId !== undefined) {
+    if (!isUUID(convId)) {
+      const err = new Error("Invalid conversation ID format") as Error & { status: number };
+      err.status = 400;
+      throw err;
+    }
+    return resolve(DATA_ROOT, "memory", `${convId}.json`);
+  }
+
+  return resolve(DATA_ROOT, "memory");
+}
+
+/**
  * Path of the generated-audio directory for a conversation.
  *
  * The realtime model streams its voice over WebRTC, so nothing writes here any

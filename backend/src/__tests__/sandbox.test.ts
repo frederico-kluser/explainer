@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import {
   isUUID,
   validateConversationPath,
   validateAttachmentPath,
+  validateMemoryPath,
   ensureDir,
   resolveInsideRoot,
   isInsideRoot,
@@ -168,5 +169,45 @@ describe("assertAllowedSourceRoot", () => {
 
   it("rejects a directory outside every allowed root", () => {
     expect(() => assertAllowedSourceRoot("/etc")).toThrow(SandboxError);
+  });
+});
+
+describe("validateMemoryPath", () => {
+  it("returns path ending in .json for valid UUID", () => {
+    const path = validateMemoryPath("550e8400-e29b-41d4-a716-446655440000");
+    expect(path.endsWith(".json")).toBe(true);
+    expect(path).toContain("memory");
+    expect(path).toContain("550e8400-e29b-41d4-a716-446655440000.json");
+  });
+
+  it("throws Error with status 400 for invalid UUID", () => {
+    expect(() => validateMemoryPath("not-a-uuid")).toThrow();
+    try {
+      validateMemoryPath("not-a-uuid");
+    } catch (err: unknown) {
+      expect((err as { status: number }).status).toBe(400);
+    }
+  });
+
+  it("returns the memory directory (no .json) when convId is undefined", () => {
+    const path = validateMemoryPath();
+    expect(path.endsWith(".json")).toBe(false);
+    expect(path.endsWith("memory")).toBe(true);
+    expect(path).toContain("voice-assistant");
+  });
+
+  it("stays under the same data root the conversations live in", () => {
+    // A memory file is conversation data, so it is contained by the same root —
+    // deleting the data directory has to take the memory with it.
+    const dataRoot = dirname(validateConversationPath());
+    expect(isInsideRoot(dataRoot, validateMemoryPath())).toBe(true);
+    expect(
+      isInsideRoot(dataRoot, validateMemoryPath("550e8400-e29b-41d4-a716-446655440000")),
+    ).toBe(true);
+  });
+
+  it("does not collide with the conversation file for the same id", () => {
+    const id = "550e8400-e29b-41d4-a716-446655440000";
+    expect(validateMemoryPath(id)).not.toBe(validateConversationPath(id));
   });
 });
