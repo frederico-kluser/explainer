@@ -11,6 +11,12 @@ import {
 import { getSettings, setSettings, VOICES } from "../services/settings.js";
 import { clearMemory } from "../services/memory.js";
 import { recordTurn } from "../services/memory-recorder.js";
+import {
+  forgetConversation,
+  noteMemoryChanged,
+  publish,
+} from "../services/conversation-bus.js";
+import { forgetFloor } from "../services/floor.js";
 import { isUUID } from "../middleware/sandbox.js";
 import type { Conversation, Message } from "../types/index.js";
 
@@ -177,6 +183,29 @@ router.post("/:id/messages", async (req, res, next) => {
 
     const conversation = await appendMessages(req.params.id!, messages);
 
+    // Broadcast here, between the two writes, and that position is the whole
+    // decision. After `appendMessages` resolves, so nothing is announced that is
+    // not already durable and re-readable by a client that refetches. Before the
+    // `recordTurn` batch below is awaited, so the second screen is not made to
+    // wait on the memory file — a write nobody is watching for — to see a turn
+    // that is already on disk.
+    //
+    // Nothing about ordering is being fixed here: `appendMessages` re-reads
+    // inside its lock and concatenates, which is what already keeps two people
+    // on one conversation from overwriting each other. The known limit is that
+    // the lock is a `Map` in one process, so a second backend process would not
+    // see it — out of scope for two tabs against one server.
+    publish(req.params.id!, {
+      type: "message.appended",
+      messages: messages.map((item) => ({
+        id: item.id,
+        role: item.role,
+        content: item.content,
+        timestamp: item.timestamp,
+      })),
+    });
+    noteMemoryChanged(req.params.id!);
+
     // The same turns, into the conversation file this time. `storage.ts` keeps
     // the record the UI reads back; the memory file is the durable trace a later
     // session is *rebuilt* from, and this route is the only moment a spoken turn
@@ -235,6 +264,10 @@ router.delete("/:id", async (req, res, next) => {
     // without this the trace of a deleted conversation — turns, tool arguments,
     // reflections — outlives it on disk forever. Absent memory is not an error.
     await clearMemory(req.params.id!);
+    // Nobody is left to broadcast to, and holding a ring buffer plus a floor for
+    // a conversation that no longer exists is a leak with no reader.
+    forgetConversation(req.params.id!);
+    forgetFloor(req.params.id!);
     res.status(204).send();
   } catch (err) {
     next(err);

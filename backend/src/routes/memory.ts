@@ -6,6 +6,7 @@ import {
   exportMemory,
   importMemory,
 } from "../services/memory.js";
+import { noteMemoryChanged } from "../services/conversation-bus.js";
 import { isUUID } from "../middleware/sandbox.js";
 import type { MemoryFile } from "../types/deep-tools.js";
 
@@ -112,6 +113,9 @@ router.post("/:id/memory/import", async (req, res, next) => {
     const file = await importMemory(candidate as MemoryFile, {
       overwrite: isTrue(req.query.overwrite),
     });
+    // An import replaces the whole file, so anyone else watching this
+    // conversation is holding a count that is now wrong.
+    noteMemoryChanged(req.params.id!);
     res.status(201).json(file);
   } catch (err) {
     next(err);
@@ -142,6 +146,7 @@ router.delete("/:id/memory", async (req, res, next) => {
   try {
     validateUUID(req.params.id!);
     await clearMemory(req.params.id!);
+    noteMemoryChanged(req.params.id!);
     res.status(204).send();
   } catch (err) {
     next(err);

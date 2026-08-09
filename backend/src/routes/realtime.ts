@@ -14,6 +14,14 @@ import { buildInstructions } from "../prompts.js";
 import { isUUID } from "../middleware/sandbox.js";
 import { buildResume, readMemory, setMemoryMeta } from "../services/memory.js";
 import { recordToolExchange } from "../services/memory-recorder.js";
+import { noteMemoryChanged, publish } from "../services/conversation-bus.js";
+import {
+  claimFloor,
+  getFloor,
+  normalizeClientId,
+  normalizeName,
+  releaseFloor,
+} from "../services/floor.js";
 import { getConversation } from "../services/storage.js";
 import type { MemoryFile, MemoryResume } from "../types/deep-tools.js";
 import type { ResolvedSource } from "../types/index.js";
@@ -150,8 +158,61 @@ router.post("/session", async (req: Request, res: Response) => {
     return;
   }
 
+  // ------------------------------------------------------------------
+  // The floor gate
+  // ------------------------------------------------------------------
+  //
+  // This mint is the only step of the WebRTC handshake that passes through this
+  // server, so it is the only place a second microphone on the same conversation
+  // can actually be refused. Anywhere else — a disabled button, a client-side
+  // check — is decoration a second tab walks straight past, and the failure it
+  // walks into is the Realtime API's "Conversation already has an active
+  // response in progress" plus two sessions writing turns into one file.
+  //
+  // A caller that identifies itself and finds the floor free takes it, so the
+  // guarantee holds even for a client that never called `POST /:id/floor`. A
+  // caller with no `client_id` is left alone while the floor is free — that is
+  // every existing caller, and refusing them would be a breaking change for no
+  // safety gained — but it is by definition not the holder, so once somebody
+  // does hold the microphone it is refused too.
+  //
+  // The check and the claim are one synchronous step, and have to be: an `await`
+  // between "is it free?" and "then it is mine" is the exact window in which two
+  // clients both find it free.
+  const body = req.body as { client_id?: unknown; client_name?: unknown };
+  const clientId = normalizeClientId(body.client_id);
+  const claim = clientId
+    ? claimFloor(conversation_id, clientId, normalizeName(body.client_name))
+    : null;
+  const blockedBy = claim ? (claim.ok ? null : claim.floor) : getFloor(conversation_id);
+
+  if (blockedBy) {
+    res.status(409).json({
+      error:
+        `${blockedBy.name} está com o microfone nesta conversa. Peça o microfone ` +
+        "ou entre só para acompanhar.",
+      floor: blockedBy,
+    });
+    return;
+  }
+
+  /**
+   * Undo a claim this request made, for a mint that ends up not happening.
+   *
+   * Only a *fresh* claim is undone. A caller that already held the microphone
+   * before this request is left holding it: it may have a session running, and
+   * a failed reconnect is no reason to take it away.
+   */
+  const undoClaim = (): void => {
+    if (clientId && claim?.ok && !claim.alreadyMine) releaseFloor(conversation_id, clientId);
+  };
+
   const sources = await listSources(conversation_id);
   if (sources.length === 0) {
+    // Nothing to talk about, so nothing to hold the microphone for. Leaving it
+    // claimed would lock everyone else out of a conversation this caller was
+    // just told it cannot connect to either.
+    undoClaim();
     res.status(409).json({
       error:
         "Nenhum material adicionado. Adicione um repositorio, cole um markdown ou " +
@@ -199,7 +260,15 @@ router.post("/session", async (req: Request, res: Response) => {
     .digest("hex")
     .slice(0, 32);
 
-  const secret = await mintRealtimeClientSecret(session, safetyIdentifier);
+  let secret;
+  try {
+    secret = await mintRealtimeClientSecret(session, safetyIdentifier);
+  } catch (err) {
+    // An outage at OpenAI must not leave the microphone locked to a client that
+    // never got a session out of it.
+    undoClaim();
+    throw err;
+  }
 
   res.json({
     value: secret.value,
@@ -220,6 +289,10 @@ router.post("/session", async (req: Request, res: Response) => {
     // browser is never shown.
     resumed: resume !== null,
     memory_events: resume?.event_count ?? 0,
+    // Who ended up with the microphone — this caller, when it identified itself.
+    // The client needs it to know whether it is driving or spectating without
+    // having to infer that from the absence of a 409.
+    floor: getFloor(conversation_id),
   });
 });
 
@@ -261,9 +334,31 @@ router.post("/tool", async (req: Request, res: Response) => {
   // `void` rather than `await`: no function in the recorder rejects, and a disk
   // write does not belong in the latency of a spoken turn.
 
+  // What the second screen is shown. Only the browser holding the session sees a
+  // tool call go by on its data channel, so without this a spectator watches the
+  // assistant fall silent for eight seconds with nothing to explain it.
+  //
+  // A generated diagram travels in `meta.diagram` rather than as an event of its
+  // own: it is produced by a tool call and by nothing else, so a second event
+  // would only be a second way for the two to disagree about what was drawn.
+  const broadcast = (
+    output: string,
+    meta: Record<string, unknown> | null,
+  ): void => {
+    publish(conversation_id, {
+      type: "tool.finished",
+      call_id: typeof call_id === "string" ? call_id : null,
+      name,
+      output,
+      meta,
+    });
+    noteMemoryChanged(conversation_id);
+  };
+
   try {
     const outcome = await executeTool(name, args, conversation_id);
     void recordToolExchange(conversation_id, name, args, outcome.output);
+    broadcast(outcome.output, outcome.meta ?? null);
     res.json({ call_id, name, output: outcome.output, meta: outcome.meta ?? null });
   } catch (err) {
     // A bad tool call is the model's mistake to fix, not a 500: hand the message
@@ -278,6 +373,10 @@ router.post("/tool", async (req: Request, res: Response) => {
     }
 
     void recordToolExchange(conversation_id, name, args, output);
+    // A failure is broadcast too: "a ferramenta falhou" is what the other screen
+    // needs to explain the pause, and hiding it would leave a tool card spinning
+    // forever there.
+    broadcast(output, null);
     res.json({ call_id, name, output, meta: null });
   }
 });
