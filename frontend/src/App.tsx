@@ -9,6 +9,7 @@ import {
   Toast,
 } from "@/components/motion-ui/toast-stack";
 import { Skeleton } from "@/components/motion-ui/skeleton";
+import { SetupScreen } from "@/components/SetupScreen";
 import { Sidebar } from "@/components/ui/Sidebar";
 import { ChatBubble } from "@/components/ui/ChatBubble";
 import { ToolTrace } from "@/components/ui/ToolTrace";
@@ -62,6 +63,12 @@ export function App() {
   const [textInput, setTextInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // ── Electron first-run gate ────────────────────────────────────
+  // Only the Electron build has the preload bridge and a key store; a plain
+  // browser has neither, so the setup screen exists only for the former.
+  const [setupComplete, setSetupComplete] = useState(false);
+  const isElectron = typeof window !== "undefined" && window.api?.isElectron === true;
 
   // ── Live voice session ────────────────────────────────────────
   const {
@@ -464,6 +471,13 @@ export function App() {
   }, [textInput, status, sendText]);
 
   const runningJobs = jobs.filter((job) => job.status === "running");
+
+  // ── First-launch setup ────────────────────────────────────────
+  // Electron asks for the API keys before the dashboard loads; completing the
+  // setup screen drops into the app below like any other first render.
+  if (isElectron && !setupComplete) {
+    return <SetupScreen onComplete={() => setSetupComplete(true)} />;
+  }
 
   // ── Loading / error screen ────────────────────────────────────
   if (isLoading || loadError) {

@@ -1,20 +1,53 @@
 {
-  "name": "voice-assistant",
+  "name": "explainer",
   "private": true,
   "version": "0.1.0",
+  "description": "explainer — realtime voice app: the browser holds a WebRTC session with an OpenAI realtime model; every tool the model calls runs on the Express backend.",
+  "author": "Ondokai Team <team@ondokai.com>",
+  "main": "./out/main/index.js",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "start": "bash dev.sh",
-    "dev": "bash dev.sh",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "heal:vite": "node scripts/heal-vite-cache.cjs",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
     "setup": "npm --prefix backend install && npm --prefix frontend install",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
-    "build": "npm --prefix backend run build && npm --prefix frontend run build",
-    "preview": "npm --prefix frontend run preview",
-    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
-    "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
-    "validate": "bash validate.sh"
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "validate": "bash validate.sh",
+    "dist": "electron-vite build && electron-builder",
+    "dist:win": "electron-vite build && electron-builder --win --x64",
+    "postinstall": "node scripts/postinstall.cjs"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^3.0.0",
+    "electron-store": "^10.0.0",
+    "motion": "^12.42.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@electron/fuses": "^1.8.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "eslint": "^9.14.0",
+    "happy-dom": "^20.0.10",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.5"
   }
 }

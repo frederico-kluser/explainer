@@ -26,3 +26,6 @@ frontend/public/rootCA.pem
 .agents/skills/.validation/*.json
 !.agents/skills/.validation/*.baseline.json
 .agents/skills/.stop-attempts
+
+# electron-vite build output
+out/

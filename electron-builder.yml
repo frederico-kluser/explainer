@@ -1,0 +1,58 @@
+appId: com.ondokai.explainer
+productName: explainer
+directories:
+  buildResources: build
+# ┌── INCLUSION LIST, NOT EXCLUSION ────────────────────────────────────────┐
+# │ This used to be a list of `!` entries — and an exclusion list is the   │
+# │ one that FORGETS: anything created later slips into the asar on its    │
+# │ own. The runtime is `out/**` and nothing else.                         │
+# └────────────────────────────────────────────────────────────────────────┘
+files:
+  - 'out/**'
+  - 'package.json'
+  - 'node_modules/**'
+  # Slim the node_modules INSIDE the asar (sourcemaps + TS + tests never run at runtime)
+  - '!**/*.map'
+  - '!**/*.{ts,tsx,mts,cts}'
+  - '!**/*.test.{js,jsx,mjs,cjs}'
+  - '!**/*.stories.{js,jsx,mjs,cjs}'
+  # `node-gyp-build` resolves `build/Release` BEFORE `prebuilds/`. In a
+  # cross-build from Linux, a compiled `build/Release` can hold a .node ELF
+  # the target platform cannot load — excluding it leaves the correct
+  # prebuild as the only candidate.
+  - '!**/uiohook-napi/build/**'
+asarUnpack:
+  # Native binary modules only — avoid unpacking large static assets
+  - '**/*.node'
+  - '**/uiohook-napi/**'
+win:
+  executableName: explainer
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  artifactName: ${productName}-setup.${ext}
+  differentialPackage: false
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+# ┌── ICON: ONE FILE ───────────────────────────────────────────────────────┐
+# │ No per-platform `icon:` entries — electron-builder resolves             │
+# │ `build/icon.png` (512²) and generates the .ico/.icns on the fly.        │
+# └──────────────────────────────────────────────────────────────────────────┘
+# ┌── NO NATIVE REBUILD ────────────────────────────────────────────────────┐
+# │ With `npmRebuild: true` electron-builder calls node-gyp even for        │
+# │ modules that publish prebuilds — which requires Visual Studio Build     │
+# │ Tools on Windows and fails `npm install` on machines without them.      │
+# └──────────────────────────────────────────────────────────────────────────┘
+npmRebuild: false
+# Harden the packaged Electron binary with Fuses (blocks --inspect /
+# NODE_OPTIONS debugging, RunAsNode, and enforces ASAR-only loading +
+# integrity). Runs before code signing so signatures stay valid.
+# See scripts/flip-fuses.cjs.
+afterPack: ./scripts/flip-fuses.cjs
+# No `publish:` block — packaging/distribution beyond dev is out of scope (MVP).
