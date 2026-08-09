@@ -45,7 +45,7 @@ annotations in this repo sit only on parameterless routes such as `/session` and
 ### Runtime imports carry the `.js` extension
 
 Backend imports use `./middleware/error-handler.js` even though the source is
-`.ts` — `backend/src/index.ts:5@f9df7485`. `moduleResolution` is `bundler`, so
+`.ts` — `backend/src/index.ts:8@f9df7485`. `moduleResolution` is `bundler`, so
 the compiler would accept a bare specifier; Node's ESM loader at runtime would
 not. The extension is a runtime requirement that the type-checker cannot catch,
 which is why it is written down here rather than left to the build.
@@ -82,7 +82,7 @@ changed; a comment that narrates the next line is noise.
   switcher to keep in sync.
 - `data-role` on `ChatBubble` exists purely so a test can assert the model
   actually spoke, rather than that some text appeared on the page —
-  `frontend/src/components/ui/ChatBubble.tsx:41@cbcd8183`. Keep it when editing
+  `frontend/src/components/ui/ChatBubble.tsx:42@cbcd8183`. Keep it when editing
   that component.
 
 ### The error handler branches on headersSent

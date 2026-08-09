@@ -69,6 +69,12 @@ Two npm workspacesless packages under one repo root, Node ≥ 22 (`package.json:
   config file), Base UI primitives, `motion` v12 plus the premium
   `motion-plus`.
 
+Since this section was written the repo grew a third source tree that belongs to
+neither package: `electron/` (main process and preload) plus `src/shared/`, built
+by `electron-vite` from the root install. It is why §4 counts four type-check
+projects rather than two, and why the lint blind spot recorded there exists at
+all.
+
 Backend layering, as actually observed: `routes/` (HTTP shape only) →
 `services/` (contracts and state) → `tools/` (what the model may call) →
 `middleware/sandbox.ts` (the security boundary). `prompts.ts` builds the session
@@ -89,7 +95,7 @@ independently.
 | Guaranteed | By |
 |---|---|
 | no implicit `any`, strict null checks | `"strict": true` — `backend/tsconfig.json:7` |
-| indexed access yields `\| undefined` | `"noUncheckedIndexedAccess": true` — `backend/tsconfig.json:8@69d8bf24` |
+| indexed access yields `\| undefined` | `"noUncheckedIndexedAccess": true` — `backend/tsconfig.json:12@69d8bf24` |
 | erasable type-only imports | `"isolatedModules": true` |
 | import paths match case on disk | `"forceConsistentCasingInFileNames": true` |
 | `@/*` resolves to `frontend/src/*` | a real compiler path, mirrored in vite and vitest config |
@@ -115,22 +121,50 @@ signal. This is the complete inventory of signals available here.
 
 | Signal | Command | Strength |
 |---|---|---|
-| full gate | `npm run validate` | strong, but see the hole below |
-| backend tests | `npm --prefix backend test` | strong — 82 tests, 8 files |
+| full gate | `npm run validate` | strong over eleven sections, but see the two holes below |
+| backend tests | `npm --prefix backend test` | strong — 570 tests, 25 files |
 | single test | `npm --prefix backend test -- -t "<name>"` | strong |
-| frontend tests | `npm --prefix frontend test` | strong when run directly |
-| lint | `npm run lint` | strong for what it covers |
-| type-check | `npm run typecheck` | strong |
-| build | `npm run build` | strong |
+| frontend tests | `npm --prefix frontend test` | strong — 331 tests, 11 files — but only when run directly |
+| desktop tests | `npx vitest run --root . electron/main/services/__tests__/backend-process.test.ts` | strong — 14 tests, 1 file; the gate runs it as `Test Desktop (electron main)` — `validate.sh:37@c4a6db1b` |
+| lint | `npm run lint` | strong for what it covers, and it covers two of the four source trees |
+| type-check | `npm run typecheck` | strong — four projects, including the desktop and shared ones |
+| build | `npm run build` | strong for backend + frontend; the desktop bundle is built by `npx electron-vite build` — `validate.sh:49@9e9d8691` |
 
-**Hole, and it is load-bearing:** `validate.sh` runs the frontend suite as
-`npm --prefix frontend test || true` — `validate.sh:20@4c2c46c8`. A failing
+Counts are the ones the suites report today, not a snapshot: rerun the commands
+before quoting them.
+
+**Two holes, both load-bearing.** They are different in kind: one is an escape
+hatch written into the gate, the other is a tree the gate never looks at.
+
+**Hole 1 — the frontend suite cannot fail the gate.** `validate.sh` runs it as
+`npm --prefix frontend test || true` — `validate.sh:28@4c2c46c8`. A failing
 frontend test **cannot** fail the gate. So "validate.sh passed" is not evidence
 about frontend behaviour, and any skill whose verification signal is a frontend
 test must name `npm --prefix frontend test` directly rather than the gate. This
 correction came from a subagent reading the file; it contradicted what this
 analysis would otherwise have asserted, which is precisely why the reading was
 delegated instead of recalled.
+
+**Hole 2 — nothing lints `electron/` or `src/shared/`.** This one is an omission
+rather than an escape hatch, which makes it quieter: there is no failing step to
+notice. The root script is
+`"lint": "npm --prefix backend run lint && npm --prefix frontend run lint"` —
+`package.json:22@2a5ff98b` — `validate.sh` has no lint section for the desktop,
+and the only ESLint configs in the repository are `backend/eslint.config.js` and
+`frontend/eslint.config.js`; there is none at the root. That leaves 2,890 lines
+of TypeScript across the main process, the preload, the desktop test file and
+the shared types that no linter has ever read, so a green gate says nothing
+about style, unused bindings or the rules the two packages take for granted.
+Reading the diff is the only substitute.
+
+**Reach is no longer one of the holes.** Since the desktop work, the gate
+type-checks all four projects — `validate.sh:22@982c1455`, the step that reaches
+`tsconfig.node.json` and `tsconfig.web.json` — runs the main-process suite
+(`validate.sh:37@c4a6db1b`) and builds the desktop bundle
+(`validate.sh:49@9e9d8691`). Neither desktop step carries `|| true`, so both can
+fail the gate. Both resolve their binary from the root install while `npm run
+setup` installs only `backend` and `frontend` — `package.json:23@5ded0fd1` — so
+a root `npm install` is a prerequisite of the gate itself.
 
 **No CI exists.** The gate is manual. That raises the value of the local hooks
 proposed in Phase 4: they are the only automated enforcement point in the repo.
@@ -141,9 +175,9 @@ Ranked by how expensive a mistake in each area is, and by how badly the
 knowledge is inferable from the code alone.
 
 1. **Realtime protocol contract** — flat tool schema (nesting silently yields
-   zero tools, no error — `backend/src/tools/index.ts:6@cdb48364`); never
+   zero tools, no error — `backend/src/tools/index.ts:8@cdb48364`); never
    `response.create` while one is active
-   (`frontend/src/hooks/useRealtimeSession.ts:100@491de366`); the ack-gate loop
+   (`frontend/src/hooks/useRealtimeSession.ts:1345@491de366`); the ack-gate loop
    must stay synchronous with `pendingAcks.add` before the send; both
    `conversation.item.added` and `.created` must be accepted
    (`frontend/src/lib/realtime.ts:95@2623ae7a`); the Realtime API has no hosted
@@ -176,10 +210,18 @@ knowledge is inferable from the code alone.
    `frontend/motion.theme.ts:5@d5d0ddc7`; `motion-ui/**` is vendored and must
    not be hand-edited; `data-role` on ChatBubble exists solely so a test can
    assert the model spoke.
-8. **Verification practice** — no jsdom and no testing-library, so component
-   render tests are not currently possible; the established techniques are
-   subprocess fakes (`PI_BIN` pointed at a generated script), `vi.importActual`
-   partial mocks, and `HOME`-before-import dynamic imports.
+8. **Verification practice** — the established techniques are subprocess fakes
+   (`PI_BIN` pointed at a generated script), `vi.importActual` partial mocks,
+   `HOME`-before-import dynamic imports, `vi.stubGlobal("fetch", …)`, and
+   rendering React through `act`. That last one is newer than the rest of this
+   analysis, which recorded that component render tests were impossible here:
+   `happy-dom` is now a frontend devDependency —
+   `frontend/package.json:37@5c272d92` — and because `frontend/vitest.config.ts`
+   sets no environment, a rendering file opts in with
+   `/** @vitest-environment happy-dom */` on its first line —
+   `frontend/src/__tests__/setup-gate.test.tsx:1@5b310af9`. There is still no
+   `@testing-library`; the harness is `createRoot` plus `act`. The live detail
+   lives in `verifying-explainer-changes`, which owns this area.
 
 ## 6. Latent issues surfaced (not fixed here)
 

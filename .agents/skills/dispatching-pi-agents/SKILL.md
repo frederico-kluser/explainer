@@ -56,7 +56,7 @@ that produces no answer reports a failure; it never resolves silently.
 
 The SSE stream replays already-finished jobs whenever a client connects, so a
 reconnect does not lose them. Those events carry `replay: true` —
-`backend/src/routes/agents.ts:39@18d878e8` — and the client renders them but
+`backend/src/routes/agents.ts:51@18d878e8` — and the client renders them but
 skips the injection that makes the model narrate.
 
 Drop that flag and every reconnect makes the assistant read out an answer from

@@ -58,7 +58,23 @@ Result: router + style + 4 domains + 2 task + 2 meta = **10 skills**.
 | name | why it exists | verification signal |
 |---|---|---|
 | `adding-realtime-tools` | The most common change in this repo, and it spans six files across both packages. Missing the executor gate or the frontend bridge produces a tool the model can see but never successfully call. | `npm run validate` **and** `npm --prefix frontend test` |
-| `verifying-explainer-changes` | Encodes which command proves what, the established test techniques, and the gate's own hole. Its eval asserts the hole still exists, so closing it forces the skill to be revalidated rather than silently going stale. | `npm run validate`, plus a case asserting the current shape of `validate.sh` |
+| `verifying-explainer-changes` | Encodes which command proves what, the established test techniques, and the gate's two blind spots — the `\|\| true` on the frontend suite, and the fact that nothing lints `electron/` or `src/shared/`. Its eval pins each blind spot in whichever direction the repo moves, so a change to the gate forces the skill to be revalidated rather than silently going stale. | `npm run validate`, plus cases asserting the current shape of `validate.sh` |
+
+The design intent behind that last cell has now been exercised, and it is worth
+recording what happened, because it cuts against how the mechanism was first
+described. This map originally said the eval "asserts the hole still exists" —
+as though a case could only ever pin an absence. When the desktop work extended
+the gate, the reach hole was **closed**, and the honest response was to invert
+the cases rather than delete them: `gate-runs-the-desktop-suite`,
+`gate-builds-the-desktop` and `gate-typechecks-the-four-projects` now assert the
+gate **does** reach `electron/` and `src/shared/`, so a later change that drops
+one of those sections turns the skill red instead of leaving it quietly
+over-claiming. The cases that still assert an absence are the two surviving
+blind spots: `gate-hole-still-present` for the `|| true`, and
+`gate-lints-nothing-desktop` / `root-lint-is-only-the-two-packages` /
+`no-root-eslint-config` for the lint gap. The generalisation: an eval pins the
+*current* shape of the signal, in whichever direction that shape happens to
+point, and closing a hole is a reason to rewrite a case, never to remove one.
 
 ### Meta skills
 

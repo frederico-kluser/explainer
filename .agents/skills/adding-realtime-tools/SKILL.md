@@ -41,12 +41,12 @@ correct itself.
 
 1. **Define it** in `backend/src/tools/index.ts` using the flat schema
    (`type`/`name`/`description`/`parameters` at the top level) —
-   `backend/src/tools/index.ts:6@cdb48364`. Add the name to
+   `backend/src/tools/index.ts:8@cdb48364`. Add the name to
    the `ToolName` union in `backend/src/types/index.ts`. Write the description
    for a model that under-triggers: say when to use it, not only what it does.
 2. **Gate it** in `toolsForSources` — decide which material kinds should see it;
    a tool only meaningful with several materials belongs behind the same count
-   check `list_materials` uses — `backend/src/tools/index.ts:210@81835297`.
+   check `list_materials` uses — `backend/src/tools/index.ts:343@81835297`.
    A tool that needs files on disk belongs behind the `hasFiles` branch.
 3. **Execute it** in `services/tool-executor.ts`: add the `case`, pull arguments
    through `requireString`/`optionalString`, and resolve the material with
