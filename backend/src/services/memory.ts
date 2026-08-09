@@ -1360,7 +1360,8 @@ async function summariseWithModel(
     return null;
   }
 
-  return answer.trim() === "" ? null : answer.trim();
+  const summary = answer.text.trim();
+  return summary === "" ? null : summary;
 }
 
 export interface BuildResumeOptions {

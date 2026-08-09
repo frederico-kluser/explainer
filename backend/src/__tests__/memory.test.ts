@@ -484,6 +484,45 @@ describe("memory", () => {
       }
     });
 
+    it("reads the completion's text, not the completion object", async () => {
+      const id = randomUUID();
+      await memory.appendMemoryEvent(id, { kind: "user", text: "e agora?" });
+
+      process.env.OPENAI_API_KEY = "sk-test-not-real";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  status: "completed",
+                  model: "gpt-5.2-mini",
+                  usage: { input_tokens: 10, output_tokens: 5 },
+                  output: [
+                    { type: "message", content: [{ text: "Resumo curto e limpo." }] },
+                  ],
+                }),
+              ),
+          }),
+        ),
+      );
+
+      try {
+        const resume = await memory.buildResume(id);
+        // `completeText` returns prose *plus* its usage now. Seeding the session
+        // with the whole object would stringify to "[object Object]" and the
+        // resumed model would be told nothing at all.
+        expect(resume!.summary).toBe("Resumo curto e limpo.");
+        expect(resume!.summary).not.toContain("[object Object]");
+        expect(resume!.summary).not.toContain("input_tokens");
+      } finally {
+        delete process.env.OPENAI_API_KEY;
+      }
+    });
+
     it("never fails the resume when the model call blows up", async () => {
       const id = randomUUID();
       await memory.appendMemoryEvent(id, { kind: "user", text: "vale a pena?" });

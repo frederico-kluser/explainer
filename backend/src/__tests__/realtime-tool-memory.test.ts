@@ -6,7 +6,11 @@ import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import type { ToolOutcome } from "../services/tool-executor.js";
-import type { ClientSecret, RealtimeSessionConfig } from "../services/openai.js";
+import type {
+  ClientSecret,
+  RealtimeSessionConfig,
+  TextCompletion,
+} from "../services/openai.js";
 import type { ResolvedSource } from "../types/index.js";
 
 const tmpHome = mkdtempSync(join(tmpdir(), "explainer-realtime-tool-"));
@@ -31,8 +35,20 @@ vi.mock("../services/tool-executor.js", async () => {
 // on the way. Both are stubs so this file never opens a socket: the mint is the
 // one route here that talks to two remote services.
 let minted: RealtimeSessionConfig | null = null;
-let completeTextImpl: () => Promise<string> = async () =>
-  "resumo escrito pelo modelo";
+
+/** A stub answer in the shape `completeText` returns — prose plus its usage. */
+function completion(text: string): TextCompletion {
+  return {
+    text,
+    usage: { input_tokens: 10, output_tokens: 5 },
+    model: "gpt-5.2-mini",
+    status: "completed",
+    truncated: false,
+  };
+}
+
+let completeTextImpl: () => Promise<TextCompletion> = async () =>
+  completion("resumo escrito pelo modelo");
 
 vi.mock("../services/openai.js", async () => {
   const actual = await vi.importActual<typeof import("../services/openai.js")>(
@@ -209,7 +225,7 @@ describe("POST /api/realtime/tool", () => {
 describe("POST /api/realtime/session", () => {
   beforeEach(() => {
     minted = null;
-    completeTextImpl = async () => "resumo escrito pelo modelo";
+    completeTextImpl = async () => completion("resumo escrito pelo modelo");
     // The summariser only runs with a key; nothing here reaches the network,
     // `completeText` is the stub above.
     process.env.OPENAI_API_KEY = "sk-test";
@@ -278,7 +294,7 @@ describe("POST /api/realtime/session", () => {
     // A summariser that never answers. `completeText` defaults to a 30 s
     // timeout with no retry, and this is the last thing between "Conectar" and
     // the WebRTC session starting.
-    completeTextImpl = () => new Promise<string>(() => {});
+    completeTextImpl = () => new Promise<TextCompletion>(() => {});
     process.env.EXPLAINER_MEMORY_SUMMARY_TIMEOUT_MS = "300";
 
     const started = Date.now();

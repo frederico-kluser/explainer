@@ -168,6 +168,8 @@ export async function mintRealtimeClientSecret(
 
 interface ResponsesPayload {
   status?: string;
+  /** Why a non-`completed` response stopped. Only present when it did. */
+  incomplete_details?: { reason?: string };
   model?: string;
   usage?: {
     input_tokens?: number;
@@ -264,8 +266,46 @@ export interface CompleteTextOptions {
    * Charge the call to this conversation. Omitted, the tokens are spent and
    * nothing is booked — which is what every call site did before this parameter
    * existed, and why the ledger under-reported.
+   *
+   * `conversationId` and pricing the call yourself are MUTUALLY EXCLUSIVE. Pass
+   * the id OR read the returned `usage` and call `addCost` yourself. Both at
+   * once double-books the charge.
+   *
+   * The id answers *who pays*; the returned `usage` answers *what happened*.
+   * A caller that needs a `detail` of its own — per attempt, per retry — has to
+   * book it itself, and therefore must not pass the id.
    */
   conversationId?: string;
+}
+
+/** What a one-shot completion actually produced, beyond the prose. */
+export interface TextCompletion {
+  text: string;
+  /**
+   * Always present; `{}` when the payload carried no usage at all.
+   *
+   * Never `undefined`, so a caller pricing the call can hand it straight to
+   * `priceTextResponse` without a guard. `{}` prices to 0 — the same silent zero
+   * an unpriced model gives, which is why the no-usage case is also warned about
+   * when this call is booked here.
+   */
+  usage: TextUsage;
+  /**
+   * The model the provider says answered, which is not always the one asked
+   * for — a dated snapshot id can come back for an alias. Pricing has to use
+   * this one. Falls back to the requested `TEXT_MODEL` only when the payload
+   * omits it entirely.
+   */
+  model: string;
+  /** `"completed"` or `"incomplete"`. A 200 does not mean a whole answer. */
+  status?: string;
+  /**
+   * The output hit `max_output_tokens` and the text is cut off mid-thought.
+   *
+   * Worth checking before storing the text as if it were a finished answer;
+   * nothing about the HTTP response distinguishes the two.
+   */
+  truncated?: boolean;
 }
 
 /**
@@ -306,11 +346,19 @@ function bookCost(conversationId: string, payload: ResponsesPayload): void {
   });
 }
 
-/** One-shot text completion. Used for conversation titles and summaries. */
+/**
+ * One-shot text completion. Used for conversation titles and summaries.
+ *
+ * Returns the token counts alongside the prose rather than only the prose:
+ * without them `priceTextResponse` has nothing to price and answers 0, so a
+ * caller that books its own charge would report a free call. Passing
+ * `conversationId` books it here instead — see that option for why the two are
+ * mutually exclusive.
+ */
 export async function completeText(
   prompt: string,
   { maxTokens = 400, timeoutMs = 30_000, conversationId }: CompleteTextOptions = {},
-): Promise<string> {
+): Promise<TextCompletion> {
   const payload = await request<ResponsesPayload>(
     "/responses",
     {
@@ -321,6 +369,9 @@ export async function completeText(
     timeoutMs,
   );
 
+  // The raw payload, not the normalised usage below: `bookCost` distinguishes
+  // "no usage at all" (worth a warning) from zeroed counts, and `{}` would
+  // erase that difference.
   if (conversationId) bookCost(conversationId, payload);
 
   const chunks: string[] = [];
@@ -330,5 +381,12 @@ export async function completeText(
       if (part.text) chunks.push(part.text);
     }
   }
-  return chunks.join("\n").trim();
+
+  return {
+    text: chunks.join("\n").trim(),
+    usage: payload.usage ?? {},
+    model: payload.model ?? TEXT_MODEL,
+    status: payload.status,
+    truncated: payload.incomplete_details?.reason === "max_output_tokens",
+  };
 }
