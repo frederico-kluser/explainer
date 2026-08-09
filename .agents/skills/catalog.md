@@ -28,7 +28,7 @@ triggers below match; finish with `verifying-explainer-changes`.
 | skill | covers | triggers | verified by |
 |---|---|---|---|
 | `adding-realtime-tools` | the six places a tool lives and the distinct silent failure of skipping each | "the assistant should be able to…"; a tool defined but never called | `npm run validate` **and** `npm --prefix frontend test` |
-| `verifying-explainer-changes` | which signal proves what, the gate's `\|\| true` hole, the four test techniques, what cannot be tested yet | before declaring anything done; before any skill update | `npm run validate` + an eval asserting the gate's current shape |
+| `verifying-explainer-changes` | which signal proves what, the gate's two holes (`\|\| true` on the frontend, no `electron/` at all), the five test techniques including per-file happy-dom rendering, what a mount still cannot reach | before declaring anything done; before any skill update | `npm run validate` + an eval asserting the gate's current shape |
 
 ## Meta
 

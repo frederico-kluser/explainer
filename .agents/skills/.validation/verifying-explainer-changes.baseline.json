@@ -4,8 +4,14 @@
     "gate-passes": true,
     "frontend-suite-passes-on-its-own": true,
     "gate-hole-still-present": true,
+    "gate-never-reaches-electron": true,
     "no-ci-yet": true,
     "home-before-import-technique": true,
+    "react-renders-in-the-suite": true,
+    "no-testing-library": true,
+    "dom-is-opted-into-per-file": true,
+    "no-global-test-environment": true,
+    "electron-suite-passes-on-its-own": true,
     "citations-fresh": true
   }
 }

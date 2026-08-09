@@ -23,6 +23,13 @@
       "why": "staleness detector: if someone closes the hole this case fails and the passage documenting it must be rewritten"
     },
     {
+      "id": "gate-never-reaches-electron",
+      "type": "file_absent_match",
+      "file": "validate.sh",
+      "pattern": "electron",
+      "why": "the second hole: the day the gate grows an electron step, the table row telling the reader to run it by hand is wrong"
+    },
+    {
       "id": "no-ci-yet",
       "type": "file_absent_match",
       "file": "package.json",
@@ -35,6 +42,41 @@
       "file": "backend/src/__tests__/storage.test.ts",
       "pattern": "process\\.env\\.HOME",
       "why": "entailment for the documented technique"
+    },
+    {
+      "id": "react-renders-in-the-suite",
+      "type": "file_matches",
+      "file": "frontend/package.json",
+      "pattern": "\"happy-dom\":",
+      "why": "the skill used to say React could not be rendered here; without happy-dom in the frontend devDependencies it would be false again, in the other direction"
+    },
+    {
+      "id": "no-testing-library",
+      "type": "file_absent_match",
+      "file": "frontend/package.json",
+      "pattern": "@testing-library",
+      "why": "the documented harness is createRoot plus act; if testing-library ever lands, that passage is teaching the wrong API"
+    },
+    {
+      "id": "dom-is-opted-into-per-file",
+      "type": "file_matches",
+      "file": "frontend/src/__tests__/setup-gate.test.tsx",
+      "pattern": "@vitest-environment happy-dom",
+      "why": "entailment for the docblock opt-in the skill tells the reader to copy"
+    },
+    {
+      "id": "no-global-test-environment",
+      "type": "file_absent_match",
+      "file": "frontend/vitest.config.ts",
+      "pattern": "environment",
+      "why": "'every other file keeps running in Node' holds only while the shared config sets no environment"
+    },
+    {
+      "id": "electron-suite-passes-on-its-own",
+      "type": "command",
+      "run": "npx vitest run --root . electron/main/services/__tests__/backend-process.test.ts",
+      "expect_exit": 0,
+      "why": "the table sends the reader to this exact command, so it has to be one that runs"
     },
     {
       "id": "citations-fresh",
