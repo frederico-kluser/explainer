@@ -16,6 +16,8 @@ import sourcesRouter from "./routes/sources.js";
 import agentsRouter from "./routes/agents.js";
 import costsRouter, { creditsRouter } from "./routes/costs.js";
 import browseRouter from "./routes/browse.js";
+import modelsRouter from "./routes/models.js";
+import thinkersRouter from "./routes/thinkers.js";
 import providerKeysRouter from "./routes/provider-keys.js";
 import { createPairRouter } from "./routes/pair.js";
 import { attachDeepThinkToMemory } from "./services/memory-recorder.js";
@@ -124,6 +126,12 @@ app.use("/api/credits", loopbackOnly, creditsRouter);
 // owner of the machine already gets in without one.
 app.use("/api/provider-keys", loopbackOnly, providerKeysRouter);
 app.use("/api/browse", browseRouter);
+// The catalogue is a provider round trip, not a secret: it says which models
+// exist, never which keys this machine holds. Behind the access key like the
+// rest of /api, but not loopback-only — the roster is edited from wherever the
+// app is open.
+app.use("/api/models", modelsRouter);
+app.use("/api/thinkers", thinkersRouter);
 
 // --- 404 for unknown API routes (JSON, not Express' HTML default) ---
 
