@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react";
 import { useMotionUITransition } from "@/components/motion-ui/ui-theme";
+import { BUBBLE_MAX_WIDTH } from "@/components/ui/mobile-content";
 
 export interface ChatBubbleProps {
   role: "user" | "assistant";
@@ -44,8 +45,12 @@ export function ChatBubble({ role, content, timestamp }: ChatBubbleProps) {
       animate={{ opacity: 1, y: 0 }}
       transition={transition}
     >
+      {/* Bigger type inside smaller padding on a phone, and the two pay for
+          each other: 15px is where a spoken answer stops being squinted at, and
+          the 8px trimmed off each side is most of what the extra line-length
+          costs. Both go back to the desktop figures at `md`. */}
       <motion.div
-        className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed ${
+        className={`${BUBBLE_MAX_WIDTH} px-3 py-2.5 text-[0.9375rem] leading-relaxed md:px-4 md:py-3 md:text-sm ${
           isUser
             ? "bg-primary text-primary-foreground rounded-2xl rounded-br-sm"
             : "bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm"
@@ -58,7 +63,7 @@ export function ChatBubble({ role, content, timestamp }: ChatBubbleProps) {
         <time
           dateTime={timestamp}
           title={new Date(timestamp!).toLocaleString("pt-BR")}
-          className="mt-1 px-1 text-xs text-muted-foreground"
+          className="mt-1 px-1 text-[11px] text-muted-foreground md:text-xs"
         >
           {clock}
         </time>
