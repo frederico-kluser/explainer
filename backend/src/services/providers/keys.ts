@@ -30,8 +30,11 @@ export interface ProviderKeyStatus {
  * new configuration comes with this contract:
  *
  * - `OPENAI_API_KEY` is the calling key the whole app runs on — `load-env.ts`
- *   warns when it is missing, and `services/openai.ts`, `services/mermaid.ts`
- *   and `services/deep-think.ts` each read it.
+ *   warns when it is missing. After this wave, `services/openai.ts`,
+ *   `services/mermaid.ts`, `services/memory.ts` and `services/credits.ts` all
+ *   resolved through this module. The LAST direct reader is
+ *   `services/deep-think.ts` (deferred to wave 3 — a runtime key set after boot
+ *   does not reach the thinker loop yet).
  * - `OPENROUTER_API_KEY` and `DEEPSEEK_API_KEY` are exactly the variables
  *   `services/credits.ts` reads to show a balance, so an operator who can
  *   already see their balance can already be called.

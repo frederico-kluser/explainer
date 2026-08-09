@@ -40,6 +40,7 @@ import { randomUUID } from "node:crypto";
 import { ensureDir, isUUID, validateMemoryPath } from "../middleware/sandbox.js";
 import { validateMermaid } from "./mermaid.js";
 import { completeText } from "./openai.js";
+import { providerKeyPresent } from "./providers/keys.js";
 import type {
   MemoryEvent,
   MemoryEventKind,
@@ -1322,7 +1323,9 @@ async function summariseWithModel(
   budgetMs?: number,
 ): Promise<string | null> {
   if (process.env.EXPLAINER_MEMORY_LLM_SUMMARY === "0") return null;
-  if (!process.env.OPENAI_API_KEY) return null;
+  // `providerKeyPresent`, not `providerKey`: no key means "do not ask a model",
+  // which is this function's documented null, not a failure to raise.
+  if (!providerKeyPresent("openai")) return null;
 
   const transcript = file.events
     .slice(-80)

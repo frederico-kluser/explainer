@@ -7,6 +7,8 @@
 // that exact complaint. Rather than pretend, each provider reports its own
 // status and the UI shows what it got.
 
+import { providerKey, providerKeyPresent } from "./providers/keys.js";
+
 export interface ProviderCredit {
   provider: "openai" | "openrouter" | "deepseek";
   label: string;
@@ -49,13 +51,19 @@ async function openRouter(): Promise<ProviderCredit> {
     status: "unavailable",
   };
 
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) return { ...base, note: "OPENROUTER_API_KEY não está definida." };
+  // `providerKeyPresent` rather than catching what `providerKey` throws: this
+  // module reports and never fails, and a provider the operator never set up is
+  // the ordinary case, not an error. The key itself is then read inside the
+  // `try` so that even a key cleared between the two calls lands as
+  // `status: "error"` instead of rejecting out of `getCredits`.
+  if (!providerKeyPresent("openrouter")) {
+    return { ...base, note: "OPENROUTER_API_KEY não está definida." };
+  }
 
   try {
     const data = await getJSON<{ data?: { total_credits?: number; total_usage?: number } }>(
       "https://openrouter.ai/api/v1/credits",
-      key,
+      providerKey("openrouter"),
     );
     const total = data.data?.total_credits ?? 0;
     const used = data.data?.total_usage ?? 0;
@@ -81,14 +89,16 @@ async function deepSeek(): Promise<ProviderCredit> {
     status: "unavailable",
   };
 
-  const key = process.env.DEEPSEEK_API_KEY;
-  if (!key) return { ...base, note: "DEEPSEEK_API_KEY não está definida." };
+  // Same shape as `openRouter` above, for the same reasons.
+  if (!providerKeyPresent("deepseek")) {
+    return { ...base, note: "DEEPSEEK_API_KEY não está definida." };
+  }
 
   try {
     const data = await getJSON<{
       is_available?: boolean;
       balance_infos?: Array<{ currency?: string; total_balance?: string }>;
-    }>("https://api.deepseek.com/user/balance", key);
+    }>("https://api.deepseek.com/user/balance", providerKey("deepseek"));
 
     const usd =
       data.balance_infos?.find((info) => info.currency === "USD") ??
@@ -115,6 +125,13 @@ async function openAI(): Promise<ProviderCredit> {
 
   // Only an admin key can read the Costs API. A project key gets a 401 naming
   // the missing scope, so asking with the wrong key just wastes a round-trip.
+  //
+  // Deliberately NOT `providerKey("openai")`, unlike the two branches above:
+  // that resolver answers with `OPENAI_API_KEY`, the key that CALLS models, and
+  // this endpoint refuses it. `OPENAI_ADMIN_KEY` is a second, admin-scoped key
+  // and is not in the resolver's map for exactly that reason — so a key typed
+  // into the setup screen makes OpenAI callable without pretending it can also
+  // read the organisation's spend.
   const key = process.env.OPENAI_ADMIN_KEY;
   if (!key) {
     return {

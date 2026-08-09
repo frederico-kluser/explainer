@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { addCost } from "./costs.js";
 import { OpenAIError, TEXT_MODEL } from "./openai.js";
 import { priceTextResponse, ratesFor, type TextUsage } from "./pricing.js";
+import { providerKey } from "./providers/keys.js";
 import type {
   MermaidDiagram,
   MermaidDiagramKind,
@@ -816,8 +817,9 @@ async function completeWithUsage(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<MermaidCompletion> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new OpenAIError(500, "OPENAI_API_KEY is not set on the server");
+  // Same resolver as every other call site, so a key saved after boot draws the
+  // next diagram instead of waiting for a restart. Throws the 500 itself.
+  const key = providerKey("openai");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);

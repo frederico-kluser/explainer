@@ -14,6 +14,13 @@
 
 import { addCost } from "./costs.js";
 import { priceTextResponse, ratesFor, type TextUsage } from "./pricing.js";
+// Import cycle, and a safe one: `providers/keys.ts` imports `OpenAIError` from
+// this module to build its own 500. Both references live inside function
+// bodies, so each is read long after both module bodies finished evaluating —
+// whichever of the two the process imports first, neither binding is touched in
+// its temporal dead zone. Do not "fix" it by moving `OpenAIError` elsewhere:
+// that is a rename across every module that catches it, for no runtime gain.
+import { providerKey } from "./providers/keys.js";
 
 const OPENAI_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 
@@ -33,12 +40,17 @@ export class OpenAIError extends Error {
   }
 }
 
+/**
+ * The calling key, resolved through the one resolver rather than from
+ * `process.env` — so a key typed into the setup screen reaches the very next
+ * request, including the mint of a realtime session, with no restart.
+ *
+ * Reading `process.env` here was the bug: the PUT stored the key, answered
+ * `present: true`, and this function kept throwing "not set" at the user
+ * looking at the key they had just saved.
+ */
 function apiKey(): string {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    throw new OpenAIError(500, "OPENAI_API_KEY is not set on the server");
-  }
-  return key;
+  return providerKey("openai");
 }
 
 async function request<T>(
