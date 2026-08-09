@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import express from "express";
 import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 
-import type { RosterEnvelope } from "../routes/thinkers.js";
+import type { ConfigTestEnvelope, RosterEnvelope } from "../routes/thinkers.js";
 import type {
   ModelChoice,
   ThinkerProvider,
@@ -558,3 +558,272 @@ describe("POST /api/thinkers/reset", () => {
     expect(body.roster.master.model).toBe("deepseek-v4-pro");
   });
 });
+
+// ---------------------------------------------------------------------------
+// POST /api/thinkers/test
+// ---------------------------------------------------------------------------
+
+describe("POST /api/thinkers/test", () => {
+  // The route runs the REAL adapters, so the provider APIs are faked at the
+  // fetch layer with payloads shaped like each wire — the same technique as
+  // `deep-think.test.ts`. Requests are recorded so the assertions can prove
+  // what actually went out: how many calls, to whom, and with which effort.
+  type Body = Record<string, unknown>;
+  const requests: Body[] = [];
+  const urls: string[] = [];
+  /** Non-null makes the fake answer with the provider's error message. */
+  let failWith: { status: number; message: string } | null = null;
+
+  const responsesPayload: Body = {
+    model: "gpt-5.2-mini",
+    usage: { input_tokens: 3, output_tokens: 2 },
+    output: [
+      { type: "message", content: [{ type: "output_text", text: "pong" }] },
+    ],
+  };
+  const chatPayload: Body = {
+    model: "deepseek-v4-pro",
+    choices: [
+      { index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" },
+    ],
+    usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+  };
+
+  const savedBaseUrl = process.env.OPENAI_BASE_URL;
+  // The stubbed fetch below must not eat the test's OWN calls to the local
+  // server — those have to reach Express for the route to run at all. Only
+  // provider URLs are faked; everything local passes through to the real fetch.
+  const realFetch = globalThis.fetch.bind(globalThis);
+
+  beforeEach(() => {
+    requests.length = 0;
+    urls.length = 0;
+    failWith = null;
+    // Pinned so the wire assertions can name the exact URL; a shell carrying
+    // OPENAI_BASE_URL would otherwise move the Responses endpoint.
+    delete process.env.OPENAI_BASE_URL;
+
+    vi.stubGlobal(
+      "fetch",
+      async (url: unknown, init?: { body?: string }) => {
+        if (String(url).includes("127.0.0.1")) {
+          return realFetch(String(url), init as RequestInit);
+        }
+        urls.push(String(url));
+        const body = JSON.parse(init?.body ?? "{}") as Body;
+        requests.push(body);
+        if (failWith) {
+          // A const copy, because TS will not narrow the outer `let` inside
+          // the nested `text` closure below.
+          const failure = failWith;
+          return {
+            ok: false,
+            status: failure.status,
+            text: async () =>
+              JSON.stringify({ error: { message: failure.message } }),
+          };
+        }
+        // The two wires by model id — the only providers these cases call.
+        const payload = String(body.model).includes("deepseek")
+          ? chatPayload
+          : responsesPayload;
+        return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+      },
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (savedBaseUrl === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = savedBaseUrl;
+  });
+
+  function post(body: unknown): Promise<Response> {
+    return fetch(`${base}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("skips a config whose provider has no key, and calls nothing", async () => {
+    const res = await post({
+      configs: [choice("gpt-5.2-mini", "openai")],
+    });
+    const body = (await res.json()) as ConfigTestEnvelope;
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      results: { "openai::gpt-5.2-mini::default": "skipped" },
+      errors: { "openai::gpt-5.2-mini::default": "Sem chave configurada" },
+    });
+    // The half that matters: no key must mean no call, not a call that 401s.
+    expect(urls).toEqual([]);
+  });
+
+  it("deduplicates identical configs into one call", async () => {
+    setProviderKey("openai", A_KEY);
+    const config = choice("gpt-5.2-mini", "openai");
+
+    const res = await post({ configs: [config, config, config] });
+    const body = (await res.json()) as ConfigTestEnvelope;
+
+    expect(res.status).toBe(200);
+    expect(body.results).toEqual({ "openai::gpt-5.2-mini::default": "ok" });
+    expect(body.errors).toEqual({});
+    expect(urls).toHaveLength(1);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("treats each effort as its own config, absent effort keyed as 'default'", async () => {
+    setProviderKey("openai", A_KEY);
+
+    const res = await post({
+      configs: [
+        { provider: "openai", model: "gpt-5.2-mini", effort: "high" },
+        { provider: "openai", model: "gpt-5.2-mini" },
+        { provider: "openai", model: "gpt-5.2-mini", effort: "high" },
+      ],
+    });
+    const body = (await res.json()) as ConfigTestEnvelope;
+
+    expect(Object.keys(body.results).sort()).toEqual([
+      "openai::gpt-5.2-mini::default",
+      "openai::gpt-5.2-mini::high",
+    ]);
+    expect(Object.values(body.results)).toEqual(["ok", "ok"]);
+    expect(urls).toHaveLength(2);
+  });
+
+  it("answers ok on both wires, sending effort on the field each wire expects", async () => {
+    setProviderKey("openai", A_KEY);
+    setProviderKey("deepseek", A_KEY);
+
+    const res = await post({
+      configs: [
+        { provider: "openai", model: "gpt-5.2-mini", effort: "high" },
+        { provider: "deepseek", model: "deepseek-v4-pro", effort: "max" },
+      ],
+    });
+    const body = (await res.json()) as ConfigTestEnvelope;
+
+    expect(res.status).toBe(200);
+    expect(body.results).toEqual({
+      "openai::gpt-5.2-mini::high": "ok",
+      "deepseek::deepseek-v4-pro::max": "ok",
+    });
+
+    // Two unique configs, two calls, one per wire.
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain("/responses");
+    expect(urls[1]).toContain("/chat/completions");
+
+    // The ping and the ceilings, on the Responses wire...
+    expect(requests[0]).toMatchObject({
+      model: "gpt-5.2-mini",
+      input: [{ role: "user", content: "ping" }],
+      max_output_tokens: 10,
+      reasoning: { effort: "high" },
+    });
+    // ...and on the Chat wire, where the same three ride under different names.
+    expect(requests[1]).toMatchObject({
+      model: "deepseek-v4-pro",
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 10,
+      reasoning_effort: "max",
+    });
+  });
+
+  it("sends no reasoning field when the config has no effort", async () => {
+    setProviderKey("openai", A_KEY);
+
+    await post({ configs: [choice("gpt-5.2-mini", "openai")] });
+
+    // Absent means "send nothing", not "send a default": a non-reasoning model
+    // rejects the field outright.
+    expect(requests[0]).not.toHaveProperty("reasoning");
+  });
+
+  it("reports error, with the provider's own message, when the call fails", async () => {
+    setProviderKey("deepseek", A_KEY);
+    failWith = { status: 401, message: "Invalid API key" };
+
+    const res = await post({
+      configs: [{ provider: "deepseek", model: "deepseek-v4-pro" }],
+    });
+    const body = (await res.json()) as ConfigTestEnvelope;
+
+    expect(res.status).toBe(200);
+    expect(body.results).toEqual({ "deepseek::deepseek-v4-pro::default": "error" });
+    // The provider's words, not a translation that could blame the wrong thing.
+    expect(body.errors).toEqual({ "deepseek::deepseek-v4-pro::default": "Invalid API key" });
+  });
+
+  it("mixes verdicts in one answer: skipped where no key, ok where there is", async () => {
+    setProviderKey("openai", A_KEY);
+
+    const res = await post({
+      configs: [
+        { provider: "openai", model: "gpt-5.2-mini" },
+        { provider: "openrouter", model: "x-ai/grok-4" },
+      ],
+    });
+    const body = (await res.json()) as ConfigTestEnvelope;
+
+    expect(body.results).toEqual({
+      "openai::gpt-5.2-mini::default": "ok",
+      "openrouter::x-ai/grok-4::default": "skipped",
+    });
+    expect(urls).toHaveLength(1);
+  });
+
+  it("never reads or writes the roster", async () => {
+    setProviderKey("openai", A_KEY);
+
+    await post({ configs: [choice("gpt-5.2-mini", "openai")] });
+
+    // The endpoint tests configs that are not saved yet, so the file must not
+    // come into existence through it.
+    expect(existsSync(ROSTER_PATH)).toBe(false);
+  });
+
+  it("answers 400 for a body that is not an object or has no configs list", async () => {
+    for (const body of [
+      [{ provider: "openai" }],
+      42,
+      "nope",
+      { configs: "not-a-list" },
+      {},
+      null,
+    ]) {
+      const res = await post(body);
+      expect(res.status).toBe(400);
+    }
+    expect(urls).toEqual([]);
+  });
+
+  it("refuses an entry that cannot be tested as sent, naming its index", async () => {
+    // Each entry names a field the route cannot test as received: an unknown
+    // provider would pick the wrong key, a non-string model or an unknown
+    // effort would go out verbatim, a non-object entry has no fields at all.
+    const badConfigs: unknown[][] = [
+      [{ provider: "not-a-provider", model: "x" }],
+      [{ provider: "openai", model: "   " }],
+      [{ provider: "openai", model: 42 }],
+      [{ provider: "openai", model: "x", effort: "turbo" }],
+      [{ provider: "openai" }],
+      ["uma-string"],
+      [null],
+      [{ provider: "openai", model: "ok", effort: "max" }, { model: "no-provider" }],
+    ];
+
+    for (const configs of badConfigs) {
+      const res = await post({ configs });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toMatch(/configs\[(0|1)\]/);
+    }
+    expect(urls).toEqual([]);
+  });
+});
+

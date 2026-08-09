@@ -1,7 +1,10 @@
 import { Router } from "express";
 
+import { OpenAIError } from "../services/openai.js";
+import { adapterFor } from "../services/providers/index.js";
 import {
   PROVIDERS,
+  isProvider,
   providerKeyPresent,
   providerKeyStatus,
   type ProviderKeyStatus,
@@ -11,7 +14,12 @@ import {
   getRoster,
   setRoster,
 } from "../services/thinker-roster.js";
-import type { ThinkerProvider, ThinkerRoster } from "../types/thinker-roster.js";
+import type {
+  ModelChoice,
+  ReasoningEffort,
+  ThinkerProvider,
+  ThinkerRoster,
+} from "../types/thinker-roster.js";
 
 // === /api/thinkers — the roster of thinkers, over the wire ===
 //
@@ -133,6 +141,105 @@ function envelope(roster: ThinkerRoster): RosterEnvelope {
   };
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/thinkers/test — one minimal call per config, before it is saved
+// ---------------------------------------------------------------------------
+
+/** How long a config may take to answer. 15s names the usual dead ends. */
+const TEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Enough to prove the model answers without paying for a real generation —
+ * the smallest the two wires accept for a plain completion.
+ */
+const TEST_MAX_OUTPUT_TOKENS = 10;
+
+/**
+ * The full union the type declares, NOT the narrower mirror the roster's own
+ * normaliser keeps: the modal's select offers all six ("Esforço (padrão do
+ * modelo)" plus minimal..max), and the test endpoint exists to answer for
+ * exactly what the operator is looking at — including the levels a save would
+ * not keep.
+ */
+const TEST_EFFORTS: readonly ReasoningEffort[] = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+/** A model id is an identifier, not a document — same ceiling as the roster. */
+const MAX_TEST_MODEL_CHARS = 200;
+
+/** The index every config's verdict is reported under, on both maps. */
+function testKey(config: ModelChoice): string {
+  return `${config.provider}::${config.model}::${config.effort ?? "default"}`;
+}
+
+export interface ConfigTestEnvelope {
+  results: Record<string, "ok" | "error" | "skipped">;
+  errors: Record<string, string>;
+}
+
+/**
+ * One config from the wire, checked field by field.
+ *
+ * Stricter than the roster's normaliser, on purpose: `normalizeRoster` swaps a
+ * bad field for a fallback and saves, while here there IS no fallback — testing
+ * `provider: "openrouter"` as if it were `"deepseek"` would spend the wrong key
+ * and report a truth about the wrong provider. An entry that cannot be tested
+ * as sent is refused, by index and field, so the UI can point at the row.
+ *
+ * The checks are the same closed vocabularies the roster uses (the three
+ * providers, the effort levels) plus a model id that is a string and bounded.
+ * Only `provider`, `model` and `effort` matter to the call, so the rest of the
+ * choice is neutral "unknown" values rather than wire-supplied numbers that
+ * would have to be trusted.
+ */
+function normalizeTestConfig(value: unknown, index: number): ModelChoice {
+  if (!isPlainObject(value)) {
+    throw new OpenAIError(400, `configs[${index}] must be an object.`);
+  }
+
+  if (!isProvider(value.provider)) {
+    throw new OpenAIError(
+      400,
+      `configs[${index}].provider must be one of ${PROVIDERS.join(", ")}.`,
+    );
+  }
+
+  const model = typeof value.model === "string" ? value.model.trim() : "";
+  if (model === "") {
+    throw new OpenAIError(400, `configs[${index}].model must be a non-empty string.`);
+  }
+
+  const choice: ModelChoice = {
+    provider: value.provider,
+    model: model.slice(0, MAX_TEST_MODEL_CHARS),
+    context_window: null,
+    supports_tools: true,
+    rate: null,
+  };
+
+  const effort = value.effort;
+  if (effort !== undefined) {
+    if (
+      typeof effort !== "string" ||
+      !(TEST_EFFORTS as readonly string[]).includes(effort)
+    ) {
+      throw new OpenAIError(
+        400,
+        `configs[${index}].effort must be one of ${TEST_EFFORTS.join(", ")}.`,
+      );
+    }
+    choice.effort = effort as ReasoningEffort;
+  }
+
+  return choice;
+}
+
 /**
  * English, unlike the 422 below: only a caller that is not sending JSON objects
  * can see this, and that is a bug in the client, not a state the user is in.
@@ -184,6 +291,93 @@ router.put("/", async (req, res) => {
 // for a promise to keep tracking `.env`.
 router.post("/reset", async (_req, res) => {
   res.json(envelope(await setRoster(defaultRoster())));
+});
+
+// POST /api/thinkers/test — one ping per UNIQUE config, on demand
+//
+// The configs here are the ones the settings modal is still editing — not yet
+// saved, maybe not even valid — so this route deliberately never reads the
+// roster. The operator is asking which rows of the setup they are LOOKING AT
+// would actually answer, and the answer is keyed by the same
+// `${provider}::${model}::${effort}` string the UI built the row from.
+//
+// Three verdicts, per unique config:
+//   - "skipped" when the provider has no key — the truth the operator needs is
+//     "you cannot test this until you paste a key", not a fake failure;
+//   - "ok" when the provider answered the ping;
+//   - "error" when it did not, with the adapter's own message in `errors` —
+//     pt-BR, and it already names the real cause (timeout, 401, bad model id).
+router.post("/test", async (req, res) => {
+  const body: unknown = req.body;
+
+  if (!isPlainObject(body)) {
+    res.status(400).json({ error: NOT_AN_OBJECT });
+    return;
+  }
+  if (!Array.isArray(body.configs)) {
+    res.status(400).json({ error: "Body must carry a `configs` list." });
+    return;
+  }
+
+  // Throws 400 on the first entry that cannot be tested as sent — same shape
+  // the other routes answer with, via `errorHandler`.
+  const configs = body.configs.map((entry, index) =>
+    normalizeTestConfig(entry, index),
+  );
+
+  // Dedup by the key the answer is reported under: identical rows are ONE
+  // provider call, billed once. The roster can hold the same choice in several
+  // slots — master, planner and slot 3 — and the operator testing the setup
+  // should not pay for it three times.
+  const seen = new Set<string>();
+  const unique: ModelChoice[] = [];
+  for (const config of configs) {
+    const key = testKey(config);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(config);
+  }
+
+  const results: ConfigTestEnvelope["results"] = {};
+  const errors: ConfigTestEnvelope["errors"] = {};
+
+  // Concurrent on purpose: each call carries its own 15s deadline, and the
+  // operator's question is "which rows answer" — the slowest config should not
+  // hold the other verdicts hostage. The count is the modal's, a handful of
+  // pings, not a fan-out.
+  await Promise.all(
+    unique.map(async (config) => {
+      const key = testKey(config);
+
+      if (!providerKeyPresent(config.provider)) {
+        results[key] = "skipped";
+        errors[key] = "Sem chave configurada";
+        return;
+      }
+
+      try {
+        await adapterFor(config.provider).chat({
+          model: config.model,
+          turns: [{ role: "user", content: "ping" }],
+          // Absent means "send nothing", not "send a default": a non-reasoning
+          // model rejects the field outright (same rule as `deep-think.ts`).
+          ...(config.effort ? { effort: config.effort } : {}),
+          maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
+          timeoutMs: TEST_TIMEOUT_MS,
+          signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+        });
+        results[key] = "ok";
+      } catch (err) {
+        results[key] = "error";
+        // The adapter's messages are pt-BR and name the cause (timeout, 401,
+        // unknown model...). The provider's own words beat a home-grown
+        // translation that could blame the wrong thing.
+        errors[key] = err instanceof Error ? err.message : String(err);
+      }
+    }),
+  );
+
+  res.json({ results, errors });
 });
 
 export default router;
