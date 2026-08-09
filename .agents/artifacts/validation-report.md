@@ -7,8 +7,8 @@ it, not from inspection.
 
 ```bash
 node .agents/skills/scripts/lint-skills.mjs          # 10/10 skills
-node .agents/skills/scripts/provenance.mjs check     # 46 citations verified
-node .agents/skills/scripts/run-evals.mjs --all      # 60 cases, 10 skills GREEN
+node .agents/skills/scripts/provenance.mjs check     # 63 citations verified
+node .agents/skills/scripts/run-evals.mjs --all      # 71 cases, 10 skills GREEN
 node .agents/skills/scripts/run-routing-evals.mjs    # 17/17 routing cases
 node .agents/skills/scripts/test-hooks.mjs           # 14/14 hook scenarios
 node .agents/skills/scripts/test-evolution.mjs       # 10/10 pipeline scenarios
@@ -19,9 +19,9 @@ node .agents/skills/scripts/test-evolution.mjs       # 10/10 pipeline scenarios
 | Check | Result |
 |---|---|
 | skill linter | 10/10 |
-| skill body size | min 71, median 83, max 100 lines (~800–1000 tokens) |
-| provenance | 46/46 citations resolve to the line they claim |
-| per-skill evals | 60 cases across 10 skills, all green |
+| skill body size | min 71, median 85.5, max 139 lines (~700–1900 tokens) |
+| provenance | 63/63 citations resolve to the line they claim |
+| per-skill evals | 71 cases across 10 skills, all green |
 | routing evals | 17/17, including 2 near-misses that must not surface |
 | hook scenarios | 14/14 |
 | pipeline scenarios | 10/10 |

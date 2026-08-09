@@ -38,5 +38,5 @@
       "artifact": ".agents/artifacts/validation-report.md"
     }
   ],
-  "updated_by": "phase-5 gate: 10/10 linter, 46/46 citations, 60 eval cases, 17/17 routing, 14/14 hooks, 10/10 pipeline"
+  "updated_by": "phase-5 gate: 10/10 linter, 63/63 citations, 71 eval cases, 17/17 routing, 14/14 hooks, 10/10 pipeline"
 }
