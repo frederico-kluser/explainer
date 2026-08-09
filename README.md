@@ -72,8 +72,15 @@ npm run dist:win        # build:desktop + electron-builder --win --x64
 ```
 
 `npm run build` continua sendo o build **web** (`backend build` + `frontend
-build`) — é o que o `validate.sh` roda. O caminho desktop tem o seu próprio,
-`build:desktop`, e `dist`/`dist:win` o executam antes de empacotar.
+build`). O caminho desktop tem o seu próprio, `build:desktop`, e `dist`/`dist:win`
+o executam antes de empacotar. O `validate.sh` roda os dois: além dos builds web,
+ele typecheca os quatro projetos, roda os 14 testes do main process
+(`electron/main/services/__tests__/backend-process.test.ts`) e executa
+`electron-vite build`. Os dois passos de desktop usam binários do `node_modules`
+da raiz, e `npm run setup` só instala `backend` e `frontend` — por isso o gate
+precisa de um `npm install` na raiz antes. O que ninguém cobre é o lint: não
+existe config de ESLint na raiz, e `npm run lint` são só os dois pacotes, então
+`electron/` e `src/shared/` nunca passaram por um linter.
 
 > **Limitação conhecida:** o app empacotado por `npm run dist` não fala com o
 > backend. Nada copia um backend para dentro do pacote — o `electron-builder.yml`
@@ -279,16 +286,16 @@ conversa. Repositórios do GitHub viram clones rasos em `.../repos/`.
 | Comando | Descrição |
 |---|---|
 | `npm run dev` | Abre o site em http://localhost:5173 — é `bash dev.sh`, backend + frontend juntos (`npm start` é o mesmo) |
-| `npm run setup` | `npm install` nos dois pacotes |
+| `npm run setup` | `npm install` nos dois pacotes — o `npm install` da raiz (Electron, vitest) é separado, e o gate depende dele |
 | `npm run dev:desktop` | Janela Electron — `electron-vite dev` (alias: `npm run dev:electron`) |
 | `npm run build` | Build web de produção: `backend build` + `frontend build` |
 | `npm run build:desktop` | `electron-vite build` — main, preload e renderer em `out/` |
 | `npm run dist` | Empacota com electron-builder (roda `build:desktop` antes) — veja a limitação conhecida acima |
 | `npm run dist:win` | O mesmo, com `--win --x64` |
 | `npm run typecheck` | `tsc --noEmit` nos quatro projetos: backend, frontend, `tsconfig.node.json` (main/preload do Electron) e `tsconfig.web.json` |
-| `npm run lint` | ESLint nos dois |
-| `npm run test` | Vitest no backend e no frontend |
-| `npm run validate` | lint + typecheck + test + build — só backend e frontend |
+| `npm run lint` | ESLint nos dois pacotes (`backend/src`, `frontend/src`) — não há config de ESLint na raiz, então `electron/` e `src/shared/` ficam de fora |
+| `npm run test` | Vitest no backend e no frontend (a suíte do desktop roda pelo `validate.sh`) |
+| `npm run validate` | O gate: lint (backend + frontend), typecheck dos quatro projetos, teste do backend, do frontend e do desktop, e os três builds. Nada linta `electron/` nem `src/shared/` |
 
 ## Troubleshooting
 

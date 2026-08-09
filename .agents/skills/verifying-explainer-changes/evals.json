@@ -23,11 +23,47 @@
       "why": "staleness detector: if someone closes the hole this case fails and the passage documenting it must be rewritten"
     },
     {
-      "id": "gate-never-reaches-electron",
+      "id": "gate-runs-the-desktop-suite",
+      "type": "file_matches",
+      "file": "validate.sh",
+      "pattern": "electron/main/services/__tests__/backend-process\\.test\\.ts",
+      "why": "the table now says the gate runs the desktop suite; drop the Test Desktop section and that row is wrong again"
+    },
+    {
+      "id": "gate-builds-the-desktop",
+      "type": "file_matches",
+      "file": "validate.sh",
+      "pattern": "electron-vite build",
+      "why": "'the gate builds the desktop' is only true while the Build Desktop section is there"
+    },
+    {
+      "id": "gate-typechecks-the-four-projects",
+      "type": "file_matches",
+      "file": "validate.sh",
+      "pattern": "^npm run typecheck$",
+      "why": "electron/ and src/shared/ are typechecked only through the root script; without this line the gate stops covering them"
+    },
+    {
+      "id": "gate-lints-nothing-desktop",
       "type": "file_absent_match",
       "file": "validate.sh",
-      "pattern": "electron",
-      "why": "the second hole: the day the gate grows an electron step, the table row telling the reader to run it by hand is wrong"
+      "pattern": "eslint|Lint (Desktop|Electron|Root|Shared)",
+      "flags": "im",
+      "why": "the surviving blind spot: the gate lints only through the two package scripts, so a desktop lint section here would make the passage false"
+    },
+    {
+      "id": "root-lint-is-only-the-two-packages",
+      "type": "file_matches",
+      "file": "package.json",
+      "pattern": "\"lint\": \"npm --prefix backend run lint && npm --prefix frontend run lint\"",
+      "why": "same blind spot from the other side: npm run lint never widens to electron/ or src/shared/ while this is its exact body"
+    },
+    {
+      "id": "no-root-eslint-config",
+      "type": "command",
+      "run": "test $(ls -1 eslint.config.* .eslintrc* 2>/dev/null | wc -l) -eq 0",
+      "expect_exit": 0,
+      "why": "~2900 lines under electron/ and src/shared/ are unlinted because no ESLint config exists at the root; the day one lands the blind spot is closed and the passage must go"
     },
     {
       "id": "no-ci-yet",

@@ -18,22 +18,34 @@ comes from.
 ### The gate has holes, and they are load-bearing
 
 `validate.sh` runs the frontend suite as `npm --prefix frontend test || true` —
-`validate.sh:20@4c2c46c8`. A failing frontend test **cannot** fail the gate. So
-"validate passed" is evidence about lint, types, the backend suite and both
-builds, and evidence about nothing on the frontend.
+`validate.sh:28@4c2c46c8`. A failing frontend test **cannot** fail the gate. So
+"validate passed" is evidence about lint, types, the backend suite, the desktop
+suite and all three builds, and evidence about nothing on the frontend.
 
 When a change touches `frontend/src`, run `npm --prefix frontend test`
 separately and report that result on its own. This is the single most likely way
 to believe a change is verified when it is not.
 
 The second hole is quieter, because it is an omission rather than a `|| true`:
-nothing in the gate reaches `electron/` —
-`electron/main/services/__tests__/backend-process.test.ts:7@51255462`. That suite
-is run by hand or not at all, so a green gate is not evidence about the desktop
-shell. Its command resolves `vitest` from the repo root, and `npm run setup`
-installs only `backend` and `frontend`, so it needs a root `npm install` first —
-without one, `npx` fetches whatever major version it likes and the run dies in
-the transform rather than in a test.
+nothing lints `electron/` or `src/shared/`. `validate.sh` has no lint section for
+the desktop, the root script is
+`"lint": "npm --prefix backend run lint && npm --prefix frontend run lint"` —
+`package.json:22@2a5ff98b` — and the only ESLint configs in the repository are
+`backend/eslint.config.js` and `frontend/eslint.config.js`; there is none at the
+root. That leaves ~2,900 lines of main process, preload and shared types no
+linter has ever read, so a green gate says nothing about style, unused bindings
+or the rules the two packages take for granted.
+
+Reach is no longer the hole it once was. The gate typechecks all four projects
+(`validate.sh:22@982c1455` — that step is where `tsconfig.node.json` and
+`tsconfig.web.json` are compiled), runs the main-process suite
+(`validate.sh:37@c4a6db1b`) and builds the desktop bundle
+(`validate.sh:49@9e9d8691`). Neither desktop step carries `|| true`, so both can
+fail the gate. Both resolve their binary from the root install while
+`npm run setup` installs only `backend` and `frontend` —
+`package.json:23@5ded0fd1` — so a root `npm install` is now a prerequisite of
+the gate itself; without one `npx` fetches whatever major version it likes and
+the run dies in the transform rather than in a test.
 
 ### Which signal proves what
 
@@ -41,7 +53,8 @@ the transform rather than in a test.
 |---|---|
 | anything | `npm run validate` |
 | `frontend/src` | `npm --prefix frontend test` as well, separately |
-| `electron/` | `npx vitest run --root . electron/main/services/__tests__/backend-process.test.ts` |
+| `electron/` or `src/shared/` | `npm run validate` covers types, tests and build; read the diff for what a linter would have caught, because nothing lints these |
+| the desktop suite on its own, while iterating | `npx vitest run --root . electron/main/services/__tests__/backend-process.test.ts` |
 | one backend module | `npm --prefix backend test -- src/__tests__/<file>.test.ts` |
 | one behaviour | `npm --prefix backend test -- -t "<test name>"` |
 | a skill's claims | `node .agents/skills/scripts/run-evals.mjs <skill>` |
@@ -88,7 +101,7 @@ never renders the branch stays green when the branch is inverted, which is why
 A `happy-dom` mount has no audio, no WebRTC and no backend, so whether the model
 actually spoke is proven by a headless browser run against a live app, not by a
 unit test — and `data-role` on `ChatBubble`
-(`frontend/src/components/ui/ChatBubble.tsx:41@cbcd8183`) exists so such a run
+(`frontend/src/components/ui/ChatBubble.tsx:42@cbcd8183`) exists so such a run
 can assert the model actually spoke rather than that some text appeared.
 
 Two lessons from that harness, both learned by getting them wrong:
@@ -103,8 +116,9 @@ Two lessons from that harness, both learned by getting them wrong:
 1. Pick the narrowest signal that covers the change, from the table above.
 2. Run it. If it is red, fix and re-run; a red signal is the loop closing, not a
    failure of the task.
-3. If the change touched `frontend/src` or `electron/`, run that suite
-   separately — the gate reports on neither.
+3. If the change touched `frontend/src`, run that suite separately — the gate
+   cannot fail on it. A change under `electron/` or `src/shared/` needs no extra
+   command, but it does need the diff read for what a linter would have caught.
 4. Report the actual result, including what was not covered. "Tests pass" without
    naming which suite is the shape of a false claim.
 
@@ -115,13 +129,17 @@ Two lessons from that harness, both learned by getting them wrong:
 ## <evolution>
 
 On completion, run the memory pipeline in `meta-skill-evolution`. This skill's
-own eval asserts the current shape of `validate.sh`: if someone removes the
-`|| true`, that case fails and forces this passage to be rewritten rather than
-quietly going stale. That is the intended behaviour — the eval is the staleness
-detector for the claim. Sibling cases pin `happy-dom`, the absent
-`@testing-library` and the environment-free `frontend/vitest.config.ts`, because
-the day any of those moves the rendering technique above becomes advice to write
-a test that cannot run.
+own eval asserts the current shape of `validate.sh` in both directions: remove
+the `|| true` and the first blind spot's passage is forced open; remove the
+`TypeCheck Root`, `Test Desktop` or `Build Desktop` section and the paragraph
+claiming the gate reaches the desktop fails with it; add a lint step for
+`electron/` — in `validate.sh`, in the root `lint` script, or as the first
+root-level ESLint config — and the second blind spot's passage is forced open in
+turn. That is the intended behaviour: the eval is the staleness detector for
+each claim, in whichever direction the repository moves. Sibling cases pin
+`happy-dom`, the absent `@testing-library` and the environment-free
+`frontend/vitest.config.ts`, because the day any of those moves the rendering
+technique above becomes advice to write a test that cannot run.
 
 Update directly only for something important and externally verified: a new
 technique the suite adopts, or a signal that turned out not to prove what it

@@ -6,7 +6,9 @@ backend.
 
 ## Commands
 
-- setup: `npm run setup`
+- setup: `npm run setup` — `backend` and `frontend` only. The root install
+  (Electron, electron-vite, vitest) is a separate `npm install`, and the gate
+  needs it.
 - dev (web): `npm run dev` — `bash dev.sh`, backend 3001 + frontend 5173, and it
   opens http://localhost:5173 itself once 5173 accepts a socket. `BROWSER=none`,
   `NO_OPEN=1` or `bash dev.sh --no-open` suppress that. `npm start` is the same
@@ -15,7 +17,7 @@ backend.
   The main process probes 3001 first and reuses a backend already answering
   there instead of spawning a second one, so it can run alongside `npm run dev`.
 - build (web): `npm run build` — `backend build && frontend build`. That is what
-  `validate.sh` and this document mean by build.
+  this document means by build; `validate.sh` runs it and the desktop build too.
 - build (desktop): `npm run build:desktop` (`electron-vite build`).
   `npm run dist` / `npm run dist:win` run it and then package with
   electron-builder; the packaged app does not reach the backend yet — see the
@@ -27,18 +29,26 @@ backend.
 - test (single file): `npm --prefix backend test -- src/__tests__/pricing.test.ts`
 - test (single case): `npm --prefix backend test -- -t "clamps speed into the range the API accepts"`
 - test (frontend): `npm --prefix frontend test`
+- test (desktop): `npx vitest run --root . electron/main/services/__tests__/backend-process.test.ts`
+  — no package script wraps it; the gate runs this exact line.
 - gate: `npm run validate`
 
 `npm run validate` runs the frontend suite with `|| true`, so a failing frontend
 test cannot fail the gate. Any change touching `frontend/src` needs
 `npm --prefix frontend test` run separately, and its result reported separately.
 
-The gate's other blind spot is reach: every step in `validate.sh` is
-`npm --prefix backend …` or `npm --prefix frontend …`, so nothing under
-`electron/` or `src/shared/` is linted, typechecked, tested or built by
-`npm run validate`. Root `npm run typecheck` is the only script that covers the
-Electron main process, and no script in `package.json` runs the tests under
-`electron/main/services/__tests__/`.
+The gate's other blind spot is lint: nothing lints `electron/` or `src/shared/`.
+`validate.sh` has no lint section for the desktop, `npm run lint` is the two
+package scripts, and the only ESLint configs are `backend/eslint.config.js` and
+`frontend/eslint.config.js` — there is none at the root. ~2,900 lines of main
+process, preload and shared types that no linter has read.
+
+Reach is covered. `validate.sh` typechecks all four projects (`TypeCheck Root`,
+which is what reaches `tsconfig.node.json` and `tsconfig.web.json`), runs the
+main-process suite (`Test Desktop`) and builds the desktop bundle
+(`Build Desktop`). Neither desktop step carries `|| true`. Both resolve their
+binary from the root install, which `npm run setup` does not do, so
+`npm run validate` needs a root `npm install` first.
 
 There is no CI. These commands run only when someone runs them.
 
