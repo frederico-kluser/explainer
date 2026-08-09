@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="pt-BR" data-bs-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explainer — o que mudou nesta execução</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+ body{background:#0d1117}
+ code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+ pre{background:#161b22;border:1px solid #30363d;border-radius:.5rem;padding:.9rem;overflow-x:auto;font-size:.82rem}
+ .tab-pane{padding-top:1.25rem}
+ table{font-size:.9rem}
+ .nav-tabs .nav-link{color:#8b949e}.nav-tabs .nav-link.active{color:#fff}
+ .lead-num{font-size:2rem;font-weight:700;line-height:1}
+ .card{background:#161b22;border-color:#30363d}
+ h3{margin-top:1.75rem;font-size:1.05rem;color:#58a6ff}
+ .bad{color:#f85149}.good{color:#3fb950}.warn{color:#d29922}
+</style>
+</head>
+<body class="text-body">
+<div class="container py-4" style="max-width:1100px">
+
+<h1 class="h3 mb-1">Explainer — o que mudou nesta execução</h1>
+<p class="text-secondary mb-4">26 squash commits em <code>main</code> · 90 arquivos · +29.615 / −509 ·
+testes <strong>82 → 559</strong> no backend e <strong>22 → 301</strong> no frontend</p>
+
+<ul class="nav nav-tabs" role="tablist">
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#t1">Pedidos × entregas</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t2">Os 26 commits</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t3">Bugs encontrados</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t4">Usar no celular</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t5">Pendências</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#t6">Como foi feito</button></li>
+</ul>
+
+<div class="tab-content">
+
+<!-- ───────────── PEDIDOS × ENTREGAS ───────────── -->
+<div class="tab-pane fade show active" id="t1">
+<h3>1 · Tool calling profundo — até 10 sub-agentes + síntese</h3>
+<p>Pedido: <em>"se o projeto tiver em uma task que deva pensar profundamente, ele pode chamar quantos sub
+agentes quiser (max: 10) e passar o cenário e a reflexão para esses… e pode chamar outro agente ao final
+para fazer a síntese (todos com acesso ao Brave Search)"</em>.</p>
+<p><strong class="good">Entregue.</strong> Três estágios em <code>backend/src/services/deep-think.ts</code>:</p>
+<pre>planner  → escreve N ângulos DISTINTOS (fallback determinístico se falhar)
+thinkers → 1..10 em paralelo, concorrência limitada, cada um com a ferramenta brave_search
+synth    → lê o TRAÇO COMPLETO dos pensadores, não um voto</pre>
+<p>Assíncrono: <code>deep_think</code> volta em milissegundos, o modelo avisa em voz alta e continua
+conversando; a conclusão chega pelo SSE. Um pensador que falha não derruba a rodada. Um job por conversa.
+A ferramenta só é oferecida ao modelo quando existe <code>BRAVE_API_KEY</code> — sem chave, os pensadores
+rodariam sem web e entregariam uma síntese construída sem fontes, cobrando o mesmo.</p>
+<p class="text-secondary">O fan-out é real, não teatro: um revisor adversarial capturou o payload de cada
+pensador e confirmou que o <code>prompt</code> do ângulo entra no corpo da mensagem, não só no rótulo da UI.</p>
+
+<h3>2 · Ferramenta de mermaid — a IA descreve, a ferramenta desenha</h3>
+<p>Pedido: <em>"uma ferramenta que gera mermaid de maneira facilitada onde nossa IA só dá as instruções e a
+ferramenta devolve o mermaid e <strong>renderizamos isso</strong>"</em>.</p>
+<p><strong class="good">Entregue, com o render na tela.</strong> O modelo descreve o desenho em português;
+<code>generate_diagram</code> devolve mermaid validado. Contrato importante:</p>
+<pre>output = SÓ a legenda falável   ← vira function_call_output, que é LIDO EM VOZ ALTA
+meta   = { diagram: MermaidDiagram }  ← o mermaid vai por aqui, nunca pelo output</pre>
+<p>Sem isso o modelo leria <code>graph TD; A--&gt;B</code> em voz alta.</p>
+
+<h3>3 · Memória recuperável de arquivo</h3>
+<p>Pedido: <em>"a memória da LLM… que podemos recuperar de um arquivo para continuar a conversa, mas teremos
+nesse arquivo a conversa E as reflexões E as ferramentas chamadas"</em>.</p>
+<p><strong class="good">Entregue e alimentada.</strong> Um arquivo por conversa em
+<code>~/.local/share/voice-assistant/memory/&lt;uuid&gt;.json</code>, escrito a cada turno e a cada chamada de
+ferramenta, com a síntese de cada rodada de deep-think gravada como <code>reflection</code>.
+Exportar / importar / apagar pelo painel. A retomada injeta um <strong>resumo comprimido</strong>
+(<code>MemoryResume</code>) nas instruções da sessão — nunca o transcript inteiro, que seria re-cobrado
+a cada resposta.</p>
+
+<h3>4 · <code>completeText</code> devolvendo <code>usage</code></h3>
+<p><strong class="good">Entregue.</strong> <code>{ text, usage, model, status?, truncated? }</code>.
+<code>model</code> é o que o provedor DIZ ter respondido, não o que foi pedido — é isso que impede o
+zero silencioso do rate card com snapshots datados.</p>
+
+<h3>5 · Celular pela LAN + histórico ao vivo</h3>
+<p><strong class="good">Entregue.</strong> HTTPS por mkcert, chave de acesso no link, UI de uma coluna com
+duas gavetas, e SSE por conversa com <strong>um microfone por vez</strong>.
+Detalhes na aba "Usar no celular".</p>
+</div>
+
+<!-- ───────────── COMMITS ───────────── -->
+<div class="tab-pane fade" id="t2">
+<p class="text-secondary">Um squash commit por sub-tarefa. Os commits WIP dos sub-agentes não entraram na história.</p>
+<table class="table table-sm table-dark table-striped">
+<thead><tr><th>#</th><th>Commit</th><th>O que entrega</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>18058fb</code></td><td>contratos congelados (deep-think, mermaid, memória)</td></tr>
+<tr><td>2</td><td><code>80d4da2</code></td><td>cliente Brave com fila medida por chegada e retry ciente de cota</td></tr>
+<tr><td>3</td><td><code>c6dacb2</code></td><td>motor de fan-out: planner → pensadores → sintetizador</td></tr>
+<tr><td>4</td><td><code>3d44103</code></td><td>instruções em linguagem natural → mermaid validado</td></tr>
+<tr><td>5</td><td><code>8422bc7</code></td><td>a conversa como arquivo retomável</td></tr>
+<tr><td>6</td><td><code>e3d7f48</code></td><td><code>CostSource</code> += deep_think, mermaid</td></tr>
+<tr><td>7</td><td><code>6123009</code></td><td>alimenta a memória e cobra o <code>completeText</code> honestamente</td></tr>
+<tr><td>8</td><td><code>d325f53</code></td><td>handlers das três ferramentas novas</td></tr>
+<tr><td>9</td><td><code>8fe52b6</code></td><td>publica as três ferramentas para o modelo</td></tr>
+<tr><td>10</td><td><code>c7dbdf8</code></td><td>rotas de memória, SSE do deep-think, resume nas instruções</td></tr>
+<tr><td>11</td><td><code>2e084d6</code></td><td>para de descartar o <code>meta</code>; deep-think no stream de jobs</td></tr>
+<tr><td>12</td><td><code>9352bc4</code></td><td>render seguro do diagrama, leque de pensadores, painel de memória</td></tr>
+<tr><td>13</td><td><code>dc55c13</code></td><td>diagrama importado passa pelo mesmo portão do gerado</td></tr>
+<tr><td>14</td><td><code>7ce79d5</code></td><td>tudo isso na tela</td></tr>
+<tr><td>15</td><td><code>1c28b57</code></td><td><code>completeText</code> devolve usage, model e truncamento</td></tr>
+<tr><td>16</td><td><code>b39af27</code></td><td>precifica modelo que o card estático não conhece</td></tr>
+<tr><td>17</td><td><code>ab54198</code></td><td>contrato do adaptador de provedores + portão de chaves</td></tr>
+<tr><td>18</td><td><code>e4f7f9f</code></td><td>chave de acesso no link, trocada uma vez por cookie</td></tr>
+<tr><td>19</td><td><code>48060b3</code></td><td>diz por que o microfone está bloqueado; áudio dentro do gesto</td></tr>
+<tr><td>20</td><td><code>5b655b8</code></td><td>alcança o app do celular por HTTPS na LAN</td></tr>
+<tr><td>21</td><td><code>54c71ec</code></td><td>stream por conversa e um microfone por vez</td></tr>
+<tr><td>22</td><td><code>db8ea1b</code></td><td>uma coluna e duas gavetas abaixo de <code>md</code></td></tr>
+<tr><td>23</td><td><code>f7be6ac</code></td><td>alvos de 44px e campos de 16px no celular</td></tr>
+<tr><td>24</td><td><code>4a835d9</code></td><td>a segunda pessoa vê a conversa acontecendo</td></tr>
+<tr><td>25</td><td><code>269e4a0</code></td><td>diagrama legível no celular; leque de pensadores também</td></tr>
+<tr><td>26</td><td><code>5c61ec0</code></td><td>remove seletores mortos e o cap de diagrama que carregavam</td></tr>
+</tbody></table>
+</div>
+
+<!-- ───────────── BUGS ───────────── -->
+<div class="tab-pane fade" id="t3">
+<p class="text-secondary">Encontrados por revisores adversariais de contexto zero, cada um com a missão de
+REFUTAR o trabalho. Vários são <strong>pré-existentes</strong> — já estavam no seu código antes desta execução.</p>
+
+<h3 class="bad">Pré-existentes, encontrados e corrigidos</h3>
+<table class="table table-sm table-dark">
+<tbody>
+<tr><td><code>&lt;&lt;style&gt;&gt;</code> no validador de mermaid</td><td>A dobra de anotação do classDiagram apagava
+<code>&lt;&lt;nome&gt;&gt;</code> antes do teste de tag. Mas em HTML <code>&lt;&lt;style&gt;&gt;</code> é um <code>&lt;</code> inerte
+seguido de uma <strong>tag viva</strong>. Confirmado com parse5: <code>html=[style]</code>. Um
+<code>&lt;style&gt;</code> aplica via <code>innerHTML</code> → defacement + beacon de rede.</td></tr>
+<tr><td>Gate do microfone só funcionava no Chrome</td><td>Testava <code>err.message</code> contra
+<code>/Permission denied|NotAllowedError/i</code>. Só o Chrome escreve "Permission denied" — em Safari e
+Firefox o microfone negado <strong>já falhava</strong> com erro cru, no desktop.</td></tr>
+<tr><td>Diagrama espremido pelos próprios atributos</td><td>O mermaid emite <code>width="100%"</code> +
+<code>style="max-width"</code> inline. Nenhuma classe Tailwind nunca limitou nada, e o
+<code>overflow-x-auto</code> nunca disparava.</td></tr>
+<tr><td>Turno duplicado no histórico compartilhado</td><td><code>persist()</code> não mandava o id, e a rota
+cunhava um <code>uuidv4()</code> novo — a tela que acabou de falar redesenhava a própria frase.</td></tr>
+</tbody></table>
+
+<h3 class="warn">Introduzidos durante a execução e pegos antes do merge</h3>
+<table class="table table-sm table-dark">
+<tbody>
+<tr><td>Validador de mermaid era denylist</td><td><strong>27 de 51</strong> payloads maliciosos passavam.
+Um <code>;</code> derrubava o cheque de <code>click</code>; <code>#106;</code> — o escape do próprio mermaid —
+reconstruía <code>javascript:</code> DEPOIS da validação. Virou normalização + allowlist. Agora
+<strong>0 de 18</strong> passam, e diagramas legítimos foram de 17/24 para 24/24 aceitos.</td></tr>
+<tr><td>Injeção pela memória importada</td><td>Um arquivo importado podia setar <code>meta.rolling</code> e
+<strong>assumir o <code>resume.summary</code></strong> — que semeia o system prompt da sessão de voz.</td></tr>
+<tr><td>Import destrutivo</td><td>Importar por cima apagava tudo em silêncio, com 201 e sem backup:
+<code>events 3 → 1</code>, reflexão perdida. Agora é 409 por default, <code>?overwrite=true</code> para consentir.</td></tr>
+<tr><td>67–75% do custo perdido</td><td>Cancelamento e timeout descartavam o gasto dos pensadores em voo.
+Medido: <code>$0,004410</code> gasto vs <code>$0,001470</code> registrado. Hoje: perda <code>$0,00</code>.</td></tr>
+<tr><td>Processo do backend podia morrer</td><td><code>recordDeepThinkEvent</code> era chamado com
+<code>void</code> e só o write estava no <code>try</code>. Node 22 mata o processo numa unhandled rejection.
+Probe: <strong>8 → 0</strong>.</td></tr>
+<tr><td>Poda descartava as reflexões</td><td>Justamente o que você pediu para guardar. Invertida a
+prioridade: reflexões sobrevivem verbatim, turnos comuns é que dobram em prosa.</td></tr>
+<tr><td>Reflexões e diagramas sem teto</td><td>40 mil diagramas → arquivo de 23,55 MB e
+<strong>117 ms por turno falado</strong>. Com teto: 0,03 MB e 0 ms.</td></tr>
+</tbody></table>
+
+<h3 class="warn">Pré-existentes, encontrados e NÃO corrigidos (fora de escopo)</h3>
+<ul>
+<li><strong>A luz do microfone fica acesa.</strong> Se o handshake falhar depois de <code>getUserMedia</code>
+dar certo, o <code>MediaStream</code> vaza até você fechar a aba. ~6 linhas, mas em código que uma revisão
+certificou byte-idêntico.</li>
+<li><code>MicButton.tsx:57</code> usa <code>text-destructive-foreground</code>, e o tema nunca define
+<code>--color-destructive-foreground</code> — zero ocorrências no CSS buildado.</li>
+<li>Uma regra CSS morta nasce de um <em>comentário</em> em <code>mobile-content.ts:48</code>: o scanner do
+Tailwind v4 lê fonte como texto puro. Inerte, mas são bytes mortos.</li>
+</ul>
+</div>
+
+<!-- ───────────── CELULAR ───────────── -->
+<div class="tab-pane fade" id="t4">
+<h3>Por que não bastava expor a porta</h3>
+<p><code class="bad">getUserMedia</code> só funciona em <code>localhost</code> ou <strong>HTTPS</strong>.
+<code>192.168.0.0/16</code> não é <em>potentially trustworthy</em> pelo W3C. E em contexto inseguro
+<code>navigator.mediaDevices</code> é <strong><code>undefined</code></strong> — o celular receberia um
+<code>TypeError</code> cru, não um pedido de permissão.</p>
+
+<h3>O que NÃO foi feito, de propósito</h3>
+<p>O backend <strong>continua em <code>127.0.0.1</code></strong>. O proxy do Vite roda no processo Node do
+host, então expor só a 5173 basta:</p>
+<pre>ss -ltnp                              →  127.0.0.1:3001   e   *:5173
+http://192.168.15.68:3001/api/health  →  000 (recusado)
+https://192.168.15.68:5173/api/health →  200
+Host forjado                          →  403</pre>
+
+<h3>Passo a passo</h3>
+<pre># uma vez, na máquina que hospeda
+sudo apt install mkcert libnss3-tools   # ou brew / choco
+mkcert -install
+
+# sempre
+bash dev.sh        # imprime a URL da LAN e um QR</pre>
+<p><strong>Android (Chrome):</strong> abrir <code>/rootCA.pem</code> → Configurações → Segurança →
+Criptografia e credenciais → Instalar um certificado → <strong>Certificado CA</strong>.</p>
+<p><strong>iOS (Safari) — dois passos, e o segundo é o que todo mundo esquece:</strong></p>
+<ol>
+<li>abrir <code>/rootCA.pem</code> → permitir → Ajustes → Geral → VPN e Gerenciamento de Dispositivos →
+Perfil Baixado → Instalar</li>
+<li><strong>Ajustes → Geral → Sobre → Ajustes de Confiança do Certificado → ligar "mkcert"</strong>.
+Sem isso o Safari continua recusando e <strong>não dá mensagem nenhuma</strong>.</li>
+</ol>
+<p class="bad"><strong>Nunca compartilhe <code>rootCA-key.pem</code></strong> — ele permite interceptar
+qualquer requisição segura da sua máquina.</p>
+
+<h3>Quem entra na URL</h3>
+<p>A URL <em>contém</em> a chave (<code>?k=…</code>), trocada uma vez por cookie. Sem ela, qualquer um no
+wifi listaria todas as suas conversas, apagaria memórias, navegaria <code>~/Projects</code>, spawnaria
+agentes <code>pi</code> e <strong>cunharia client secrets da OpenAI na sua conta</strong>.</p>
+
+<h3>Duas pessoas na mesma conversa</h3>
+<p>Um microfone por vez. O portão é o <code>POST /api/realtime/session</code> devolvendo <strong>409
+nomeando o detentor</strong> — é o único passo server-side do handshake WebRTC. Sem tomada forçada: quem
+está assistindo pede, quem está com o microfone passa. O heartbeat é a própria conexão SSE, com 15 s de
+graça para o celular que caiu.</p>
+<p class="text-secondary">Invariante provado <em>estruturalmente</em>, nos dois lados: o stream ao vivo não
+importa nada que fale com o modelo. Ele não tem para onde falar.</p>
+</div>
+
+<!-- ───────────── PENDÊNCIAS ───────────── -->
+<div class="tab-pane fade" id="t5">
+<h3 class="warn">O que ficou de fora, e por quê</h3>
+<table class="table table-sm table-dark">
+<thead><tr><th>Item</th><th>Estado</th></tr></thead>
+<tbody>
+<tr><td><strong>Área para escolher a IA de cada pensador</strong></td>
+<td>Fundações prontas e mergeadas — <code>completeText</code> com usage, <code>priceWithRate</code>,
+os tipos <code>ThinkerRoster</code>/<code>ModelChoice</code> e o portão de chaves dos três provedores.
+<strong>Faltam</strong>: os adaptadores (Responses × Chat Completions), o store do roster, o motor
+consumindo os slots, e a tela. Especificação completa e decidida está no plano desta execução.</td></tr>
+<tr><td>UI de presença (quantas pessoas, passar o microfone)</td>
+<td>O hook JÁ expõe <code>viewers</code>, <code>floor</code>, <code>isFloorHolder</code>,
+<code>floorRequest</code>, <code>requestFloor/grantFloor/releaseFloor</code>. Ninguém lê ainda.
+O stream, o gate do microfone e o histórico compartilhado funcionam sem isso.</td></tr>
+<tr><td>Sidebar/CostPanel/VoiceSettings no mobile</td>
+<td>Vivem nas gavetas com overrides aplicados de fora pela casca. Funcionam; não ganharam classes
+responsivas próprias.</td></tr>
+<tr><td>Documentação e skills</td>
+<td><code>README.md</code> ganhou a seção do celular. <code>AGENTS.md</code> e o catálogo de skills não
+foram atualizados com os subsistemas novos.</td></tr>
+</tbody></table>
+
+<h3 class="bad">Decisão que é sua</h3>
+<p>A migração Electron não commitada trocou <code>npm run dev</code> para <code>electron-vite dev</code>, e
+esse config <strong>não tem <code>server.proxy</code></strong>. Em produção o <code>loadFile</code> dá origin
+<code>file://</code>, então todo <code>/api/...</code> vira <code>file:///api/...</code>. O caminho
+browser/LAN e o caminho Electron divergiram. <strong>Quem quiser LAN roda <code>bash dev.sh</code>.</strong>
+Nada sob <code>electron/</code> foi tocado — é seu trabalho não commitado.</p>
+
+<h3>O que não pôde ser verificado aqui</h3>
+<ul>
+<li><strong>Nenhum navegador de verdade.</strong> Não há jsdom no frontend, e instalar seria dependência
+nova. O que está provado por teste são as decisões puras; o que está provado pelo build é que o CSS existe.
+A geometria em 360px precisa de um aparelho na mão.</li>
+<li><code>mkcert</code> não está instalado nesta máquina — o caminho de sucesso foi provado com um fake que
+expõe a mesma CLI e gera cert real via openssl. A cadeia de confiança precisa de um celular.</li>
+</ul>
+</div>
+
+<!-- ───────────── COMO FOI FEITO ───────────── -->
+<div class="tab-pane fade" id="t6">
+<h3>O ciclo, repetido 26 vezes</h3>
+<pre>worktree nomeada  →  construir  →  revisor adversarial de contexto ZERO
+                  →  agente de fix  →  squash-merge  →  gate  →  limpar</pre>
+<p>Cada revisor recebia só o diff e a tarefa original, com uma única missão: <strong>refutar</strong>.
+Vários rodaram mutação (quebrar o código e exigir que um teste ficasse vermelho), probes em Chromium
+headless com a rede observada, e servidores reais em vez de mocks.</p>
+
+<h3>Contenção</h3>
+<table class="table table-sm table-dark">
+<tbody>
+<tr><td>Modo</td><td><code>normal</code> · raiz-de-mundo <code>/home/ondokai/Projects/explainer</code> · branch <code>main</code></td></tr>
+<tr><td>Worktrees desta execução</td><td>26 criadas, 26 removidas, branches arquivados em <code>refs/do-archive/</code></td></tr>
+<tr><td>Worktrees de terceiros</td><td>0 — nenhuma tocada</td></tr>
+<tr><td>Seu trabalho não commitado</td><td>Preservado. <code>App.tsx</code> passou por 3 ciclos de
+stash/merge/pop e continua com as mesmas 14 inserções, byte a byte. Backups em <code>.deep-orchestrator/</code>.</td></tr>
+</tbody></table>
+
+<h3>Uma interrupção</h3>
+<p>Três agentes morreram por limite de sessão da API, todos com trabalho <strong>não commitado</strong>.
+Foi preservado como WIP antes de qualquer outra ação e retomado de onde parou — nenhuma linha perdida.</p>
+
+<h3>Coisas que os revisores me refutaram</h3>
+<ul>
+<li>Eu disse que as três chaves de provedor eram "exatamente as que <code>credits.ts</code> já lê".
+<strong>Errado para OpenAI</strong>: <code>credits.ts</code> lê <code>OPENAI_ADMIN_KEY</code>, que
+não chama modelo.</li>
+<li>Eu assumi que a LAN exigiria <code>0.0.0.0</code>. <strong>Não exige</strong> — o proxy do Vite resolve
+no host, e o backend fica em loopback.</li>
+<li>Eu disse que o desktop tinha três colunas. <strong>Tem duas</strong> — os painéis são children do
+<code>&lt;Sidebar&gt;</code>.</li>
+<li>Eu mandei gatear só <code>deep_think</code> no Brave. Um <code>grep</code> provou que
+<code>check_deep_think</code> sozinho é ferramenta morta que manda o modelo disparar uma rodada com uma
+ferramenta que ele não tem.</li>
+</ul>
+</div>
+
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
