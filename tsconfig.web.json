@@ -9,6 +9,15 @@
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
+    // @electron-toolkit/tsconfig sets moduleResolution "node" (node10), which
+    // predates the package `exports` map and so cannot see types published only
+    // through it — motion-plus/animate-view resolves at runtime and raises
+    // TS2307 here. Vite is the only thing that ever resolves these sources, so
+    // "bundler" is both the fix and the truthful description of the loader.
+    // "module" is pinned alongside it because "bundler" is rejected under any
+    // module setting older than es2015.
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
       "@/*": ["frontend/src/*"],

@@ -10,6 +10,13 @@
   "compilerOptions": {
     "composite": true,
     "types": ["electron-vite/node"],
+    // Same reason as tsconfig.web.json: the inherited node10 resolution ignores
+    // the `exports` map that @tailwindcss/vite publishes its types behind.
+    // electron-vite bundles these sources to ESM, so "bundler" matches the
+    // loader that actually reads them; "module" is pinned because "bundler" is
+    // rejected under any module setting older than es2015.
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"]

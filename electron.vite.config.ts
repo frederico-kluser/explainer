@@ -2,16 +2,6 @@ import { resolve } from 'path';
 import { readFileSync } from 'fs';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
-// @tailwindcss/vite ships its types only behind the package `exports` map
-// (dist/index.d.mts), which the node10 `moduleResolution` inherited from
-// @electron-toolkit/tsconfig cannot follow — tsc raises TS2307 for a module
-// that loads fine at runtime, because electron-vite bundles this file to .mjs
-// and the ESM loader does read `exports`. Importing dist/index.mjs directly
-// silences tsc and then dies with ERR_PACKAGE_PATH_NOT_EXPORTED, so the
-// suppression is the honest fix. @ts-expect-error, not @ts-ignore: once
-// tsconfig.node.json moves to `bundler` resolution tsc reports the directive
-// as unused, and it is removed rather than left behind outliving its reason.
-// @ts-expect-error see above
 import tailwindcss from '@tailwindcss/vite';
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'));
@@ -74,12 +64,23 @@ export default defineConfig(({ mode }) => {
       root: resolve(__dirname, 'frontend'),
       build: {
         sourcemap: !isProd,
+        // electron-vite defaults the renderer to `minify: false` — unlike plain
+        // `vite build`, which is what frontend/vite.config.ts gets. Left alone,
+        // the packaged desktop app shipped the renderer as raw source while the
+        // browser build of the same files was minified, and the header comment
+        // above said otherwise. Same value as main/preload so the three agree.
+        minify: isProd ? 'esbuild' : false,
         rollupOptions: {
           input: {
             index: resolve(__dirname, 'frontend/index.html')
           }
         }
       },
+      // Vite feeds this block to the minifier as well as to the transform, so
+      // `keepNames` is what stops esbuild renaming the classes and functions
+      // whose `.name` is read at runtime — `classifyMicrophoneError` in
+      // frontend/src/hooks/useRealtimeSession.ts matches on `err.name`.
+      esbuild: { keepNames: true },
       resolve: {
         alias: {
           '@': resolve(__dirname, 'frontend/src'),
