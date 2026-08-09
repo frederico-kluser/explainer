@@ -727,14 +727,7 @@ export function App() {
         {/* Transcript */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 md:p-4">
           {conversationItems.length > 0 ? (
-            // `ChatBubble` caps a bubble at 80% of the column and belongs to
-            // another wave, so the compact width is set from out here, through
-            // the `data-role` the bubble already carries. At 360px, 80% throws
-            // away 72px of a screen that has none to spare.
-            <div
-              className="mx-auto max-w-3xl space-y-4 [&_[data-role]>div]:max-w-[92%] md:[&_[data-role]>div]:max-w-[80%]"
-              aria-live="polite"
-            >
+            <div className="mx-auto max-w-3xl space-y-4" aria-live="polite">
               {conversationItems.map((item) => {
                 // Full width, in the flow, and not inside a ChatBubble: a
                 // drawing is the answer to the turn that asked for it, and the
@@ -818,10 +811,7 @@ export function App() {
           {/* Reversed on a phone: the 64px microphone is the one control that
               has to be reachable one-handed, and that is the bottom right. */}
           <div className="mx-auto flex max-w-3xl flex-row-reverse items-center gap-3 md:flex-row md:gap-4">
-            {/* The caption under the button lives inside `MicButton`, another
-                wave's file, so the compact layout hides it from out here: on a
-                phone it only makes the bar taller. */}
-            <div className="shrink-0 [&>div>span]:hidden md:[&>div>span]:block">
+            <div className="shrink-0">
               <MicButton
                 state={micState}
                 onConnect={() => void connect()}
