@@ -13,7 +13,7 @@
 // nothing looks empty, and the money silently reads $0.
 
 import { OpenAIError } from "../openai.js";
-import { providerKey } from "./keys.js";
+import { providerKey, providerKeyPresent } from "./keys.js";
 import { isoFromEpochSeconds } from "./openai-responses.js";
 import type { ThinkerProvider } from "../../types/thinker-roster.js";
 import type {
@@ -385,7 +385,23 @@ export function createOpenAIChatAdapter(config: ChatAdapterConfig): ProviderAdap
           method: "GET",
           headers: {
             ...extraHeaders,
-            Authorization: `Bearer ${providerKey(config.provider)}`,
+            // OMITTED, not empty, when no key is configured — and that is the
+            // whole point. `GET https://openrouter.ai/api/v1/models` answers
+            // 200 to a request carrying no authentication at all (measured: 400
+            // models, no headers), so the catalogue is readable before anyone
+            // has typed a key. `providerKey` THROWS a 500 when the key is
+            // missing, so asking for it unconditionally emptied the model
+            // picker on exactly the machine that still needed to be set up —
+            // the one about to ask the operator for that key.
+            //
+            // The header still goes out whenever there IS one: OpenRouter rate
+            // limits an anonymous caller first, and DeepSeek's catalogue
+            // requires the key outright. `Bearer ` with an empty key would be
+            // worse than no header, because the 401 it earns reads like a
+            // revoked key rather than a missing one.
+            ...(providerKeyPresent(config.provider)
+              ? { Authorization: `Bearer ${providerKey(config.provider)}` }
+              : {}),
           },
         },
         { timeoutMs: 30_000, signal },
