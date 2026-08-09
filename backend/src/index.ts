@@ -16,6 +16,7 @@ import sourcesRouter from "./routes/sources.js";
 import agentsRouter from "./routes/agents.js";
 import costsRouter, { creditsRouter } from "./routes/costs.js";
 import browseRouter from "./routes/browse.js";
+import providerKeysRouter from "./routes/provider-keys.js";
 import { createPairRouter } from "./routes/pair.js";
 import { attachDeepThinkToMemory } from "./services/memory-recorder.js";
 import { attachListenOutcome } from "./services/listen.js";
@@ -117,6 +118,11 @@ app.use("/api/agents", agentsRouter);
 app.use("/api/costs", costsRouter);
 // Holding the key buys a conversation, not a look at the owner's wallet.
 app.use("/api/credits", loopbackOnly, creditsRouter);
+// Loopback for the same reason, one step stronger: this route ACCEPTS a
+// credential. A guest on the house wifi holding the access key must not be able
+// to plant an API key that the owner's next call then spends money on, and the
+// owner of the machine already gets in without one.
+app.use("/api/provider-keys", loopbackOnly, providerKeysRouter);
 app.use("/api/browse", browseRouter);
 
 // --- 404 for unknown API routes (JSON, not Express' HTML default) ---
