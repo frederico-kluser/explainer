@@ -5,6 +5,12 @@ dist/
 *.log
 .DS_Store
 
+# Certificado de desenvolvimento da LAN, emitido por scripts/dev-cert.mjs.
+# Vale só para os IPs desta máquina neste momento — e lan-key.pem é uma chave
+# privada. Cada máquina emite o seu ao rodar `npm run dev`.
+.certs/
+frontend/public/rootCA.pem
+
 # Voice assistant data — stored at $XDG_DATA_HOME/voice-assistant
 # (typically ~/.local/share/voice-assistant on Linux)
 

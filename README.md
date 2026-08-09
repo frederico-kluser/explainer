@@ -41,7 +41,82 @@ Ctrl+C derruba os dois.
 **Pré-requisitos:** Node.js 22+. Opcionais: `git` (para clonar repositórios do
 GitHub), `rg` (busca mais rápida; cai para `grep` se faltar), `pi`
 (`npm i -g @mariozechner/pi-coding-agent`, para os agentes de código),
-`surf-research-skill` (fallback de busca na web).
+`surf-research-skill` (fallback de busca na web), `mkcert` (para abrir o app do
+celular — veja abaixo).
+
+## Usar do celular pela rede
+
+Dá para abrir o Explainer no celular, pelo wifi de casa, com o servidor rodando
+no computador. Tem um porém que custa uma tarde para descobrir sozinho: **o
+navegador só entrega o microfone em um contexto seguro** — HTTPS ou `localhost`.
+Um endereço como `http://192.168.0.10:5173` abre a página normalmente e o botão
+do microfone simplesmente não funciona, sem mensagem de erro nenhuma.
+
+Por isso o `npm run dev` emite um certificado local para o IP da máquina. Quem
+faz isso é o [`mkcert`](https://github.com/FiloSottile/mkcert), que cria uma
+autoridade certificadora só sua; instalando essa autoridade no celular, ele
+passa a confiar no endereço da sua máquina.
+
+### 1. No computador, uma vez
+
+```bash
+sudo apt install mkcert libnss3-tools     # Debian/Ubuntu/Pop!_OS
+# brew install mkcert nss                 # macOS
+# choco install mkcert                    # Windows
+mkcert -install
+```
+
+### 2. Rode o app
+
+```bash
+npm run dev
+```
+
+O `scripts/dev-cert.mjs` roda antes dos servidores: descobre os IPs da máquina,
+emite `.certs/lan.pem` se ainda não existir **ou se o IP mudou** (o endereço vem
+do DHCP e muda sozinho), copia a autoridade para `frontend/public/rootCA.pem`, e
+imprime no terminal a URL da LAN junto com um QR code para apontar a câmera.
+
+Sem `mkcert` instalado nada quebra: o terminal explica como instalar e o Vite
+sobe em HTTP. O app continua funcionando em `http://localhost:5173` — só o
+celular fica sem microfone.
+
+### 3. No celular, uma vez: instalar a autoridade
+
+O celular precisa estar no **mesmo wifi**. Abra a URL do QR code; da primeira vez
+ele vai recusar o certificado. Baixe a autoridade em `/rootCA.pem` (por exemplo
+`https://192.168.0.10:5173/rootCA.pem`) e instale:
+
+**Android (Chrome)**
+
+1. Abra `/rootCA.pem` — o arquivo é baixado.
+2. **Configurações → Segurança → Criptografia e credenciais → Instalar um
+   certificado → Certificado CA**.
+3. Escolha o arquivo baixado e confirme o aviso.
+
+**iOS (Safari) — são DOIS passos, e o segundo é o que todo mundo esquece**
+
+1. Abra `/rootCA.pem` e permita o download do perfil. Depois vá em
+   **Ajustes → Geral → VPN e Gerenciamento de Dispositivos → Perfil Baixado →
+   Instalar**.
+2. **Ajustes → Geral → Sobre → Ajustes de Confiança do Certificado** e ligue o
+   toggle **mkcert**.
+
+Sem o passo 2 o Safari **continua recusando** a conexão e não mostra nada que
+explique o motivo — o perfil aparece instalado e mesmo assim não vale para TLS.
+
+Feito isso, recarregue a URL: cadeado fechado, microfone liberado.
+
+> **Nunca compartilhe o `rootCA-key.pem`.** Ele fica no diretório que
+> `mkcert -CAROOT` imprime, e o README do mkcert é direto sobre o que ele
+> significa: *"gives complete power to intercept secure requests from your
+> machine"*. Quem tiver essa chave consegue forjar certificado para qualquer
+> site que o seu celular ou o seu computador visite. O que se leva para o
+> celular é só o `rootCA.pem`, que é público.
+
+O backend (3001) continua **só em loopback**. O celular fala com o Vite, e é o
+Vite, rodando no computador, que repassa `/api` para o backend — quem está na
+rede nunca alcança a porta 3001 diretamente.
 
 ## Variáveis de ambiente
 
@@ -160,8 +235,16 @@ menos um material. Adicione um no seletor.
 lugares, aponte `EXPLAINER_REPO_ROOTS` (separado por dois-pontos).
 
 **O navegador não pede o microfone** — Chrome e Firefox só liberam
-`getUserMedia` em `localhost` ou HTTPS. `http://127.0.0.1:5173` também vale;
-um IP de rede local, não.
+`getUserMedia` em `localhost` ou HTTPS. `http://127.0.0.1:5173` também vale.
+Um IP de rede local vale **com HTTPS**: é para isso que serve o certificado de
+`npm run dev` — veja "Usar do celular pela rede". Em `http://192.168.x.x:5173`,
+sem certificado, o botão não funciona e o navegador não explica por quê.
+
+**O celular diz que a conexão não é privada** — a autoridade local ainda não
+está instalada nele, ou o IP da máquina mudou depois que o certificado foi
+emitido. Rode `npm run dev` de novo (ele reemite sozinho quando o IP muda) e, no
+iPhone, confira o segundo passo: **Ajustes → Geral → Sobre → Ajustes de
+Confiança do Certificado**, com o toggle **mkcert** ligado.
 
 **"A OpenAI recusou a conexão (401)"** — o `client_secret` expirou (dura 10
 minutos) ou a chave não tem acesso ao modelo realtime. Reconecte; se persistir,
