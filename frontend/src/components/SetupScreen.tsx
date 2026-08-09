@@ -1,4 +1,5 @@
 import {
+  Component,
   useCallback,
   useEffect,
   useRef,
@@ -32,14 +33,103 @@ const OPENAI_KEYS_URL = "https://platform.openai.com/api-keys";
 // main app takes over — a scan pause for the eye, not a motion timing.
 const AUTO_CONTINUE_MS = 1000;
 
+// How long the first settings read may take before the app opens without it.
+// `settings:get` is a local disk read behind a Zod-validated channel, so this
+// is far past its worst case; what it really covers is an `ipcRenderer.invoke`
+// on a channel the main process never registered, which never settles at all —
+// neither resolving nor rejecting. Waiting on that forever is how the skeleton
+// became the entire application, so the wait is bounded and the app wins.
+const SETTINGS_READ_TIMEOUT_MS = 4000;
+
 type Phase =
   | "loading" // reading the settings store through IPC
-  | "empty" // no valid key saved — show the form
+  | "empty" // no key saved — show the form
   | "validating" // key being checked against the provider
   | "invalid" // key failed validation (or the call to validate it failed)
   | "success" // key saved — checkmark, then auto-advance
   | "error" // the initial settings read failed — error card with retry
-  | "configured"; // a valid key already exists — checkmark, then auto-advance
+  | "configured"; // a key already exists — checkmark, then auto-advance
+
+/**
+ * Whether `window.api` is a bridge this screen can actually use.
+ *
+ * `isElectron` alone is not enough. `contextBridge.exposeInMainWorld` runs
+ * inside a `try` in the preload, so a failure partway through leaves the flag
+ * on the window without the calls behind it — and the old gate, which read
+ * only the flag, then mounted a screen whose first `settings.get()` throws
+ * over an app the user could no longer reach. A partial bridge is treated as
+ * no bridge, which is the browser path: render the app.
+ *
+ * Every call this screen makes is listed, `app.openExternal` included. Leaving
+ * it out let a bridge through that the screen then dereferenced on the "Onde
+ * encontro minha chave?" button — `Cannot read properties of undefined` inside
+ * a click handler, which the error boundary above only catches during render.
+ */
+export function hasSetupBridge(
+  candidate: unknown,
+): candidate is ExplainerElectronApi {
+  if (typeof candidate !== "object" || candidate === null) return false;
+  const api = candidate as Partial<ExplainerElectronApi>;
+  return (
+    api.isElectron === true &&
+    typeof api.settings?.get === "function" &&
+    typeof api.settings?.saveApiKey === "function" &&
+    typeof api.settings?.validateApiKey === "function" &&
+    typeof api.app?.openExternal === "function"
+  );
+}
+
+/** `window.api` as this renderer found it, or `undefined` — in a browser, and
+ *  in any environment without a `window` at all. */
+export function electronBridge(): ExplainerElectronApi | undefined {
+  if (typeof window === "undefined") return undefined;
+  return hasSetupBridge(window.api) ? window.api : undefined;
+}
+
+export interface SetupGateInput {
+  /** The preload bridge as the renderer found it. Deliberately `unknown`: the
+   *  point of the check is that the declared type may be a lie. */
+  bridge: unknown;
+  /** The user already finished or skipped the setup. */
+  dismissed: boolean;
+}
+
+/**
+ * The one decision that can hide the whole application, written once so the
+ * caller and the test read the same rule. Every answer other than "a usable
+ * bridge and an unanswered question" renders the app: the setup is optional,
+ * the app is not.
+ */
+export function shouldShowSetup({ bridge, dismissed }: SetupGateInput): boolean {
+  return !dismissed && hasSetupBridge(bridge);
+}
+
+// Whether the setup was already finished or skipped in this window.
+//
+// It lives in the module and not in the settings store because there is no
+// honest place for it there: `settings:set` accepts `language` and `theme` and
+// drops everything else (`electron/main/ipc/settings-handlers.ts`), and opening
+// a second store next to the encrypted one is a bigger decision than a gate.
+// So the assumption is explicit — the answer survives a React remount, which is
+// what re-asked the question three times in a row, and not a reload. A reload
+// with a key saved answers itself through `configured`; a reload after a skip
+// asks once more, which is the honest cost of not having a field to write to.
+let dismissedThisSession = false;
+
+/** Whether the setup has already been answered in this window. */
+export function isSetupDismissed(): boolean {
+  return dismissedThisSession;
+}
+
+/** Records that the setup was finished or skipped. */
+export function markSetupDismissed(): void {
+  dismissedThisSession = true;
+}
+
+/** Tests only: the flag outlives any component, so a suite has to clear it. */
+export function resetSetupDismissed(): void {
+  dismissedThisSession = false;
+}
 
 export interface SetupScreenProps {
   onComplete: () => void;
@@ -53,15 +143,59 @@ export interface SetupScreenProps {
 /**
  * First-launch key setup for the Electron build.
  *
- * `window.api` exists only when the preload script injected it, so a plain
- * browser renders `children` (or nothing) and the backend keeps using its
- * environment key as before. Inside Electron the screen reads the settings
- * store, shows the form when no valid key is saved, and calls `onComplete`
- * once one is.
+ * A usable `window.api` exists only when the preload script injected the whole
+ * bridge, so a plain browser — and a half-injected one — renders `children`
+ * (or nothing) and the backend keeps using its environment key as before.
+ * Inside Electron the screen reads the settings store, shows the form when no
+ * key is saved, and calls `onComplete` once one is.
+ *
+ * Every exit from this screen goes through `finish`, so "the user answered" is
+ * recorded no matter which door was used: the saved key, the form, the skip
+ * link, the read timeout, or the screen crashing.
  */
 export function SetupScreen({ onComplete, children }: SetupScreenProps) {
-  if (!window.api?.isElectron) return children ?? null;
-  return <SetupScreenInner onComplete={onComplete} />;
+  const finish = useCallback(() => {
+    markSetupDismissed();
+    onComplete();
+  }, [onComplete]);
+
+  // `electronBridge()` and not `window.api` directly: this component is also
+  // mounted by tests and could one day be rendered without a `window` at all,
+  // and a gate that throws is the blankest screen of the lot.
+  if (!electronBridge()) return children ?? null;
+  return (
+    <SetupBoundary onFail={finish}>
+      <SetupScreenInner onComplete={finish} />
+    </SetupBoundary>
+  );
+}
+
+/**
+ * Turns a crash inside the setup screen into an open app.
+ *
+ * Without it React unmounts the whole tree on an error thrown during render,
+ * and the window the user is left with is blank and has no way back — the exact
+ * dead end this gate must never be. Handing over to `onFail` costs the setup and
+ * keeps the app, which is the right trade in both directions.
+ */
+export class SetupBoundary extends Component<
+  { onFail: () => void; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("[SetupScreen] crashed — opening the app without it:", error);
+    this.props.onFail();
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
 }
 
 function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
@@ -85,45 +219,81 @@ function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
     phaseRef.current = phase;
   }, [phase]);
 
+  // `onComplete` through a ref so `complete` never changes identity. The parent
+  // passes an inline arrow and re-renders on its own schedule — conversations
+  // loading, credits arriving, a toast expiring — and with `onComplete` in the
+  // dependency array every one of those re-renders cancelled and restarted the
+  // auto-advance timer below. A parent that re-renders faster than the timeout
+  // postpones it forever, which is a checkmark that never becomes the app.
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
   const transition = useMotionUITransition("gentle");
 
   const complete = useCallback(() => {
     if (completedRef.current) return;
     completedRef.current = true;
-    onComplete();
-  }, [onComplete]);
+    onCompleteRef.current();
+  }, []);
 
-  // Reads the store on mount (and on retry). A saved and validated key skips
-  // the form; everything else — no key, an unvalidated key, a failed read —
-  // falls through to the states below.
+  // Reads the store on mount (and on retry). A saved key skips the form; every
+  // other outcome — no key, a refused read, a main process that never answers —
+  // lands on a state the user can leave.
   useEffect(() => {
-    let cancelled = false;
+    let settled = false;
+
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      complete();
+    }, SETTINGS_READ_TIMEOUT_MS);
+
+    const finish = (apply: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      apply();
+    };
+
     void (async () => {
       try {
         const res = await api.settings.get();
-        if (cancelled) return;
         if (!res.success) {
-          setPhase("error");
-          setError(res.error ?? "Não foi possível ler as configurações.");
+          finish(() => {
+            setPhase("error");
+            setError(res.error ?? "Não foi possível ler as configurações.");
+          });
           return;
         }
         const saved = res.data?.apiKeys?.openai;
-        if (saved?.key && saved.validationStatus === "valid") {
-          setPhase("configured");
-        } else {
-          setPhase("empty");
-        }
+        finish(() => {
+          // A present key that is not known-bad is a configured app. Demanding
+          // `validationStatus === "valid"` locked the user out of their own
+          // app: `settings:save-api-key` persists with `'idle'` and nothing in
+          // the main process ever writes `'valid'`, so a key validated against
+          // the provider and saved one second earlier came back as unconfigured
+          // on the next launch, and on every launch after that.
+          setPhase(
+            saved?.key && saved.validationStatus !== "invalid"
+              ? "configured"
+              : "empty",
+          );
+        });
       } catch {
-        if (!cancelled) {
+        finish(() => {
           setPhase("error");
           setError("Não foi possível ler as configurações.");
-        }
+        });
       }
     })();
+
     return () => {
-      cancelled = true;
+      settled = true;
+      window.clearTimeout(timer);
     };
-  }, [api, checkAttempt]);
+  }, [api, checkAttempt, complete]);
 
   const retry = useCallback(() => {
     setError(null);
@@ -190,13 +360,10 @@ function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
   );
 
   const openKeysHelp = useCallback(() => {
-    // Electron opens the system browser; the window.open fallback exists so
-    // the screen stays testable without the bridge.
-    if (api.app.openExternal) {
-      void api.app.openExternal(OPENAI_KEYS_URL);
-    } else {
-      window.open(OPENAI_KEYS_URL, "_blank", "noopener,noreferrer");
-    }
+    // No fallback: this screen only ever mounts behind `hasSetupBridge`, which
+    // now checks this exact call. A `window.open` alternative here would be a
+    // second opinion on whether the bridge is usable, and the two would drift.
+    void api.app.openExternal(OPENAI_KEYS_URL);
   }, [api]);
 
   const inputClasses =
@@ -205,7 +372,7 @@ function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
   return (
     <div className="dark flex h-screen items-center justify-center overflow-hidden bg-background p-4 text-foreground">
       {phase === "loading" ? (
-        <LoadingState />
+        <LoadingState onSkip={complete} />
       ) : phase === "error" ? (
         <motion.div
           initial={{ opacity: 0, y: 24 }}
@@ -390,8 +557,14 @@ function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-/** Centered skeleton previewing the card while the store is being read. */
-function LoadingState() {
+/**
+ * Centered skeleton previewing the card while the store is being read.
+ *
+ * The skip link is on it because `SETTINGS_READ_TIMEOUT_MS` is four seconds of
+ * bones with no explanation, and a user who does not want the setup at all
+ * should not have to wait out a read to say so.
+ */
+function LoadingState({ onSkip }: { onSkip: () => void }) {
   return (
     <div className="w-full max-w-md">
       <div className="flex flex-col items-center gap-5">
@@ -407,6 +580,15 @@ function LoadingState() {
       <p className="sr-only" role="status">
         Verificando as configurações…
       </p>
+      <div className="mt-6 flex justify-center">
+        <button
+          type="button"
+          onClick={onSkip}
+          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Pular configuração
+        </button>
+      </div>
     </div>
   );
 }

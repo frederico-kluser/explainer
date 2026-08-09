@@ -34,6 +34,7 @@
     "@typescript-eslint/parser": "^8.32.0",
     "@vitejs/plugin-react": "^4.4.0",
     "eslint": "^9.24.0",
+    "happy-dom": "^20.11.2",
     "shadcn": "^4.16.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.8.0",

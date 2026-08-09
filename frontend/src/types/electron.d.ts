@@ -5,6 +5,12 @@
  * page loads. A plain browser never sees it, so the member is optional (`api?`
  * on `Window`) and `isElectron: true` is what lets the app tell the two worlds
  * apart at runtime.
+ *
+ * This file describes the bridge as the preload *intends* to inject it. What
+ * actually arrives is whatever survived `contextBridge.exposeInMainWorld` —
+ * a preload that threw halfway leaves a partial object behind, and the types
+ * here cannot see that. `hasSetupBridge` in `components/SetupScreen.tsx` is
+ * the runtime half of the contract, and it is the one the gate trusts.
  */
 
 export {};
@@ -15,12 +21,28 @@ declare global {
   }
 }
 
+/** Status of a key's last check against its provider. */
+export type ApiKeyValidationStatus = "idle" | "valid" | "invalid";
+
+/**
+ * A persisted key. `validationStatus` is `"idle"` for a key the store has never
+ * been told about — including one the user just validated in this screen, since
+ * `settings:save-api-key` persists with `'idle'`
+ * (`electron/main/ipc/settings-handlers.ts`). Only `"invalid"` is a statement
+ * that the key is known bad.
+ */
+export interface ApiKeyConfig {
+  key: string;
+  validationStatus: ApiKeyValidationStatus;
+  lastValidated?: number;
+}
+
 /** Settings persisted by the Electron main process (electron-store). */
 export interface AppSettings {
   version: number;
   apiKeys: {
-    openai: { key: string; validationStatus: "idle" | "valid" | "invalid" };
-    openaiAdmin: { key: string; validationStatus: "idle" | "valid" | "invalid" };
+    openai: ApiKeyConfig;
+    openaiAdmin: ApiKeyConfig;
   };
   language: "pt-BR" | "en";
   theme: "light" | "dark" | "system";
@@ -48,11 +70,17 @@ export interface ElectronSettingsApi {
     key: string,
     provider?: string,
   ) => Promise<IpcResponse<ApiKeyValidation>>;
+  /** Accepts `language` and `theme` only — every other field is dropped by the
+   *  Zod schema on the main side, so this is not a place to park app state. */
   set: (patch: object) => Promise<IpcResponse<AppSettings>>;
 }
 
 export interface ElectronAppApi {
   platform: string;
+  /** Required, exactly as `electron/preload/index.d.ts` declares it: the
+   *  preload exposes it unconditionally, so a bridge without it is a preload
+   *  that broke halfway. `hasSetupBridge` refuses that bridge rather than
+   *  letting this type be softened to describe the wreckage. */
   openExternal: (url: string) => Promise<IpcResponse>;
 }
 

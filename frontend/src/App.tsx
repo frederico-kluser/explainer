@@ -9,7 +9,12 @@ import {
   Toast,
 } from "@/components/motion-ui/toast-stack";
 import { Skeleton } from "@/components/motion-ui/skeleton";
-import { SetupScreen } from "@/components/SetupScreen";
+import {
+  SetupScreen,
+  electronBridge,
+  isSetupDismissed,
+  shouldShowSetup,
+} from "@/components/SetupScreen";
 import { Sidebar } from "@/components/ui/Sidebar";
 import { ChatBubble } from "@/components/ui/ChatBubble";
 import { ToolTrace } from "@/components/ui/ToolTrace";
@@ -65,10 +70,17 @@ export function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // ── Electron first-run gate ────────────────────────────────────
-  // Only the Electron build has the preload bridge and a key store; a plain
-  // browser has neither, so the setup screen exists only for the former.
-  const [setupComplete, setSetupComplete] = useState(false);
-  const isElectron = typeof window !== "undefined" && window.api?.isElectron === true;
+  // Only the Electron build has a usable preload bridge and a key store; a
+  // plain browser has neither, so the setup screen exists only for the former.
+  // The initial value comes from the module so a remount inside the same window
+  // does not ask a question the user already answered — `SetupScreen` owns both
+  // the rule and the memory, and this is the only place that reads them.
+  const [setupDismissed, setSetupDismissed] = useState(isSetupDismissed);
+  const completeSetup = useCallback(() => setSetupDismissed(true), []);
+  const showSetup = shouldShowSetup({
+    bridge: electronBridge(),
+    dismissed: setupDismissed,
+  });
 
   // ── Live voice session ────────────────────────────────────────
   const {
@@ -473,10 +485,12 @@ export function App() {
   const runningJobs = jobs.filter((job) => job.status === "running");
 
   // ── First-launch setup ────────────────────────────────────────
-  // Electron asks for the API keys before the dashboard loads; completing the
-  // setup screen drops into the app below like any other first render.
-  if (isElectron && !setupComplete) {
-    return <SetupScreen onComplete={() => setSetupComplete(true)} />;
+  // Electron asks for the API keys before the dashboard loads; every way out of
+  // that screen — a key already saved, a key entered, the skip link, a settings
+  // read that never answers, the screen crashing — calls `onComplete` and drops
+  // into the app below like any other first render.
+  if (showSetup) {
+    return <SetupScreen onComplete={completeSetup} />;
   }
 
   // ── Loading / error screen ────────────────────────────────────
