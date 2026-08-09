@@ -9,6 +9,8 @@ import type {
   MemoryResume,
   Message,
   ProviderCredit,
+  ProviderKeyStatus,
+  ProviderName,
   RealtimeSessionToken,
   BrowseResult,
   MaterialsEnvelope,
@@ -522,6 +524,45 @@ export async function getCredits(): Promise<ProviderCredit[]> {
   const response = await fetch("/api/credits");
   const body = await handleResponse<{ providers: ProviderCredit[] }>(response);
   return body.providers;
+}
+
+// ----- Provider keys -----
+
+/**
+ * Whether each provider can be called, as the backend sees it.
+ *
+ * The one source of truth for "is a key configured": the backend masks every
+ * >= 500 error as `{"error":"Internal server error"}`, so a missing key is
+ * never visible as an HTTP message — only as `present: false` here.
+ */
+export async function getProviderKeys(): Promise<ProviderKeyStatus[]> {
+  const response = await fetch("/api/provider-keys");
+  const body = await handleResponse<{ providers: ProviderKeyStatus[] }>(response);
+  return body.providers;
+}
+
+/**
+ * Hand a provider a key, for the rest of the backend's life.
+ *
+ * Runtime only — never disk, never logs. A rejected key answers 400 naming
+ * the problem in Portuguese; the provider's own 401 is the final judge of a
+ * key that is well-formed but wrong.
+ */
+export async function setProviderKey(
+  provider: ProviderName,
+  key: string,
+): Promise<ProviderKeyStatus> {
+  // A bare `fetch` and not `postJSON`: the route answers PUT, and the helper
+  // is POST-shaped by name.
+  const response = await fetch(
+    `/api/provider-keys/${encodeURIComponent(provider)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    },
+  );
+  return handleResponse<ProviderKeyStatus>(response);
 }
 
 // ----- Settings -----

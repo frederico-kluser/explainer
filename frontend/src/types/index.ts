@@ -382,8 +382,30 @@ export interface CostSummary {
   process_total_usd: number;
 }
 
+/**
+ * The three providers the backend can be asked to call.
+ *
+ * Mirrors `backend/src/types/thinker-roster.ts`; the roster's own
+ * `ThinkerProvider` is the same union.
+ */
+export type ProviderName = "openai" | "openrouter" | "deepseek";
+
+/**
+ * What the app is allowed to learn about a provider's key — never the key.
+ *
+ * Mirrors `backend/src/services/providers/keys.ts`, which builds the whole
+ * object inside the module that owns the secret.
+ */
+export interface ProviderKeyStatus {
+  provider: ProviderName;
+  env_var: string;
+  present: boolean;
+  source: "runtime" | "env" | null;
+  console_url: string;
+}
+
 export interface ProviderCredit {
-  provider: "openai" | "openrouter" | "deepseek";
+  provider: ProviderName;
   label: string;
   remaining_usd: number | null;
   used_usd: number | null;

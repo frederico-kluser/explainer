@@ -32,6 +32,7 @@ import { ConversationsSheet } from "@/components/ui/ConversationsSheet";
 import { PanelsSheet } from "@/components/ui/PanelsSheet";
 import { SessionAlerts } from "@/components/ui/SessionAlerts";
 import { FirstRun } from "@/components/ui/FirstRun";
+import { ProviderKeysPrompt } from "@/components/ui/ProviderKeysPrompt";
 import { shouldShowFirstRun } from "@/components/ui/mobile-shell";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import * as api from "@/lib/api";
@@ -116,6 +117,9 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [panelsOpen, setPanelsOpen] = useState(false);
   const [firstRunDismissed, setFirstRunDismissed] = useState(false);
+  // Session-only, like the setup gate's own flag: a reload asks again while
+  // the keys are still missing, which is the honest cost of no storage.
+  const [providerKeysDismissed, setProviderKeysDismissed] = useState(false);
 
   const micState: MicButtonState =
     status === "connecting"
@@ -679,6 +683,16 @@ export function App() {
             runningJobs={runningJobs.length}
             onOpenConversations={() => setNavOpen(true)}
             onOpenPanels={() => setPanelsOpen(true)}
+          />
+        )}
+
+        {/* The browser has no key store, so a missing key is a reminder, not a
+            gate: the card asks, the user can close it, and the app works
+            without it. Electron's own gate answers before this line and never
+            reaches here. */}
+        {!providerKeysDismissed && (
+          <ProviderKeysPrompt
+            onDismiss={() => setProviderKeysDismissed(true)}
           />
         )}
 

@@ -130,7 +130,7 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-function installBackend(): void {
+function installBackend(options: { keysMissing?: boolean } = {}): void {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -144,6 +144,36 @@ function installBackend(): void {
             updated_at: "2026-01-01T00:00:00.000Z",
           },
         ]);
+      }
+      // `App` mounts `ProviderKeysPrompt`, which asks this endpoint on mount.
+      // Present by default so the gate cases stay about the gate; the keys-
+      // missing case is the one that asserts the reminder card.
+      if (url.endsWith("/api/provider-keys")) {
+        return jsonResponse({
+          providers: [
+            {
+              provider: "openai",
+              env_var: "OPENAI_API_KEY",
+              present: !options.keysMissing,
+              source: options.keysMissing ? null : "env",
+              console_url: "https://platform.openai.com/api-keys",
+            },
+            {
+              provider: "openrouter",
+              env_var: "OPENROUTER_API_KEY",
+              present: !options.keysMissing,
+              source: options.keysMissing ? null : "env",
+              console_url: "https://openrouter.ai/keys",
+            },
+            {
+              provider: "deepseek",
+              env_var: "DEEPSEEK_API_KEY",
+              present: true,
+              source: "env",
+              console_url: "https://platform.deepseek.com/api_keys",
+            },
+          ],
+        });
       }
       if (url.endsWith("/settings")) {
         return jsonResponse({ voice: "alloy", speed: 1, voices: ["alloy"] });
@@ -233,6 +263,21 @@ describe("App's first-launch gate", () => {
 
     expect(appIsOnScreen()).toBe(true);
     expect(setupIsOnScreen()).toBe(false);
+  });
+
+  it("reminds the browser user about missing keys without blocking the app", async () => {
+    // The whole point of the web prompt: it is a reminder, not a gate. The
+    // dashboard must be on screen WITH the card — a prompt that replaced the
+    // dashboard would be the setup gate in disguise, and the smoke's
+    // assertion 2 exists to catch exactly that.
+    installBackend({ keysMissing: true });
+
+    await mount(<App />);
+    await settle();
+
+    expect(appIsOnScreen()).toBe(true);
+    expect(setupIsOnScreen()).toBe(false);
+    expect(text()).toContain("Faltam as chaves de API");
   });
 
   it("opens the app when the answer is already remembered", async () => {
