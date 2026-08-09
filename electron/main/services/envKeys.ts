@@ -26,12 +26,16 @@ import { readFileSync } from 'node:fs';
  * convention most SDKs use — whoever already exports the key for another tool
  * doesn't have to duplicate anything.
  *
- * OPENAI_ADMIN_KEY is a possible future slot (admin-scoped key for billing
- * endpoints); the settings store currently persists only the 'openai'
- * provider, so it is not mapped yet.
+ * Only the three CALLING providers are mapped. The settings store also
+ * persists 'openaiAdmin' (an admin-scoped key that only reads the billing
+ * API), but the backend never accepts that slot on any route — and the
+ * backend reads `OPENAI_ADMIN_KEY` straight from ITS own environment, so a
+ * mapped variable here would seed and inject a key nobody needs moved.
  */
 export const ENV_VAR_BY_PROVIDER: Readonly<Record<string, string>> = {
-  openai: 'OPENAI_API_KEY'
+  openai: 'OPENAI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY'
 };
 
 /**
@@ -109,6 +113,26 @@ export function collectEnvApiKeys(
     if (value) found[provider] = value;
   }
   return found;
+}
+
+/**
+ * Writes every stored key into `env` under its provider's variable name —
+ * called right BEFORE the backend spawn, because the child freezes its
+ * environment at spawn.
+ *
+ * Overwrites on purpose: by the time this runs the store has already been
+ * reconciled with the shell (`seedApiKeysFromEnv` — the shell wins), so the
+ * stored value is the freshest signal in every case. A provider the map does
+ * not know (openaiAdmin) is skipped.
+ */
+export function injectStoredKeysIntoEnv(
+  stored: Readonly<Record<string, { key: string }>>,
+  env: NodeJS.ProcessEnv = process.env
+): void {
+  for (const [provider, varName] of Object.entries(ENV_VAR_BY_PROVIDER)) {
+    const key = stored[provider]?.key;
+    if (key) env[varName] = key;
+  }
 }
 
 /**

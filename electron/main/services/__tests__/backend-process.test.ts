@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  BACKEND_HOST,
   BACKEND_PORT,
   probeBackendPort,
   resolveDevBackendCommand,
@@ -125,6 +126,12 @@ const BUILT_ENTRY = ['backend', 'dist', 'index.js'];
 describe('BACKEND_PORT', () => {
   it('is the port backend/src/index.ts defaults to', () => {
     expect(BACKEND_PORT).toBe(3001);
+  });
+});
+
+describe('BACKEND_HOST', () => {
+  it('is the loopback address the probe and the provider-key sync share', () => {
+    expect(BACKEND_HOST).toBe('127.0.0.1');
   });
 });
 

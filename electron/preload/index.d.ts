@@ -16,6 +16,8 @@ interface AppSettings {
   apiKeys: {
     openai: { key: string; validationStatus: 'idle' | 'valid' | 'invalid' };
     openaiAdmin: { key: string; validationStatus: 'idle' | 'valid' | 'invalid' };
+    openrouter?: { key: string; validationStatus: 'idle' | 'valid' | 'invalid' };
+    deepseek?: { key: string; validationStatus: 'idle' | 'valid' | 'invalid' };
   };
   language: 'pt-BR' | 'en';
   theme: 'light' | 'dark' | 'system';

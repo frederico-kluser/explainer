@@ -205,6 +205,7 @@ function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
 
   const [phase, setPhase] = useState<Phase>("loading");
   const [apiKey, setApiKey] = useState("");
+  const [openRouterKey, setOpenRouterKey] = useState("");
   const [adminKey, setAdminKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -344,6 +345,37 @@ function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
           setError(saved.error ?? "Não foi possível salvar a chave. Tente novamente.");
           return;
         }
+        // OpenRouter is optional but, when filled, is held to the same
+        // standard as the OpenAI key: the form only advances with keys it
+        // could validate. (The admin key below is the one stored unvalidated.)
+        const routerKey = openRouterKey.trim();
+        if (routerKey) {
+          const routerValidation = await api.settings.validateApiKey(routerKey, "openrouter");
+          if (!routerValidation.success) {
+            setPhase("invalid");
+            setError(
+              routerValidation.error ??
+                "Não foi possível validar a chave do OpenRouter. Tente novamente.",
+            );
+            return;
+          }
+          if (!routerValidation.data?.valid) {
+            setPhase("invalid");
+            setError(
+              routerValidation.data?.error ??
+                "Chave do OpenRouter inválida. Confira e tente novamente.",
+            );
+            return;
+          }
+          const routerSaved = await api.settings.saveApiKey(routerKey, "openrouter");
+          if (!routerSaved.success) {
+            setPhase("invalid");
+            setError(
+              routerSaved.error ?? "Não foi possível salvar a chave do OpenRouter. Tente novamente.",
+            );
+            return;
+          }
+        }
         // The admin key is the backend's business — stored without validation,
         // and a failure here never blocks the main flow.
         const admin = adminKey.trim();
@@ -356,7 +388,7 @@ function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
         setError("Ocorreu um erro ao salvar a chave. Tente novamente.");
       }
     },
-    [api, apiKey, adminKey],
+    [api, apiKey, adminKey, openRouterKey],
   );
 
   const openKeysHelp = useCallback(() => {
@@ -460,6 +492,36 @@ function SetupScreenInner({ onComplete }: { onComplete: () => void }) {
                       {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                     </button>
                   </div>
+                </label>
+
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    OPENROUTER_API_KEY
+                  </span>
+                  <div className="relative">
+                    <KeyRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      type={showKey ? "text" : "password"}
+                      value={openRouterKey}
+                      onChange={(event) => setOpenRouterKey(event.target.value)}
+                      disabled={phase === "validating"}
+                      placeholder="sk-or-…"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className={cn(inputClasses, "h-10 w-full pl-9 pr-10")}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKey((value) => !value)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                      aria-label={showKey ? "Ocultar chave" : "Mostrar chave"}
+                    >
+                      {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Opcional — para usar os modelos de pensamento via OpenRouter.
+                  </p>
                 </label>
 
                 {/* Advanced section — collapsed by default; the admin key is

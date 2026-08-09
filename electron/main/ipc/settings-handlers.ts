@@ -5,14 +5,18 @@
  * the `{ success, data?, error? }` envelope — a settings handler NEVER throws
  * (neither validation errors nor store/network errors).
  *
- * The OpenAI key never travels in plaintext to the DISK (the store encrypts
- * via secret-crypto); between renderer ↔ main it travels in the invoke
- * payload, as in quiet-que.
+ * API keys never travel in plaintext to the DISK (the store encrypts via
+ * secret-crypto); between renderer ↔ main they travel in the invoke payload,
+ * as in quiet-que.
  */
 
 import { ipcMain } from 'electron';
 import { z } from 'zod';
 import { settingsStore } from '../storage/settings-store';
+import {
+  deleteProviderKeyFromBackend,
+  syncProviderKeyToBackend
+} from '../services/provider-key-sync';
 import {
   createNoPayloadHandler,
   createValidatedHandler,
@@ -27,7 +31,7 @@ import type { AppSettings, IpcResult } from '@shared/types/settings.types';
 // ============================================================================
 
 /** API key providers known to the store. */
-const ApiKeyProviderSchema = z.enum(['openai', 'openaiAdmin']);
+const ApiKeyProviderSchema = z.enum(['openai', 'openaiAdmin', 'openrouter', 'deepseek']);
 
 const ApiKeyPayloadSchema = z.object({
   key: z
@@ -53,37 +57,54 @@ const SettingsSetSchema = z
     message: 'Informe pelo menos um campo'
   });
 
-/** Result of validating an OpenAI key against the API (never persisted). */
+/** Result of validating an API key against its provider (never persisted). */
 interface ApiKeyValidationResult {
   valid: boolean;
   error?: string;
 }
 
-const OPENAI_VALIDATION_URL = 'https://api.openai.com/v1/models';
-const OPENAI_VALIDATION_TIMEOUT_MS = 10_000;
+const VALIDATION_TIMEOUT_MS = 10_000;
 
 /**
- * Validates an OpenAI key by listing the models endpoint. Does NOT persist
+ * Providers whose key can be checked against a public models endpoint.
+ * DeepSeek has an equivalent endpoint but the setup screen never asks for its
+ * key — validation stays scoped to what the UI collects.
+ */
+const VALIDATION_ENDPOINTS: Readonly<Record<string, { url: string; name: string }>> = {
+  openai: { url: 'https://api.openai.com/v1/models', name: 'OpenAI' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/models', name: 'OpenRouter' }
+};
+
+/**
+ * Validates a provider key by listing the models endpoint. Does NOT persist
  * anything — it only queries the provider.
  */
-async function validateOpenAiKey(key: string): Promise<ApiKeyValidationResult> {
+async function validateProviderKey(
+  key: string,
+  provider: string
+): Promise<ApiKeyValidationResult> {
+  const endpoint = VALIDATION_ENDPOINTS[provider];
+  if (!endpoint) {
+    return { valid: false, error: 'A validação não está disponível para este provedor.' };
+  }
+  const { url, name } = endpoint;
   try {
-    const response = await fetch(OPENAI_VALIDATION_URL, {
+    const response = await fetch(url, {
       headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(OPENAI_VALIDATION_TIMEOUT_MS)
+      signal: AbortSignal.timeout(VALIDATION_TIMEOUT_MS)
     });
     if (response.ok) return { valid: true };
     const statusDetail =
       response.status === 401 || response.status === 403
         ? 'chave rejeitada'
-        : `a OpenAI não pôde validar a chave agora (HTTP ${response.status})`;
-    return { valid: false, error: `OpenAI: ${statusDetail}` };
+        : `a ${name} não pôde validar a chave agora (HTTP ${response.status})`;
+    return { valid: false, error: `${name}: ${statusDetail}` };
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError') {
-      return { valid: false, error: 'A OpenAI não respondeu a tempo' };
+      return { valid: false, error: `A ${name} não respondeu a tempo` };
     }
     const detail = error instanceof Error ? error.message : String(error);
-    return { valid: false, error: `Não foi possível contatar a OpenAI: ${detail}` };
+    return { valid: false, error: `Não foi possível contatar a ${name}: ${detail}` };
   }
 }
 
@@ -133,12 +154,20 @@ export function registerSettingsHandlers(): void {
       ApiKeyPayloadSchema,
       async (_event, { key, provider }): Promise<IpcResult> => {
         try {
-          const saved = await settingsStore.saveApiKey(provider ?? 'openai', key.trim(), 'idle');
+          const target = provider ?? 'openai';
+          const trimmed = key.trim();
+          const saved = await settingsStore.saveApiKey(target, trimmed, 'idle');
           if (!saved) {
             // The real cause goes to the store log; here stays the trace that
             // THIS invoke returned the generic error (the envelope carries no
             // detail).
-            console.warn(`[Settings] ⚠️ save-api-key refused by the store (${provider ?? 'openai'})`);
+            console.warn(`[Settings] ⚠️ save-api-key refused by the store (${target})`);
+          } else {
+            // The backend child's env froze at spawn; a key saved after boot
+            // reaches it only over the API. Best effort and fire-and-forget —
+            // a failure degrades to "the next boot injects it", never to a
+            // blocked save.
+            void syncProviderKeyToBackend(target, trimmed);
           }
           return saved ? ok(undefined) : { success: false, error: 'Não foi possível salvar a chave' };
         } catch (error) {
@@ -158,10 +187,15 @@ export function registerSettingsHandlers(): void {
       RemoveApiKeyPayloadSchema,
       async (_event, { provider }): Promise<IpcResult> => {
         try {
-          const removed = await settingsStore.removeApiKey(provider ?? 'openai');
+          const target = provider ?? 'openai';
+          const removed = await settingsStore.removeApiKey(target);
           if (!removed) {
             // Same rule as save: the cause stays in the store log.
-            console.warn(`[Settings] ⚠️ remove-api-key refused by the store (${provider ?? 'openai'})`);
+            console.warn(`[Settings] ⚠️ remove-api-key refused by the store (${target})`);
+          } else {
+            // The counterpart of the save-side sync: a reused backend keeps
+            // the runtime key until it is told otherwise. Best effort.
+            void deleteProviderKeyFromBackend(target);
           }
           return removed ? ok(undefined) : { success: false, error: 'Não foi possível remover a chave' };
         } catch (error) {
@@ -172,17 +206,18 @@ export function registerSettingsHandlers(): void {
   );
 
   /**
-   * Validates an API key against the provider (OpenAI: GET /v1/models).
-   * Does NOT persist anything — it only queries the provider.
+   * Validates an API key against its provider (GET /v1/models on the
+   * provider's own endpoint). Does NOT persist anything — it only queries the
+   * provider.
    */
   ipcMain.handle(
     'settings:validate-api-key',
     createValidatedHandler(
       'settings:validate-api-key',
       ApiKeyPayloadSchema,
-      async (_event, { key, provider: _provider }): Promise<IpcResult<ApiKeyValidationResult>> => {
+      async (_event, { key, provider }): Promise<IpcResult<ApiKeyValidationResult>> => {
         try {
-          return ok(await validateOpenAiKey(key.trim()));
+          return ok(await validateProviderKey(key.trim(), provider ?? 'openai'));
         } catch (error) {
           return fail(error);
         }

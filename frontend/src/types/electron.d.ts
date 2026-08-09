@@ -43,6 +43,9 @@ export interface AppSettings {
   apiKeys: {
     openai: ApiKeyConfig;
     openaiAdmin: ApiKeyConfig;
+    /** Present only since wave 3 — read it defensively, like the main does. */
+    openrouter?: ApiKeyConfig;
+    deepseek?: ApiKeyConfig;
   };
   language: "pt-BR" | "en";
   theme: "light" | "dark" | "system";

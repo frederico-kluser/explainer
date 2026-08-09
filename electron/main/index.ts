@@ -27,7 +27,13 @@ import {
   resolvePackagedBackendCommand,
   type BackendCommandResolution
 } from './services/backend-process';
-import { collectEnvApiKeys, loadDotEnvFile, pickProvidersToSeed } from './services/envKeys';
+import {
+  collectEnvApiKeys,
+  injectStoredKeysIntoEnv,
+  loadDotEnvFile,
+  pickProvidersToSeed
+} from './services/envKeys';
+import { syncStoredKeysToBackend } from './services/provider-key-sync';
 import type { AppSettings } from '@shared/types/settings.types';
 
 // ---------------------------------------------------------------------------
@@ -297,22 +303,42 @@ app.whenReady().then(() => {
   // Registers all IPC handlers (settings/app — see electron/main/ipc/index.ts).
   registerAllHandlers();
 
-  // Backend child process — the WebRTC/session server for the UI. Not awaited:
-  // the port probe costs up to ~600 ms and the window must not wait on it.
-  void startBackend();
-
-  // Persisted settings applied on the rise (key seeding from the env). A
-  // failure here degrades instead of crashing the boot: the app starts on the
-  // defaults and the user can still register the key in the setup screen.
-  void settingsStore
-    .load()
-    .then(async (settings) => {
+  // Persisted keys applied BEFORE the backend spawns, in this order:
+  //
+  //   1. load → plaintext keys in memory;
+  //   2. seed from the environment (the shell beats the file — same rule as
+  //      `loadDotEnvFile`);
+  //   3. re-load, so the injected set includes what step 2 just saved;
+  //   4. inject into process.env — the backend child FREEZES its environment
+  //      at spawn, so this must land before step 5;
+  //   5. spawn the backend;
+  //   6. push the same keys over PUT /api/provider-keys/:provider — a REUSED
+  //      backend (already running on the port) never saw the injected env.
+  //
+  // Best effort: a failure here degrades instead of crashing the boot — the
+  // app starts on the defaults and the user can still register the key from
+  // the setup screen, which PUTs too.
+  void (async () => {
+    let settings: AppSettings | undefined;
+    try {
+      settings = await settingsStore.load();
       await seedApiKeysFromEnv(settings.apiKeys);
-    })
-    .catch((error) => {
+      settings = await settingsStore.load();
+      injectStoredKeysIntoEnv(settings.apiKeys);
+    } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       bootLog.warn(`failed to apply persisted settings: ${message}`);
-    });
+    }
+
+    // Backend child process — the WebRTC/session server for the UI. Not
+    // awaited: the port probe costs up to ~600 ms and the window must not
+    // wait on it.
+    startBackend();
+
+    // Fire-and-forget: the sync polls /api/health until the backend answers
+    // and only then PUTs, so the window never waits on it.
+    if (settings) void syncStoredKeysToBackend(settings.apiKeys);
+  })();
 
   createWindow();
 

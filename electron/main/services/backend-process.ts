@@ -26,8 +26,11 @@ export const BACKEND_PORT = 3001;
  * Loopback by address, never by name. The backend binds `127.0.0.1` unless
  * `EXPLAINER_HOST` says otherwise, and `localhost` can resolve to `::1` first —
  * which would answer ECONNREFUSED on a port that is very much taken.
+ *
+ * Exported because the provider-key sync (`services/provider-key-sync.ts`)
+ * talks to the same address.
  */
-const BACKEND_HOST = '127.0.0.1';
+export const BACKEND_HOST = '127.0.0.1';
 
 /**
  * Outside the access gate on purpose (`OPEN_PATHS` in

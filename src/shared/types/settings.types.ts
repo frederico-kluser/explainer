@@ -35,7 +35,7 @@ export interface AppSettings {
 }
 
 /** Providers the settings store recognises and persists. */
-export type KnownProvider = 'openai' | 'openaiAdmin';
+export type KnownProvider = 'openai' | 'openaiAdmin' | 'openrouter' | 'deepseek';
 
 /** Envelope returned by every IPC handler — handlers never throw. */
 export interface IpcResult<T = undefined> {

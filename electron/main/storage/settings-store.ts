@@ -2,8 +2,9 @@
  * Settings Store - Main Process (explainer)
  *
  * Persistence of app settings via electron-store, simplified from the
- * quiet-que `storage/settings-store.ts`: a SINGLE API key provider ('openai'),
- * plus language and theme. No other settings exist yet.
+ * quiet-que `storage/settings-store.ts`: FOUR API key provider slots
+ * ('openai', 'openaiAdmin', 'openrouter', 'deepseek'), plus language and
+ * theme. No other settings exist yet.
  *
  * electron-store persists in (Linux): ~/.config/explainer/settings.json
  *
@@ -55,13 +56,17 @@ export const DEFAULT_LANGUAGE: AppLanguage = 'pt-BR';
 export const DEFAULT_THEME: AppThemeMode = DEFAULT_THEME_MODE;
 
 /**
- * The single API key provider the app persists. Everything else in the apiKeys
- * record is dropped on save (whitelist normalize) — keeping one provider keeps
- * the store honest.
+ * The API key providers the app persists. Everything else in the apiKeys
+ * record is dropped on save (whitelist normalize) — keeping the list closed
+ * keeps the store honest. `openaiAdmin` is the admin-scoped billing slot;
+ * `openrouter` and `deepseek` are the other two calling providers the backend
+ * accepts (`backend/src/services/providers/keys.ts`).
  */
 const DEFAULT_API_KEYS: AppSettings['apiKeys'] = {
   openai: { key: '', validationStatus: 'idle' },
-  openaiAdmin: { key: '', validationStatus: 'idle' }
+  openaiAdmin: { key: '', validationStatus: 'idle' },
+  openrouter: { key: '', validationStatus: 'idle' },
+  deepseek: { key: '', validationStatus: 'idle' }
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -282,7 +287,9 @@ export const settingsStore = {
       store.set('settings', settingsToSave);
 
       console.log('[SettingsStore] ✅ Settings saved', {
-        hasOpenaiKey: settingsToSave.apiKeys.openai.key !== '',
+        providersWithKey: Object.entries(settingsToSave.apiKeys)
+          .filter(([, cfg]) => cfg.key !== '')
+          .map(([provider]) => provider),
         language: settingsToSave.language
       });
 
@@ -332,12 +339,14 @@ export const settingsStore = {
         });
       }
 
-      const hasOpenaiKey = decryptedApiKeys.openai.key !== '';
-      const signature = `${hasOpenaiKey}|${result.language}|${result.theme}`;
+      const providersWithKey = Object.entries(decryptedApiKeys)
+        .filter(([, cfg]) => cfg.key !== '')
+        .map(([provider]) => provider);
+      const signature = `${providersWithKey.join(',')}|${result.language}|${result.theme}`;
       if (signature !== lastLoadSignature) {
         lastLoadSignature = signature;
         console.log('[SettingsStore] ✅ Settings loaded', {
-          hasOpenaiKey,
+          providersWithKey,
           language: result.language
         });
       }
