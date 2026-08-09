@@ -218,7 +218,7 @@ conversa. Repositórios do GitHub viram clones rasos em `.../repos/`.
 
 | Comando | Descrição |
 |---|---|
-| `npm run dev` | Backend + frontend |
+| `npm run dev` | Abre o site em http://localhost:5173 — é `bash dev.sh`, backend + frontend juntos |
 | `npm run setup` | `npm install` nos dois pacotes |
 | `npm run build` | Build de produção |
 | `npm run typecheck` | `tsc --noEmit` nos dois |

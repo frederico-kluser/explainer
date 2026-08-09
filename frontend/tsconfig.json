@@ -1,6 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2024",
+    // target sits one step below lib on purpose. Older esbuild does not know
+    // "es2024" and warns "Unrecognized target environment" once per file when
+    // it reads this tsconfig — 0.21.5, still what Vite 5 ships, is the one that
+    // bites; 0.25.x accepts it. ES2024 added no new syntax, only library
+    // methods and the RegExp /v flag, so emitting ES2023 costs us nothing.
+    // lib stays ES2024: it is what types Object.groupBy and
+    // Promise.withResolvers, and esbuild reads target, never lib.
+    "target": "ES2023",
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",

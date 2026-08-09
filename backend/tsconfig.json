@@ -1,6 +1,10 @@
 {
   "compilerOptions": {
-    "target": "ES2024",
+    // Kept in step with frontend/tsconfig.json, which explains why: older
+    // esbuild warns once per file on "ES2024". Nothing here emits through such
+    // a version today (tsx and vitest pull a recent one), but that version is
+    // transitive, not pinned. lib stays ES2024 — ES2024 added no syntax.
+    "target": "ES2023",
     "lib": ["ES2024"],
     "module": "ESNext",
     "moduleResolution": "bundler",
