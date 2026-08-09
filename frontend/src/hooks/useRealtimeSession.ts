@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import * as api from "@/lib/api";
+import {
+  browserClientId,
+  browserClientName,
+  entriesFromMessages,
+  entryFromToolFinished,
+  mergeRemoteEntries,
+  parseFloorSnapshot,
+  summarizeToolOutput,
+} from "@/lib/conversation-stream";
+import { useConversationStream } from "@/hooks/useConversationStream";
 import {
   CLEAR_OUTPUT_AUDIO,
   DATA_CHANNEL_NAME,
@@ -19,6 +29,10 @@ import type {
   BraveResult,
   DeepThinkEvent,
   DeepThinkJob,
+  FloorRequest,
+  FloorSnapshot,
+  LiveMessage,
+  LiveToolFinished,
   MermaidDiagram,
   MermaidDiagramKind,
   RealtimeSessionToken,
@@ -79,6 +93,25 @@ export interface RealtimeSessionState {
   memoryEvents: number;
   /** What this session has spent so far, in USD, priced by the server. */
   sessionUsd: number;
+  /**
+   * How many people have this conversation open, this browser included.
+   *
+   * Counted from `/live` connections, which every open conversation holds —
+   * so a spectator who never connects a session still shows up here.
+   */
+  viewers: number;
+  /** Who holds the microphone on this conversation, or nobody. */
+  floor: FloorSnapshot | null;
+  /** Whether that is us. False while spectating, and false before connecting. */
+  isFloorHolder: boolean;
+  /** The last viewer who asked the holder for the microphone, or nobody. */
+  floorRequest: FloorRequest | null;
+  /** Ask the holder to hand it over. Posts a card on their screen; takes nothing. */
+  requestFloor: () => void;
+  /** Answer that request: hang up and let go, so the asker can take it. */
+  grantFloor: () => void;
+  /** Let go of the microphone without waiting for the grace window. */
+  releaseFloor: () => void;
   connect: () => Promise<void>;
   disconnect: () => void;
   sendText: (text: string) => void;
@@ -569,6 +602,58 @@ export function applyDeepThinkEvent(
   return next;
 }
 
+// ---------------------------------------------------------------------------
+// Archiving a turn
+// ---------------------------------------------------------------------------
+
+/**
+ * Archive one finished turn under the id this screen already draws it with.
+ *
+ * The id is the whole point of this function existing. `POST /:id/messages`
+ * mints a fresh `uuidv4()` for any message that arrives without one —
+ * `backend/src/routes/conversations.ts` — and that message comes straight back
+ * out on the `/live` stream. A turn persisted anonymously therefore returns
+ * under an id this transcript has never seen and lands a second time, directly
+ * beneath itself, on the screen that just said it. Sending our own id makes the
+ * echo a no-op here (`mergeRemoteEntries` already has that id) and a new line on
+ * every other screen, which is exactly the asymmetry the feature needs.
+ *
+ * `append` is injectable for the same reason `executeToolCalls` takes `runTool`:
+ * there is no jsdom in this suite, so the only way to assert what gets posted is
+ * to lend the caller a spy.
+ */
+export function persistTurn(
+  conversationId: string,
+  id: string,
+  role: "user" | "assistant" | "tool",
+  content: string,
+  append: typeof api.appendMessages = api.appendMessages,
+): void {
+  if (!content.trim()) return;
+  void append(conversationId, [{ id, role, content }]).catch(() => {
+    /* the conversation matters more than its archive */
+  });
+}
+
+/**
+ * The conversation's archived turns, as transcript lines.
+ *
+ * The read `history.reset` demands, and the read a first `/live` connection
+ * assumes has already happened — the server replays nothing for `since <= 0`
+ * exactly because the client is expected to have made it. Injectable for the
+ * same reason `persistTurn`'s `append` is: no jsdom, so the effect that calls
+ * this cannot be rendered, and this is the seam where the chain can be asserted.
+ */
+export async function fetchArchivedTranscript(
+  conversationId: string,
+  at: string,
+  get: typeof api.getConversation = api.getConversation,
+): Promise<TranscriptEntry[]> {
+  const conversation = await get(conversationId);
+  const stored = conversation.messages;
+  return Array.isArray(stored) ? entriesFromMessages(stored, at) : [];
+}
+
 /** Everything the stream handler touches, so it can be driven without React. */
 export interface SessionStreamDeps {
   conversationId: string;
@@ -580,7 +665,12 @@ export interface SessionStreamDeps {
     mutate: (previous: string) => string,
     final?: boolean,
   ) => void;
-  persist: (role: "user" | "assistant" | "tool", content: string) => void;
+  /** The id comes first because it is the same id `upsertEntry` was just given. */
+  persist: (
+    id: string,
+    role: "user" | "assistant" | "tool",
+    content: string,
+  ) => void;
   send: (event: object) => void;
   requestResponse: () => void;
 }
@@ -643,7 +733,7 @@ function handleAgentJobEvent(event: AgentJobEvent, deps: SessionStreamDeps): voi
 
     deps.upsertEntry(`agent-${event.job_id}`, "agent", () => result, true);
     if (isReplay(event)) return;
-    deps.persist("tool", `[agente pi] ${result}`);
+    deps.persist(`agent-${event.job_id}`, "tool", `[agente pi] ${result}`);
 
     // Hand the answer back to the model as a user turn and ask it to speak.
     // This is the whole reason a slow tool does not block a conversation: the
@@ -702,7 +792,7 @@ function handleDeepThinkEvent(
 
     deps.upsertEntry(`deep-${event.job_id}`, "agent", () => synthesis, true);
     if (isReplay(event)) return;
-    deps.persist("tool", `[deep think] ${synthesis}`);
+    deps.persist(`deep-${event.job_id}`, "tool", `[deep think] ${synthesis}`);
 
     // The synthesis arrives without markdown, written to be spoken — so it is
     // handed over whole rather than summarised again.
@@ -907,6 +997,20 @@ export function callDroppedWhileHidden(
   return status === "live" && connectionState !== "connected";
 }
 
+/**
+ * The holder named by a refusal, when the refusal was about the microphone.
+ *
+ * `POST /api/realtime/session` answers 409 twice over: once because somebody
+ * else is speaking, once because the conversation has no materials. Only the
+ * first carries a `floor`, and only the first is a state rather than an error —
+ * so the snapshot's presence is the discriminator, not the status code.
+ */
+export function floorFromRefusal(err: unknown): FloorSnapshot | null {
+  if (!(err instanceof api.ApiError) || err.status !== 409) return null;
+  const body = err.body as { floor?: unknown } | null;
+  return parseFloorSnapshot(body?.floor);
+}
+
 // ---------------------------------------------------------------------------
 // Bringing a session up
 // ---------------------------------------------------------------------------
@@ -922,7 +1026,7 @@ export function callDroppedWhileHidden(
 export interface BrowserBridge {
   mint: (
     id: string,
-    options: { signal: AbortSignal },
+    options: { signal: AbortSignal; clientId?: string; clientName?: string },
   ) => Promise<RealtimeSessionToken>;
   createPeerConnection: () => RTCPeerConnection;
   /** The hidden element the model's voice plays through. */
@@ -933,7 +1037,12 @@ export interface BrowserBridge {
 }
 
 const BROWSER: BrowserBridge = {
-  mint: (id, options) => api.createRealtimeSession(id, options),
+  mint: (id, options) =>
+    api.createRealtimeSession(id, {
+      signal: options.signal,
+      ...(options.clientId ? { clientId: options.clientId } : {}),
+      ...(options.clientName ? { clientName: options.clientName } : {}),
+    }),
   createPeerConnection: () => new RTCPeerConnection(),
   createAudioSink: () => {
     const audio = document.createElement("audio");
@@ -981,6 +1090,14 @@ export interface RealtimeHandles {
 
 export interface OpenSessionDeps {
   conversationId: string;
+  /**
+   * Who is asking, so the mint can enforce one microphone per conversation.
+   *
+   * Optional because the handshake works without it — and because every test
+   * that predates the floor calls this function without one.
+   */
+  clientId?: string;
+  clientName?: string;
   /** Aborted by `disconnect` — which is also what a conversation switch runs. */
   signal: AbortSignal;
   /** Which conversation the UI is on *now*, re-read after every await. */
@@ -1071,7 +1188,11 @@ async function handshake(
   const abandoned = (): boolean =>
     deps.signal.aborted || deps.currentConversation() !== deps.conversationId;
 
-  const token = await bridge.mint(deps.conversationId, { signal: deps.signal });
+  const token = await bridge.mint(deps.conversationId, {
+    signal: deps.signal,
+    ...(deps.clientId ? { clientId: deps.clientId } : {}),
+    ...(deps.clientName ? { clientName: deps.clientName } : {}),
+  });
   if (abandoned()) return null;
 
   const pc = bridge.createPeerConnection();
@@ -1161,6 +1282,19 @@ export function useRealtimeSession(
   // Bumped to re-read the stored memory. Held here rather than taken as an
   // argument so the caller does not have to own a counter it never reads.
   const [memoryToken, setMemoryToken] = useState(0);
+  // Same idea, for the archived transcript. `history.reset` bumps it: the live
+  // stream has told us its replay buffer cannot cover our gap, so the only way
+  // back to a complete transcript is to read the conversation again.
+  const [historyToken, setHistoryToken] = useState(0);
+
+  /**
+   * Who this browser is, for the whole life of the tab.
+   *
+   * The floor is held by a browser, not by a session — the holder's `/live`
+   * stream is the heartbeat behind it — so this has to outlive every connect,
+   * disconnect and conversation switch.
+   */
+  const clientId = useMemo(() => browserClientId(), []);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -1185,6 +1319,14 @@ export function useRealtimeSession(
   const pendingAcksRef = useRef<Set<string>>(new Set());
   const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modelRef = useRef<string>("");
+  /**
+   * The conversation this browser currently holds the microphone on.
+   *
+   * The id and not a boolean, because the release has to name the conversation
+   * the floor was taken on — and the moment it matters most is a conversation
+   * switch, when `conversationId` has already moved on.
+   */
+  const heldFloorRef = useRef<string | null>(null);
 
   // ── Sending ────────────────────────────────────────────────────
 
@@ -1243,16 +1385,17 @@ export function useRealtimeSession(
     [],
   );
 
-  /** Persist a finished turn. A storage failure must never break the call. */
+  /**
+   * Persist a finished turn under the id the transcript already knows it by.
+   *
+   * A storage failure must never break the call, and the id must never be left
+   * to the server — see `persistTurn`.
+   */
   const persist = useCallback(
-    (role: "user" | "assistant" | "tool", content: string) => {
-      const id = convRef.current;
-      if (!id || !content.trim()) return;
-      void api
-        .appendMessages(id, [{ role, content }])
-        .catch(() => {
-          /* the conversation matters more than its archive */
-        });
+    (id: string, role: "user" | "assistant" | "tool", content: string) => {
+      const conversationId = convRef.current;
+      if (!conversationId) return;
+      persistTurn(conversationId, id, role, content);
     },
     [],
   );
@@ -1294,7 +1437,7 @@ export function useRealtimeSession(
         upsertEntry(
           `tool-${call.call_id}`,
           "tool",
-          () => `${call.name} — ${summarize(output)}`,
+          () => `${call.name} — ${summarizeToolOutput(output)}`,
           true,
         );
         pendingAcksRef.current.add(call.call_id);
@@ -1363,7 +1506,7 @@ export function useRealtimeSession(
           const itemId = String(event.item_id ?? "user");
           const text = String(event.transcript ?? "");
           upsertEntry(itemId, "user", () => text, true);
-          persist("user", text);
+          persist(itemId, "user", text);
           break;
         }
 
@@ -1378,7 +1521,7 @@ export function useRealtimeSession(
           const itemId = String(event.item_id ?? event.response_id ?? "assistant");
           const text = String(event.transcript ?? "");
           upsertEntry(itemId, "assistant", () => text, true);
-          persist("assistant", text);
+          persist(itemId, "assistant", text);
           break;
         }
         case "response.output_text.delta": {
@@ -1459,7 +1602,27 @@ export function useRealtimeSession(
 
   // ── Teardown ───────────────────────────────────────────────────
 
-  const disconnect = useCallback(() => {
+  /**
+   * Give the microphone back, if this browser is holding one.
+   *
+   * Separate from `teardown` and deliberately not part of it. `connect()` tears
+   * a half-built attempt down before starting a new one, and a release fired
+   * there would be a `DELETE` racing the `POST` that claims the floor two lines
+   * later — the release landing second takes away the microphone this client
+   * just won. So only the ways of *stopping* release: `disconnect`, and the
+   * conversation switch that runs it.
+   */
+  const handBackFloor = useCallback(() => {
+    const held = heldFloorRef.current;
+    if (!held) return;
+    heldFloorRef.current = null;
+    void api.releaseFloor(held, clientId).catch(() => {
+      // The grace window behind the `/live` stream releases it anyway, a few
+      // seconds later. Nothing here is worth a message to the user.
+    });
+  }, [clientId]);
+
+  const teardown = useCallback(() => {
     // Call off a handshake still in flight. Switching conversation runs this
     // through the effect below, so a mint that resolves afterwards finds its
     // attempt aborted instead of opening a microphone nobody asked for.
@@ -1503,6 +1666,19 @@ export function useRealtimeSession(
     setAudioBlocked(false);
     setCallDropped(false);
   }, []);
+
+  /**
+   * Hang up, and let the next person speak.
+   *
+   * The floor would eventually free itself — the server starts a grace window
+   * when the holder's last `/live` stream closes — but hanging up does not close
+   * that stream: this browser is still watching the conversation, so without
+   * this the microphone would stay locked to a session that no longer exists.
+   */
+  const disconnect = useCallback(() => {
+    teardown();
+    handBackFloor();
+  }, [handBackFloor, teardown]);
 
   /**
    * Start the model's voice from inside the user's tap.
@@ -1557,6 +1733,78 @@ export function useRealtimeSession(
     [send],
   );
 
+  const reloadMemory = useCallback(() => setMemoryToken((token) => token + 1), []);
+
+  // ── The shared conversation ────────────────────────────────────
+  //
+  // Every handler below only ever writes to the screen. None of them calls
+  // `send` or `requestResponse`, and `LiveStreamDeps` gives them no way to: a
+  // `message.appended` folded back into the session as an injected turn would
+  // make the assistant narrate the sentence it has just finished saying.
+  // `conversation-stream.test.ts` asserts both halves of that — the identifiers
+  // are absent from the source, and the calls stay untouched when every event
+  // type is driven through the handler.
+
+  const applyLiveMessages = useCallback((messages: LiveMessage[]) => {
+    const at = nowISO();
+    setTranscript((live) => mergeRemoteEntries(live, entriesFromMessages(messages, at)));
+  }, []);
+
+  const applyLiveTool = useCallback((event: LiveToolFinished) => {
+    const at = nowISO();
+    const entry = entryFromToolFinished(event, at);
+    if (entry) setTranscript((live) => mergeRemoteEntries(live, [entry]));
+
+    // The drawing travels in `meta`, never in `output`, because `output` is read
+    // out loud. `appendDiagram` keys on the diagram's own id, so the screen that
+    // made the call folds its own echo onto the picture already there.
+    const diagram = diagramFromMeta(event.meta);
+    if (diagram) setDiagrams((previous) => appendDiagram(previous, diagram));
+  }, []);
+
+  const reloadHistory = useCallback(() => setHistoryToken((token) => token + 1), []);
+
+  const { viewers, floor, floorRequest, noteFloor } = useConversationStream(
+    conversationId,
+    clientId,
+    {
+      onMessages: applyLiveMessages,
+      onToolFinished: applyLiveTool,
+      // The count is not adopted as `memoryEvents` — that number describes what a
+      // resume was built from, and overwriting it would make the "retomando"
+      // line report the present. What a change means here is that the file the
+      // gallery is seeded from moved, so the gallery re-reads it.
+      onMemoryChanged: reloadMemory,
+      onReset: reloadHistory,
+    },
+  );
+
+  const isFloorHolder = floor?.client_id === clientId;
+
+  // ── The microphone, as three buttons ───────────────────────────
+
+  const requestFloor = useCallback(() => {
+    const id = convRef.current;
+    if (!id) return;
+    void api.requestFloor(id, clientId, browserClientName()).catch(() => {
+      // A 409 here means nobody holds it — the answer to which is to connect,
+      // which is the button next to this one.
+    });
+  }, [clientId]);
+
+  const releaseFloor = useCallback(() => disconnect(), [disconnect]);
+
+  /**
+   * Answer somebody who asked for the microphone.
+   *
+   * The same act as releasing it, and that is not an oversight: the server has
+   * no forced hand-over, on purpose — cutting a holder off mid-sentence is worse
+   * than waiting. Granting is letting go, and the client that asked takes it by
+   * connecting. Kept as its own name because the button that calls it says
+   * "passar o microfone" and reads nothing like "desconectar".
+   */
+  const grantFloor = useCallback(() => disconnect(), [disconnect]);
+
   // ── Connect ────────────────────────────────────────────────────
 
   const connect = useCallback(async () => {
@@ -1579,7 +1827,10 @@ export function useRealtimeSession(
 
     // `pcRef` is only filled once the handshake is through, so a second press
     // during the mint is caught by the attempt, not by the peer connection.
-    if (pcRef.current || connectAbortRef.current) disconnect();
+    //
+    // `teardown` and not `disconnect`: this is the start of a connect, and the
+    // floor released here would be the one the mint below is about to claim.
+    if (pcRef.current || connectAbortRef.current) teardown();
 
     const attempt = new AbortController();
     connectAbortRef.current = attempt;
@@ -1590,9 +1841,20 @@ export function useRealtimeSession(
     setCallDropped(false);
     setStatus("connecting");
 
+    // Recorded before the mint rather than after it. The mint *is* the claim, so
+    // between it succeeding and the SDP exchange failing there is a window where
+    // the server holds a floor for this client that nothing here knows about —
+    // and nothing would ever release, because the grace window only starts when
+    // the `/live` stream closes and this browser is still watching. Releasing a
+    // floor we turn out not to hold is a no-op server-side, so the pessimistic
+    // order is the safe one.
+    heldFloorRef.current = id;
+
     try {
       const session = await openRealtimeSession({
         conversationId: id,
+        clientId,
+        clientName: browserClientName(),
         signal: attempt.signal,
         currentConversation: () => convRef.current,
         onServerEvent: handleEvent,
@@ -1605,7 +1867,10 @@ export function useRealtimeSession(
       // Abandoned mid-handshake. Everything it took is already given back and
       // `disconnect` has already set the status; adopting it here is what used
       // to hand `pcRef` a session belonging to the previous conversation.
-      if (!session) return;
+      if (!session) {
+        handBackFloor();
+        return;
+      }
 
       pcRef.current = session.pc;
       dcRef.current = session.dc;
@@ -1617,11 +1882,38 @@ export function useRealtimeSession(
       setResumed(session.token.resumed === true);
       setMemoryEvents(session.token.memory_events ?? 0);
 
+      // Who the server says ended up with it, which settles the pessimistic
+      // guess above. A 200 with somebody else's floor is not reachable today —
+      // the mint refuses with 409 instead — but believing we hold a microphone
+      // we do not is the one error worth spending a branch on.
+      const granted = parseFloorSnapshot(session.token.floor);
+      noteFloor(granted);
+      heldFloorRef.current = granted?.client_id === clientId ? id : null;
+
       openJobStream(id);
     } catch (err) {
       // A cancelled attempt is not a failure to report: the abort came from
       // the user leaving, and `disconnect` already put the UI back to idle.
-      if (attempt.signal.aborted) return;
+      if (attempt.signal.aborted) {
+        handBackFloor();
+        return;
+      }
+
+      // Somebody else is talking. That is a state, not a failure: the server
+      // refuses with 409 and names the holder in Portuguese, and the snapshot in
+      // the body is what lets the UI offer "pedir o microfone" instead of
+      // "tentar de novo". Only the floor 409 carries a `floor` — the mint's
+      // other 409, for a conversation with no materials, does not, and that one
+      // really is an error.
+      const taken = floorFromRefusal(err);
+      if (taken) {
+        heldFloorRef.current = null;
+        noteFloor(taken);
+        setError(err instanceof Error ? err.message : "O microfone está ocupado.");
+        setMicFailure(null);
+        teardown();
+        return;
+      }
 
       // A microphone failure gets a sentence about what to do next; anything
       // else — the mint, the SDP exchange — already says what it is about.
@@ -1636,7 +1928,15 @@ export function useRealtimeSession(
       setStatus("error");
       disconnect();
     }
-  }, [disconnect, handleEvent, openJobStream]);
+  }, [
+    clientId,
+    disconnect,
+    handBackFloor,
+    handleEvent,
+    noteFloor,
+    openJobStream,
+    teardown,
+  ]);
 
   // ── Text input (same conversation, typed instead of spoken) ────
 
@@ -1644,8 +1944,11 @@ export function useRealtimeSession(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || !dcRef.current) return;
-      upsertEntry(`typed-${Date.now()}`, "user", () => trimmed, true);
-      persist("user", trimmed);
+      // Minted once and used twice: the line on screen and the archived turn are
+      // the same turn, so the echo off `/live` must land on the line, not next to it.
+      const id = `typed-${Date.now()}`;
+      upsertEntry(id, "user", () => trimmed, true);
+      persist(id, "user", trimmed);
       send(userTextEvent(trimmed));
       requestResponse();
     },
@@ -1656,7 +1959,6 @@ export function useRealtimeSession(
     void api.cancelAgentJob(jobId).catch(() => {});
   }, []);
 
-  const reloadMemory = useCallback(() => setMemoryToken((token) => token + 1), []);
 
   // Switching conversations tears the session down; a live call belongs to the
   // conversation it was opened for.
@@ -1670,6 +1972,44 @@ export function useRealtimeSession(
     setSessionUsd(0);
     return () => disconnect();
   }, [conversationId, disconnect]);
+
+  /**
+   * Put the conversation's archived turns on screen.
+   *
+   * This is the half of the contract the server counts on. A first connection to
+   * `/live` replays nothing — `since <= 0` is not a gap — precisely because the
+   * client is expected to have just read the conversation over REST; replaying
+   * the ring buffer on top of that would show every message twice. So the read
+   * is not decoration: without it the second person joining a call in progress
+   * sees an empty page until somebody says something new.
+   *
+   * It runs again whenever `history.reset` fires, which is the stream saying its
+   * buffer cannot cover our gap. `mergeRemoteEntries` adds only what is missing,
+   * so nothing already on screen is redrawn or reordered.
+   *
+   * Declared after the reset effect above so React runs it second, for the same
+   * reason the gallery seeding is.
+   */
+  useEffect(() => {
+    if (!conversationId) return;
+
+    let cancelled = false;
+    void fetchArchivedTranscript(conversationId, nowISO())
+      .then((archived) => {
+        // Re-read after the await: the user may have moved on, and seeding one
+        // conversation's turns into another is worse than seeding none.
+        if (cancelled || convRef.current !== conversationId) return;
+        if (archived.length === 0) return;
+        setTranscript((live) => mergeRemoteEntries(live, archived));
+      })
+      .catch(() => {
+        // The live half of the conversation still works without its past.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, historyToken]);
 
   // Bring the gallery back. Declared after the reset above so React runs it
   // second: opening a conversation empties the list and then refills it from the
@@ -1716,6 +2056,13 @@ export function useRealtimeSession(
     resumed,
     memoryEvents,
     sessionUsd,
+    viewers,
+    floor,
+    isFloorHolder,
+    floorRequest,
+    requestFloor,
+    grantFloor,
+    releaseFloor,
     connect,
     disconnect,
     sendText,
@@ -1723,10 +2070,4 @@ export function useRealtimeSession(
     reloadMemory,
     setSpeed,
   };
-}
-
-/** Tool output is for the model, not the sidebar — show just enough to trust it. */
-function summarize(output: string): string {
-  const firstLine = output.split("\n").find((line) => line.trim().length > 0) ?? "";
-  return firstLine.length > 120 ? `${firstLine.slice(0, 120)}…` : firstLine;
 }

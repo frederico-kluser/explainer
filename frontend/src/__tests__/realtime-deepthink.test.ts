@@ -50,7 +50,7 @@ interface Recorded {
   deepThinkJobs: () => DeepThinkJob[];
   sent: object[];
   entries: Array<{ id: string; role: TranscriptEntry["role"]; text: string; final?: boolean }>;
-  persisted: Array<{ role: string; content: string }>;
+  persisted: Array<{ id: string; role: string; content: string }>;
   responses: () => number;
 }
 
@@ -74,8 +74,8 @@ function record(): Recorded {
     upsertEntry: (id, role, mutate, final) => {
       entries.push({ id, role, text: mutate(""), final });
     },
-    persist: (role, content) => {
-      persisted.push({ role, content });
+    persist: (id, role, content) => {
+      persisted.push({ id, role, content });
     },
     send: (event) => {
       sent.push(event);
@@ -722,6 +722,7 @@ const TOKEN: RealtimeSessionToken = {
   tools: [],
   resumed: false,
   memory_events: 0,
+  floor: null,
 };
 
 /** Enough of an `RTCPeerConnection` to watch what the handshake does to it. */

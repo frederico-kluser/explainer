@@ -152,6 +152,78 @@ export type DeepThinkEvent =
 export type SessionStreamEvent = AgentJobEvent | DeepThinkEvent;
 
 // ---------------------------------------------------------------------------
+// The shared conversation — mirrors backend/src/services/conversation-bus.ts
+// ---------------------------------------------------------------------------
+//
+// A second, entirely separate stream from the one above. `GET /api/agents/events`
+// is per realtime session and feeds the model; `GET /api/conversations/:id/live`
+// is per *conversation*, is opened by every screen that has it open — spectators
+// included, and a spectator never connects a session — and feeds nothing but the
+// screen. See the invariant in `lib/conversation-stream.ts`.
+
+/** Who holds the microphone on a conversation. */
+export interface FloorSnapshot {
+  client_id: string;
+  name: string;
+  /** ISO stamp of when they took it. */
+  since: string;
+}
+
+/** A viewer asking the holder to hand it over. */
+export interface FloorRequest {
+  client_id: string;
+  name: string;
+}
+
+/** One archived turn, as the live stream carries it. */
+export interface LiveMessage {
+  id: string;
+  /** `user`, `assistant` or `tool` in practice; typed loose because it is wire. */
+  role: string;
+  content: string | null;
+  timestamp: string;
+}
+
+/**
+ * Everything `GET /api/conversations/:id/live` can deliver.
+ *
+ * `history.reset` is the one frame the server sends with no `id:` line — it is
+ * addressed to a single reconnecting client and must not move anybody's cursor.
+ */
+export type LiveEvent =
+  /** A turn reached disk, on any screen. Emitted after the write, never before. */
+  | { type: "message.appended"; messages: LiveMessage[] }
+  /**
+   * A tool the model called finished. A generated diagram rides in
+   * `meta.diagram` rather than getting an event of its own.
+   */
+  | {
+      type: "tool.finished";
+      call_id: string | null;
+      name: string;
+      output: string;
+      meta: Record<string, unknown> | null;
+    }
+  /** The memory file grew or was replaced. Coalesced server-side over 2 s. */
+  | { type: "memory.changed"; event_count: number }
+  /** Someone opened or closed the conversation. */
+  | { type: "presence.changed"; viewers: number; floor: FloorSnapshot | null }
+  /** The microphone changed hands, was taken or was let go. */
+  | { type: "floor.changed"; holder: string | null; name: string | null }
+  /** A viewer asked the holder for the microphone. */
+  | { type: "floor.requested"; client_id: string; name: string }
+  /** The replay gap fell out of the ring buffer: refetch the conversation. */
+  | { type: "history.reset"; since: number };
+
+export type LiveToolFinished = Extract<LiveEvent, { type: "tool.finished" }>;
+
+/** The three frames that describe who is here and who is talking. */
+export type LivePresenceEvent = Extract<
+  LiveEvent,
+  { type: "presence.changed" | "floor.changed" | "floor.requested" }
+>;
+
+// ---------------------------------------------------------------------------
 // Mermaid — mirrors backend/src/types/deep-tools.ts
 // ---------------------------------------------------------------------------
 
@@ -273,6 +345,14 @@ export interface RealtimeSessionToken {
   resumed: boolean;
   /** How many recorded events that resume was compressed from. */
   memory_events: number;
+  /**
+   * Who ended up with the microphone — this caller, when it identified itself.
+   *
+   * The mint is the floor's enforcement point, so a 200 here means the session
+   * is allowed to exist. Reading the holder off the body saves inferring it from
+   * the absence of a 409.
+   */
+  floor: FloorSnapshot | null;
 }
 
 // ---------------------------------------------------------------------------

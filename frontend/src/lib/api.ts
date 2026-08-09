@@ -3,6 +3,8 @@ import type {
   Conversation,
   ConversationSettings,
   CostSummary,
+  FloorRequest,
+  FloorSnapshot,
   MemoryFile,
   MemoryResume,
   Message,
@@ -27,6 +29,15 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /**
+     * The refusal's whole body, when it parsed as JSON.
+     *
+     * Some refusals carry more than a sentence: the mint's floor 409 names the
+     * holder *and* hands over the `floor` snapshot, which is what lets the UI
+     * offer "pedir o microfone" rather than "tentar de novo". Without this the
+     * caller would be parsing a Portuguese sentence to find a client id.
+     */
+    public body: unknown = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -36,13 +47,14 @@ export class ApiError extends Error {
 async function readError(response: Response): Promise<ApiError> {
   const body = await response.text().catch(() => "");
   let errorMsg = `HTTP ${response.status}`;
+  let parsed: unknown = null;
   try {
-    const parsed = JSON.parse(body);
-    errorMsg = parsed?.error ?? errorMsg;
+    parsed = JSON.parse(body);
+    errorMsg = (parsed as { error?: string } | null)?.error ?? errorMsg;
   } catch {
     // body is not JSON — keep the status code
   }
-  return new ApiError(response.status, errorMsg);
+  return new ApiError(response.status, errorMsg, parsed);
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -159,10 +171,21 @@ export const REALTIME_MINT_TIMEOUT_MS = 20_000;
  *
  * `signal` lets a caller drop the mint when the user navigates away; the
  * timeout is the floor under that, so no caller can forget it.
+ *
+ * `clientId` is what makes this the hard gate on the microphone: the mint is the
+ * only step of the WebRTC handshake that passes through our server, so it is the
+ * only refusal a second tab cannot route around. Identifying yourself here takes
+ * the floor when it is free and earns a 409 naming the holder when it is not — a
+ * caller that stays anonymous is refused too, once somebody holds it.
  */
 export async function createRealtimeSession(
   conversationId: string,
-  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  options: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    clientId?: string;
+    clientName?: string;
+  } = {},
 ): Promise<RealtimeSessionToken> {
   const controller = new AbortController();
   let timedOut = false;
@@ -181,7 +204,11 @@ export async function createRealtimeSession(
   try {
     const response = await postJSON(
       "/api/realtime/session",
-      { conversation_id: conversationId },
+      {
+        conversation_id: conversationId,
+        ...(options.clientId ? { client_id: options.clientId } : {}),
+        ...(options.clientName ? { client_name: options.clientName } : {}),
+      },
       { signal: controller.signal },
     );
     return await handleResponse<RealtimeSessionToken>(response);
@@ -245,6 +272,105 @@ export async function cancelAgentJob(jobId: string): Promise<void> {
 
 export function agentEventsUrl(conversationId: string): string {
   return `/api/agents/events?conversation_id=${encodeURIComponent(conversationId)}`;
+}
+
+// ----- The shared conversation, and the one microphone in it -----
+
+/**
+ * The SSE endpoint for one conversation, as `EventSource` wants it.
+ *
+ * The access key is deliberately absent. It is a cookie, `EventSource` sends
+ * cookies by itself on a same-origin request, and repeating the key in the query
+ * string of a connection that stays open for the whole call would put it in
+ * every proxy log and in the browser's history.
+ *
+ * No `since` either: on its own reconnect the browser resends the last `id:` it
+ * saw as `Last-Event-ID`, which is the entire reason the server numbers frames.
+ * Passing one by hand would only ever be a worse guess than the browser's.
+ */
+export function conversationStreamUrl(
+  conversationId: string,
+  clientId: string,
+): string {
+  return (
+    `/api/conversations/${encodeURIComponent(conversationId)}/live` +
+    `?client_id=${encodeURIComponent(clientId)}`
+  );
+}
+
+function floorPath(conversationId: string, suffix = ""): string {
+  return `/api/conversations/${encodeURIComponent(conversationId)}/floor${suffix}`;
+}
+
+export interface FloorState {
+  floor: FloorSnapshot | null;
+  request: FloorRequest | null;
+  viewers: number;
+}
+
+/**
+ * Who has the microphone and who asked for it.
+ *
+ * `presence.changed` already carries the holder to everyone on the stream, but
+ * not the pending request — so a client that joins after somebody asked would
+ * otherwise never learn there is a question waiting. This is the one read that
+ * closes that gap, and it is why the hook does it once on open.
+ */
+export async function getFloor(conversationId: string): Promise<FloorState> {
+  const response = await fetch(floorPath(conversationId));
+  return handleResponse<FloorState>(response);
+}
+
+/** Take the microphone. Throws `ApiError` 409 naming the holder when it is taken. */
+export async function claimFloor(
+  conversationId: string,
+  clientId: string,
+  name: string,
+): Promise<{ floor: FloorSnapshot; already_mine: boolean }> {
+  const response = await postJSON(floorPath(conversationId), {
+    client_id: clientId,
+    name,
+  });
+  return handleResponse<{ floor: FloorSnapshot; already_mine: boolean }>(response);
+}
+
+/**
+ * Hand it back.
+ *
+ * `client_id` travels in the query string rather than a body: a DELETE with a
+ * body is honoured by this server but not by every proxy between a phone and it,
+ * and the route reads either.
+ */
+export async function releaseFloor(
+  conversationId: string,
+  clientId: string,
+): Promise<{ released: boolean; floor: FloorSnapshot | null }> {
+  const response = await fetch(
+    floorPath(conversationId, `?client_id=${encodeURIComponent(clientId)}`),
+    { method: "DELETE" },
+  );
+  return handleResponse<{ released: boolean; floor: FloorSnapshot | null }>(response);
+}
+
+/**
+ * Ask the holder for it. Answers 202 — a request, not a take-over.
+ *
+ * There is no forced hand-over anywhere in this feature: this posts a card on
+ * the holder's screen and stops. Cutting somebody off mid-sentence is a worse
+ * outcome than waiting. A 409 comes back when there is nobody to ask.
+ */
+export async function requestFloor(
+  conversationId: string,
+  clientId: string,
+  name: string,
+): Promise<{ requested: FloorRequest | null; floor: FloorSnapshot | null }> {
+  const response = await postJSON(floorPath(conversationId, "/request"), {
+    client_id: clientId,
+    name,
+  });
+  return handleResponse<{ requested: FloorRequest | null; floor: FloorSnapshot | null }>(
+    response,
+  );
 }
 
 // ----- Conversations CRUD -----
