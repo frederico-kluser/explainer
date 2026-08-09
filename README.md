@@ -33,16 +33,54 @@ npm run setup
 npm run dev
 ```
 
-Abra http://localhost:5173, escolha uma fonte, clique no microfone e fale.
+`npm run dev` (o mesmo que `npm start`) é `bash dev.sh`: sobe backend (3001) e
+frontend (Vite, 5173) juntos e **abre http://localhost:5173 no navegador** assim
+que a porta 5173 começa a aceitar conexão. Escolha uma fonte, clique no
+microfone e fale. Ctrl+C derruba os dois servidores.
 
-`npm run dev` sobe backend (3001) e frontend (Vite, 5173) juntos via `dev.sh`.
-Ctrl+C derruba os dois.
+Se você não quer que ele abra o navegador — o editor já abriu a aba, é um
+container, é uma máquina remota — qualquer um destes desliga: `BROWSER=none npm run dev`,
+`NO_OPEN=1 npm run dev`, ou `bash dev.sh --no-open`.
 
 **Pré-requisitos:** Node.js 22+. Opcionais: `git` (para clonar repositórios do
 GitHub), `rg` (busca mais rápida; cai para `grep` se faltar), `pi`
 (`npm i -g @mariozechner/pi-coding-agent`, para os agentes de código),
 `surf-research-skill` (fallback de busca na web), `mkcert` (para abrir o app do
 celular — veja abaixo).
+
+## App de desktop (Electron)
+
+Existe um segundo caminho para rodar o mesmo app: uma janela Electron, com o
+main process em `electron/main` e o renderer sendo o mesmo `frontend/`.
+
+```bash
+npm run dev:desktop     # alias: npm run dev:electron
+```
+
+É `electron-vite dev`. O main process cuida do backend sozinho, mas antes de
+subir qualquer coisa ele sonda a porta 3001: **se já houver um backend
+respondendo lá, ele reusa em vez de subir um segundo** (dois processos disputando
+a mesma porta terminam com um deles saindo com erro). Na prática dá para deixar
+`npm run dev` rodando no terminal e abrir `npm run dev:desktop` ao lado — a
+janela usa o backend que já está de pé. Sem ninguém na 3001, ele mesmo sobe o
+`tsx watch` sobre `backend/src`, o mesmo comando do `dev.sh`.
+
+```bash
+npm run build:desktop   # electron-vite build → out/{main,preload,renderer}
+npm run dist            # build:desktop + electron-builder
+npm run dist:win        # build:desktop + electron-builder --win --x64
+```
+
+`npm run build` continua sendo o build **web** (`backend build` + `frontend
+build`) — é o que o `validate.sh` roda. O caminho desktop tem o seu próprio,
+`build:desktop`, e `dist`/`dist:win` o executam antes de empacotar.
+
+> **Limitação conhecida:** o app empacotado por `npm run dist` não fala com o
+> backend. Nada copia um backend para dentro do pacote — o `electron-builder.yml`
+> é uma lista de inclusão sem `extraResources` e sem `extraFiles` — e o renderer
+> empacotado é carregado por `file://`, onde as chamadas relativas
+> `fetch("/api/...")` não têm origem para onde ir. `npm run dev:desktop`
+> funciona; `npm run dist` produz uma janela sem `/api`.
 
 ## Usar do celular pela rede
 
@@ -240,12 +278,17 @@ conversa. Repositórios do GitHub viram clones rasos em `.../repos/`.
 
 | Comando | Descrição |
 |---|---|
-| `npm run dev` | Abre o site em http://localhost:5173 — é `bash dev.sh`, backend + frontend juntos |
+| `npm run dev` | Abre o site em http://localhost:5173 — é `bash dev.sh`, backend + frontend juntos (`npm start` é o mesmo) |
 | `npm run setup` | `npm install` nos dois pacotes |
-| `npm run build` | Build de produção |
-| `npm run typecheck` | `tsc --noEmit` nos dois |
+| `npm run dev:desktop` | Janela Electron — `electron-vite dev` (alias: `npm run dev:electron`) |
+| `npm run build` | Build web de produção: `backend build` + `frontend build` |
+| `npm run build:desktop` | `electron-vite build` — main, preload e renderer em `out/` |
+| `npm run dist` | Empacota com electron-builder (roda `build:desktop` antes) — veja a limitação conhecida acima |
+| `npm run dist:win` | O mesmo, com `--win --x64` |
+| `npm run typecheck` | `tsc --noEmit` nos quatro projetos: backend, frontend, `tsconfig.node.json` (main/preload do Electron) e `tsconfig.web.json` |
 | `npm run lint` | ESLint nos dois |
-| `npm run validate` | lint + typecheck + test + build |
+| `npm run test` | Vitest no backend e no frontend |
+| `npm run validate` | lint + typecheck + test + build — só backend e frontend |
 
 ## Troubleshooting
 

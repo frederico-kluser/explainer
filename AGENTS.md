@@ -7,10 +7,22 @@ backend.
 ## Commands
 
 - setup: `npm run setup`
-- dev: `npm run dev` (backend 3001 + frontend 5173)
-- build: `npm run build`
+- dev (web): `npm run dev` — `bash dev.sh`, backend 3001 + frontend 5173, and it
+  opens http://localhost:5173 itself once 5173 accepts a socket. `BROWSER=none`,
+  `NO_OPEN=1` or `bash dev.sh --no-open` suppress that. `npm start` is the same
+  script.
+- dev (desktop): `npm run dev:desktop` (alias `dev:electron`) — `electron-vite dev`.
+  The main process probes 3001 first and reuses a backend already answering
+  there instead of spawning a second one, so it can run alongside `npm run dev`.
+- build (web): `npm run build` — `backend build && frontend build`. That is what
+  `validate.sh` and this document mean by build.
+- build (desktop): `npm run build:desktop` (`electron-vite build`).
+  `npm run dist` / `npm run dist:win` run it and then package with
+  electron-builder; the packaged app does not reach the backend yet — see the
+  known limitation in `README.md`.
 - lint: `npm run lint`
-- typecheck: `npm run typecheck`
+- typecheck: `npm run typecheck` — four projects: backend, frontend,
+  `tsconfig.node.json` (Electron main + preload) and `tsconfig.web.json`.
 - test (backend): `npm --prefix backend test`
 - test (single file): `npm --prefix backend test -- src/__tests__/pricing.test.ts`
 - test (single case): `npm --prefix backend test -- -t "clamps speed into the range the API accepts"`
@@ -20,6 +32,13 @@ backend.
 `npm run validate` runs the frontend suite with `|| true`, so a failing frontend
 test cannot fail the gate. Any change touching `frontend/src` needs
 `npm --prefix frontend test` run separately, and its result reported separately.
+
+The gate's other blind spot is reach: every step in `validate.sh` is
+`npm --prefix backend …` or `npm --prefix frontend …`, so nothing under
+`electron/` or `src/shared/` is linted, typechecked, tested or built by
+`npm run validate`. Root `npm run typecheck` is the only script that covers the
+Electron main process, and no script in `package.json` runs the tests under
+`electron/main/services/__tests__/`.
 
 There is no CI. These commands run only when someone runs them.
 
