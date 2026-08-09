@@ -52,6 +52,16 @@ export default defineConfig({
 		// host, not by the phone, so port 3001 never has to leave loopback.
 		host: true,
 		port: 5173,
+		// A tab has to land on *our* app. Without this Vite quietly falls to
+		// 5174 when 5173 is taken — by a second checkout, or by a Vite left
+		// running from another project — while `dev.sh` keeps probing and
+		// opening the port it printed, which by then belongs to a stranger. A
+		// reviewer reproduced exactly that: the probe was satisfied instantly by
+		// the squatter and the browser opened the squatter's page.
+		// `dev.sh` proves a port free and hands it over with `--port`, so a
+		// drift here would mean the port was stolen in between — worth an error
+		// rather than a silent move to an address nobody announced.
+		strictPort: true,
 		https,
 		// Vite already allows localhost, *.localhost and every IP address, so
 		// reaching the server by IP needs nothing here. Only the mDNS name the
