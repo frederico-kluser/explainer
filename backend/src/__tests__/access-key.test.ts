@@ -20,6 +20,7 @@ const {
   buildAccessCookie,
   loopbackOnly,
   matchesAccessKey,
+  originIsLoopback,
   readCookie,
   requestIsSecure,
 } = await import("../middleware/access-key.js");
@@ -63,6 +64,20 @@ afterAll(() => {
 
 function get(path: string, headers: Record<string, string> = {}): Promise<Response> {
   return fetch(`${base}${path}`, { headers });
+}
+
+/**
+ * A guest, as the Vite proxy reports one.
+ *
+ * Every connection this suite makes is loopback, which is now exactly the case
+ * that passes without a key — so a test about the gate closing has to arrive
+ * the way a phone does: through the proxy, carrying the `X-Forwarded-For` that
+ * `xfwd: true` adds.
+ */
+const LAN = { "X-Forwarded-For": "192.168.1.77" };
+
+function getFromLan(path: string, headers: Record<string, string> = {}): Promise<Response> {
+  return get(path, { ...LAN, ...headers });
 }
 
 function pair(body: unknown, headers: Record<string, string> = {}): Promise<Response> {
@@ -119,15 +134,26 @@ function runMiddleware(req: ExpressRequest): { status: number; nexted: boolean }
 // ---------------------------------------------------------------------------
 
 describe("accessKeyGate", () => {
-  it("answers 401, in Portuguese, when no key is presented", async () => {
+  // The regression the loopback exemption exists to end. The gate was written
+  // for the wifi and shut the door on the person holding the house: opening the
+  // app on the machine that runs it answered 401 to every call, with no key to
+  // present, because a generated one never leaves the terminal.
+  it("lets the machine's own owner through with no key at all", async () => {
     const response = await get("/api/conversations");
+
+    expect(response.status).toBe(200);
+    expect(Array.isArray(await response.json())).toBe(true);
+  });
+
+  it("answers 401, in Portuguese, when a guest presents no key", async () => {
+    const response = await getFromLan("/api/conversations");
 
     expect(response.status).toBe(401);
     expect(await errorOf(response)).toMatch(/Acesso restrito/);
   });
 
-  it("lets the request through when the cookie carries the key", async () => {
-    const response = await get("/api/conversations", {
+  it("lets a guest through when the cookie carries the key", async () => {
+    const response = await getFromLan("/api/conversations", {
       Cookie: `${ACCESS_COOKIE}=${encodeURIComponent(KEY)}`,
     });
 
@@ -135,14 +161,14 @@ describe("accessKeyGate", () => {
     expect(Array.isArray(await response.json())).toBe(true);
   });
 
-  it("lets the request through when the X-Explainer-Key header carries the key", async () => {
-    const response = await get("/api/conversations", { "X-Explainer-Key": KEY });
+  it("lets a guest through when the X-Explainer-Key header carries the key", async () => {
+    const response = await getFromLan("/api/conversations", { "X-Explainer-Key": KEY });
 
     expect(response.status).toBe(200);
   });
 
   it("finds its cookie among the others the browser sends", async () => {
-    const response = await get("/api/conversations", {
+    const response = await getFromLan("/api/conversations", {
       Cookie: `theme=dark; ${ACCESS_COOKIE}=${encodeURIComponent(KEY)}; lang=pt-BR`,
     });
 
@@ -153,7 +179,9 @@ describe("accessKeyGate", () => {
     const wrong = `${KEY.slice(0, -1)}X`;
     expect(wrong).toHaveLength(KEY.length);
 
-    expect((await get("/api/conversations", { "X-Explainer-Key": wrong })).status).toBe(401);
+    expect((await getFromLan("/api/conversations", { "X-Explainer-Key": wrong })).status).toBe(
+      401,
+    );
   });
 
   // timingSafeEqual throws a TypeError on buffers of different sizes, and the
@@ -161,24 +189,89 @@ describe("accessKeyGate", () => {
   // was reached before both sides were hashed to a fixed width.
   it("answers 401 for keys of a different length, without throwing", async () => {
     for (const wrong of ["", "x", KEY.repeat(3)]) {
-      expect((await get("/api/conversations", { "X-Explainer-Key": wrong })).status).toBe(401);
+      expect((await getFromLan("/api/conversations", { "X-Explainer-Key": wrong })).status).toBe(
+        401,
+      );
     }
   });
 
   it("gates an unknown /api route too, so 404s do not map the surface", async () => {
-    expect((await get("/api/does-not-exist")).status).toBe(401);
-    expect((await get("/api/does-not-exist", { "X-Explainer-Key": KEY })).status).toBe(404);
+    expect((await getFromLan("/api/does-not-exist")).status).toBe(401);
+    expect((await getFromLan("/api/does-not-exist", { "X-Explainer-Key": KEY })).status).toBe(404);
+
+    // The owner gets the honest answer, since nothing was hidden from them.
+    expect((await get("/api/does-not-exist")).status).toBe(404);
   });
 
   it("leaves /api/health outside the gate", async () => {
-    const response = await get("/api/health");
+    const response = await getFromLan("/api/health");
 
     expect(response.status).toBe(200);
     expect(((await response.json()) as { status: string }).status).toBe("ok");
   });
 
   it("leaves /api/pair outside the gate — it is the door", async () => {
-    expect((await pair({ key: KEY })).status).toBe(204);
+    expect((await pair({ key: KEY }, LAN)).status).toBe(204);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The forged origin — why the whole forwarded chain is read, not its head
+// ---------------------------------------------------------------------------
+
+describe("a forged X-Forwarded-For", () => {
+  // What a phone actually produces when it sends `X-Forwarded-For: 127.0.0.1`:
+  // xfwd appends the real peer instead of replacing the header, so the lie
+  // survives in front of the truth. A gate that believed the first hop would
+  // hand this request every conversation, every memory and the OpenAI account.
+  it("does not open the gate when the proxy appended the real address behind it", async () => {
+    const response = await get("/api/conversations", {
+      "X-Forwarded-For": "127.0.0.1, 192.168.1.50",
+    });
+
+    expect(response.status).toBe(401);
+    expect(await errorOf(response)).toMatch(/Acesso restrito/);
+  });
+
+  it("does not open the gate for a longer invented chain either", async () => {
+    const response = await get("/api/conversations", {
+      "X-Forwarded-For": "127.0.0.1, ::1, 10.0.0.9, 192.168.1.50",
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("still admits that chain when the guest does carry the key", async () => {
+    const response = await get("/api/conversations", {
+      "X-Forwarded-For": "127.0.0.1, 192.168.1.50",
+      "X-Explainer-Key": KEY,
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  // A LAN client dialling port 3001 straight, which only exists under the
+  // EXPLAINER_HOST opt-in: the header is pure invention and the socket is the
+  // only witness left. A server bound to 127.0.0.1 cannot produce that peer,
+  // so the predicate is exercised on its own.
+  it("is not consulted at all when the peer itself is not loopback", () => {
+    expect(
+      originIsLoopback(
+        fakeRequest({
+          remoteAddress: "192.168.1.50",
+          headers: { "x-forwarded-for": "127.0.0.1" },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts the chains the proxy really produces for the owner", () => {
+    for (const chain of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "127.0.0.1, ::1"]) {
+      expect(originIsLoopback(fakeRequest({ headers: { "x-forwarded-for": chain } }))).toBe(true);
+    }
+
+    // No proxy in front at all: the peer is already the origin.
+    expect(originIsLoopback(fakeRequest({}))).toBe(true);
   });
 });
 
@@ -201,12 +294,12 @@ describe("POST /api/pair", () => {
   // The whole feature in one case: a device that only ever had the link ends up
   // reading the conversation list, and the same device without it does not.
   it("issues a cookie that opens the gate", async () => {
-    expect((await get("/api/conversations")).status).toBe(401);
+    expect((await getFromLan("/api/conversations")).status).toBe(401);
 
-    const setCookie = (await pair({ key: KEY })).headers.get("set-cookie") ?? "";
+    const setCookie = (await pair({ key: KEY }, LAN)).headers.get("set-cookie") ?? "";
     const jar = setCookie.split(";")[0]!;
 
-    expect((await get("/api/conversations", { Cookie: jar })).status).toBe(200);
+    expect((await getFromLan("/api/conversations", { Cookie: jar })).status).toBe(200);
   });
 
   it("refuses a wrong key with 401 and no cookie", async () => {

@@ -118,6 +118,27 @@ O backend (3001) continua **só em loopback**. O celular fala com o Vite, e é o
 Vite, rodando no computador, que repassa `/api` para o backend — quem está na
 rede nunca alcança a porta 3001 diretamente.
 
+### 4. A chave de acesso
+
+Tudo sob `/api` é protegido, porque nesse endereço cabe ler suas conversas,
+apagar a memória, listar `~/Projects` e gastar sua cota da OpenAI. Mas a porta
+só existe para quem vem do wifi:
+
+- **Neste computador não precisa de chave.** `http://localhost:5173` abre e
+  funciona sem configurar nada.
+- **De outro aparelho, precisa.** O terminal imprime a cada boot o link com a
+  chave no fim (`http://SEU-IP:5173/?k=…`); quem abre esse link é pareado uma
+  vez e o navegador guarda um cookie por 30 dias. Defina
+  `EXPLAINER_ACCESS_KEY` no `.env` para o link não mudar a cada reinício.
+
+O que separa os dois é o `xfwd: true` do proxy em `frontend/vite.config.ts`:
+como o proxy roda nesta máquina, sem ele toda requisição chegaria ao backend
+vinda de `127.0.0.1`, o celular e você indistinguíveis. Com ele, o backend lê o
+IP real em `X-Forwarded-For` — e só acredita nesse cabeçalho porque a porta
+3001 é loopback, então quem fala com ela é o proxy e nunca a rede. Abrir o app
+pelo IP da própria máquina, em vez de `localhost`, conta como visitante e pede
+a chave, porque aí não há mesmo como distinguir.
+
 ## Variáveis de ambiente
 
 | Variável | Descrição | Default | Obrigatória |
@@ -128,6 +149,7 @@ rede nunca alcança a porta 3001 diretamente.
 | `OPENAI_SEARCH_MODEL` | Modelo do `web_search` (Responses API) | `gpt-5.2` | Não |
 | `OPENAI_TEXT_MODEL` | Modelo para títulos e resumos | `gpt-5.2-mini` | Não |
 | `OPENAI_ADMIN_KEY` | Chave de administração, só para ler o gasto da OpenAI | — | Não |
+| `EXPLAINER_ACCESS_KEY` | Chave que guarda `/api` para quem chega pelo wifi (no próprio computador não é usada) | gerada a cada boot | Não |
 | `EXPLAINER_MACHINE_DOCS` | Docs da máquina | `~/Projects/config` | Não |
 | `EXPLAINER_REPO_ROOTS` | Diretórios extras permitidos como repo local | `~/Projects` + cache | Não |
 | `PI_BIN` / `PI_PROVIDER` / `PI_MODEL` / `PI_THINKING` / `PI_TIMEOUT_MS` | Configuração do agente `pi` | do `~/.pi/agent/settings.json` | Não |

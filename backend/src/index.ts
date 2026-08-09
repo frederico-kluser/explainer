@@ -62,7 +62,9 @@ app.use((_req, res, next) => {
 
 // The access gate, before the body parsers on purpose: a request that cannot
 // prove it was invited has no business getting a 25 mb JSON body read into
-// memory first. `/api/health` and `/api/pair` answer in front of it.
+// memory first. `/api/health` and `/api/pair` answer in front of it, and so
+// does anything that really started on this machine — the key guards the wifi,
+// not the owner.
 app.use("/api", accessKeyGate(ACCESS_KEY));
 
 // JSON body parsers, largest first.
@@ -141,9 +143,10 @@ function lanAddress(): string | null {
 app.listen(PORT, HOST, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 
-  // The link is the whole interface to the key: whoever opens it is paired, and
-  // whoever did not receive it cannot spend the host's OpenAI credit. Printing
-  // it every boot is what makes "abra essa url" a complete instruction.
+  // Two lines because there are two audiences, and conflating them is what made
+  // the key look mandatory: here the app opens with nothing, and the link is
+  // only for the device that is not this computer. Printing both every boot is
+  // what makes "abra essa url" a complete instruction either way.
   const uiPort = Number(process.env.EXPLAINER_PUBLIC_PORT) || 5173;
   const uiHost = lanAddress() ?? "localhost";
   console.log(
@@ -151,7 +154,12 @@ app.listen(PORT, HOST, () => {
       ? "[access] Usando a EXPLAINER_ACCESS_KEY do ambiente."
       : "[access] Nenhuma EXPLAINER_ACCESS_KEY definida — gerei uma só para esta execução.",
   );
-  console.log(`[access] Link para compartilhar: http://${uiHost}:${uiPort}/?k=${ACCESS_KEY}`);
+  console.log(
+    `[access] Neste computador não precisa de chave: http://localhost:${uiPort}`,
+  );
+  console.log(
+    `[access] Para outro aparelho no wifi, compartilhe: http://${uiHost}:${uiPort}/?k=${ACCESS_KEY}`,
+  );
 });
 
 export default app;

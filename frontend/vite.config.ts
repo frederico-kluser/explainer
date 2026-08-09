@@ -65,6 +65,19 @@ export default defineConfig({
 			"/api": {
 				target: "http://localhost:3001",
 				changeOrigin: true,
+				// Without this the backend cannot tell its owner from a guest.
+				// This proxy is resolved by the Node process on the host, so
+				// every request it forwards reaches 127.0.0.1:3001 *from*
+				// 127.0.0.1 — the phone on the wifi and the person sitting at
+				// the machine arrive as the same socket. `xfwd` adds
+				// `X-Forwarded-For` carrying the address that opened the
+				// connection to Vite, which is the only thing left that still
+				// separates them. It appends rather than replaces, so a client
+				// sending its own value cannot overwrite the truth —
+				// `backend/src/middleware/access-key.ts` is the consumer, and
+				// explains why that is what makes the header safe to believe
+				// there and nowhere else.
+				xfwd: true,
 			},
 		},
 	},
