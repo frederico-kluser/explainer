@@ -437,7 +437,7 @@ export interface ConversationSettings {
  */
 export type ThinkerProvider = ProviderName;
 
-export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
  * One roster row's model: the provider, the provider's own id, and everything
