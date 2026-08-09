@@ -3,10 +3,17 @@ import { v4 as uuidv4 } from "uuid";
 
 import { braveSearch } from "./brave.js";
 import { addCost } from "./costs.js";
-import { TEXT_MODEL } from "./openai.js";
 import { priceTextResponse, ratesFor } from "./pricing.js";
 import { adapterFor } from "./providers/index.js";
+import { providerKeyPresent } from "./providers/keys.js";
 import type { ChatResponse, ToolCall, ToolSpec, Turn } from "./providers/types.js";
+import { getRoster } from "./thinker-roster.js";
+import type {
+  ModelChoice,
+  ThinkerProvider,
+  ThinkerRoster,
+  ThinkerSlot,
+} from "../types/thinker-roster.js";
 import {
   MAX_THINKERS,
   type BraveResult,
@@ -70,12 +77,6 @@ function searchBudget(): number {
 
 function roundTimeoutMs(): number {
   return envNumber("DEEP_THINK_TIMEOUT_MS", 180_000);
-}
-
-function deepThinkModel(): string {
-  return (
-    process.env.OPENAI_DEEPTHINK_MODEL || process.env.OPENAI_TEXT_MODEL || TEXT_MODEL
-  );
 }
 
 const MAX_SCENARIO_CHARS = 4_000;
@@ -185,8 +186,13 @@ export interface DeepThinkOptions {
  * The job comes back `running` with its thinkers already listed as `pending`, so
  * the UI can draw the fan-out before the planner has named the angles. Progress
  * and the synthesis arrive on the event bus.
+ *
+ * The roster is read on this path — not on the first model call — because both
+ * the fan-out's ceiling and its pending cards depend on it. A machine with no
+ * roster file gets `defaultRoster()`, which reproduces what this module did
+ * before the roster existed, model for model.
  */
-export function dispatchDeepThink(options: DeepThinkOptions): DeepThinkJob {
+export async function dispatchDeepThink(options: DeepThinkOptions): Promise<DeepThinkJob> {
   const { conversationId } = options;
   const scenario = (options.scenario ?? "").trim();
   if (!scenario) {
@@ -204,7 +210,17 @@ export function dispatchDeepThink(options: DeepThinkOptions): DeepThinkJob {
     );
   }
 
-  const count = clampThinkerCount(options.thinkerCount ?? defaultThinkerCount());
+  const roster = await getRoster();
+  const enabledSlots = roster.slots.filter((slot) => slot.enabled);
+  if (enabledSlots.length === 0) {
+    throw new DeepThinkError("Nenhum pensador habilitado no roster.", 400);
+  }
+
+  const requested = clampThinkerCount(options.thinkerCount ?? defaultThinkerCount());
+  // The user's number is a ceiling, and so is the roster: a round cannot fan
+  // out to a slot that is switched off.
+  const count = Math.min(enabledSlots.length, requested);
+
   const job: DeepThinkJob = {
     id: uuidv4(),
     conversation_id: conversationId,
@@ -219,7 +235,7 @@ export function dispatchDeepThink(options: DeepThinkOptions): DeepThinkJob {
 
   jobs.set(job.id, job);
   pruneJobs();
-  void runRound(job, options, count);
+  void runRound(job, options, count, roster, enabledSlots);
 
   return job;
 }
@@ -238,6 +254,8 @@ async function runRound(
   job: DeepThinkJob,
   options: DeepThinkOptions,
   count: number,
+  roster: ThinkerRoster,
+  enabledSlots: ThinkerSlot[],
 ): Promise<void> {
   const controller = new AbortController();
   const budget = options.timeoutMs ?? roundTimeoutMs();
@@ -258,24 +276,34 @@ async function runRound(
 
   // Checked before the first call rather than after the last: an unpriced model
   // still runs and still charges, so the warning has to precede the spending.
-  warnIfUnpriced(deepThinkModel());
+  // One warning per model the round will actually call — planner, master and
+  // every enabled slot — not just for the default one.
+  for (const model of roundModels(roster, enabledSlots)) warnIfUnpriced(model);
+  warnUnkeyedProviders(roster, enabledSlots);
 
   const reflection = (options.reflection ?? "").trim().slice(0, MAX_REFLECTION_CHARS);
   const search = options.searchFn ?? braveSearch;
   const signal = controller.signal;
 
   try {
-    const planned = await plan(job.scenario, reflection, count, signal);
+    const planned = await plan(roster.planner, job.scenario, reflection, count, signal);
     round.spent.usd += planned.usd;
     if (job.status !== "running") return;
 
+    // A slot's fixed angle overrides the planner's label for that thinker
+    // alone: the operator's escape hatch wins over the planner's naming.
+    const overridden = planned.specs.map((spec, index) => {
+      const angle = enabledSlots[index]?.angle;
+      return angle ? { ...spec, angle } : spec;
+    });
+
     // Ids stay put so an event already delivered still points at the same card.
-    job.thinkers = planned.specs.map((spec, index) => ({
+    job.thinkers = overridden.map((spec, index) => ({
       id: job.thinkers[index]?.id ?? spec.id,
       angle: spec.angle,
       status: "pending" as const,
     }));
-    const specs = planned.specs.map((spec, index) => ({
+    const specs = overridden.map((spec, index) => ({
       ...spec,
       id: job.thinkers[index]?.id ?? spec.id,
     }));
@@ -292,7 +320,7 @@ async function runRound(
 
       let outcome: Awaited<ReturnType<typeof think>>;
       try {
-        outcome = await think(spec, context);
+        outcome = await think(spec, context, enabledSlots[index]!.model);
       } catch {
         // Only an abort escapes `think`; the round is already finishing, and
         // whatever this thinker paid for is on `round.spent` regardless.
@@ -318,7 +346,7 @@ async function runRound(
     }
 
     setActivity(job, "sintetizando as conclusoes");
-    const synthesised = await synthesise(job, reflection, signal);
+    const synthesised = await synthesise(roster.master, job, reflection, signal);
     round.spent.usd += synthesised.usd;
     if (job.status !== "running") return;
 
@@ -395,6 +423,7 @@ function toPending(spec: ThinkerSpec): ThinkerResult {
 }
 
 async function plan(
+  choice: ModelChoice,
   scenario: string,
   reflection: string,
   count: number,
@@ -414,6 +443,7 @@ async function plan(
 
   try {
     const response = await respond(
+      choice,
       [{ role: "user", content: instructions }],
       { maxOutputTokens: 1_200, timeoutMs: PLANNER_TIMEOUT_MS, signal },
     );
@@ -547,10 +577,11 @@ function bill(round: Round, tally: ThinkerTally, usd: number): void {
 async function think(
   spec: ThinkerSpec,
   context: ThinkerContext,
+  choice: ModelChoice,
 ): Promise<Partial<ThinkerResult>> {
   const tally: ThinkerTally = { searches: 0, attempts: 0, usd: 0 };
   try {
-    return await runThinker(spec, context, tally);
+    return await runThinker(spec, context, choice, tally);
   } catch (err) {
     if (isAbort(err)) throw err; // the round is ending; not this thinker's fault
     return { status: "error", error: errText(err), searches: tally.searches, usd: tally.usd };
@@ -560,6 +591,7 @@ async function think(
 async function runThinker(
   spec: ThinkerSpec,
   context: ThinkerContext,
+  choice: ModelChoice,
   tally: ThinkerTally,
 ): Promise<Partial<ThinkerResult>> {
   const { job, round, reflection, search, signal } = context;
@@ -592,8 +624,12 @@ async function runThinker(
   const maxTurns = budget + 2;
 
   for (let turn = 0; turn < maxTurns; turn++) {
-    const response = await respond(turns, {
-      tools: [SEARCH_TOOL],
+    const response = await respond(choice, turns, {
+      // A model that does not accept tools is called without them: it answers
+      // on its first turn, losing the web but keeping its angle. That is the
+      // projected degradation — the thinker is not switched off, only
+      // unassisted.
+      tools: choice.supports_tools === false ? [] : [SEARCH_TOOL],
       maxOutputTokens: 1_400,
       timeoutMs: THINKER_TIMEOUT_MS,
       signal,
@@ -757,6 +793,7 @@ function renderResults(query: string, results: BraveResult[], summary?: string):
 // ---------------------------------------------------------------------------
 
 async function synthesise(
+  choice: ModelChoice,
   job: DeepThinkJob,
   reflection: string,
   signal: AbortSignal,
@@ -785,6 +822,7 @@ async function synthesise(
 
   try {
     const response = await respond(
+      choice,
       [{ role: "user", content: instructions }],
       { maxOutputTokens: 1_000, timeoutMs: SYNTHESIS_TIMEOUT_MS, signal },
     );
@@ -914,18 +952,25 @@ function pruneJobs(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Model calls, through the OpenAI adapter
+// Model calls, through the choice's adapter
 // ---------------------------------------------------------------------------
 //
-// The wire protocol — flat tools, `function_call` items coming back,
-// `function_call_output` items going in, matched by `call_id` — lives in
-// `providers/openai-responses.ts`, which also resolves the key at call time and
-// owns the timeout and abort plumbing. What stays here is the carry-forward
-// rule that protocol enforces: everything the model emitted must be replayed on
-// the next request of the same exchange, so the round hands the adapter back
-// its own items, untouched, on `Turn.raw`.
+// The wire protocol — flat tools on the Responses wire, `tool_calls` nested
+// under `function` on the Chat wire, items or messages replayed verbatim — lives
+// in `providers/openai-responses.ts` and `providers/openai-chat.ts`, which also
+// resolve the key at call time and own the timeout and abort plumbing. What
+// stays here is the carry-forward rule those protocols enforce: everything the
+// model emitted must be replayed on the next request of the same exchange, so
+// the round hands the adapter back its own items, untouched, on `Turn.raw`.
+//
+// Which adapter answers is the CHOICE's decision, never a constant: the choice
+// carries both the provider and the model, and a model id alone does not say
+// where it lives. Routing an OpenRouter model through the OpenAI adapter would
+// send it to api.openai.com with an OpenAI key — a 401 the operator would read
+// as a revoked key.
 
 async function respond(
+  choice: ModelChoice,
   turns: Turn[],
   options: {
     tools?: ToolSpec[];
@@ -934,10 +979,14 @@ async function respond(
     signal: AbortSignal;
   },
 ): Promise<ChatResponse> {
-  return adapterFor("openai").chat({
-    model: deepThinkModel(),
+  const adapter = adapterFor(choice.provider);
+  return adapter.chat({
+    model: choice.model,
     turns,
     ...(options.tools?.length ? { tools: options.tools } : {}),
+    // Absent means "send nothing", which is not the same as sending a default:
+    // a non-reasoning model rejects the field outright.
+    ...(choice.effort ? { effort: choice.effort } : {}),
     maxOutputTokens: options.maxOutputTokens,
     timeoutMs: options.timeoutMs,
     signal: options.signal,
@@ -964,19 +1013,58 @@ function priceOf(response: ChatResponse): number {
   return priceTextResponse(model, response.usage);
 }
 
+/**
+ * The models a round will actually call, deduplicated.
+ *
+ * Planner, master and every enabled slot — the fan-out is exactly those calls,
+ * and each distinct model deserves its own warning. `warnIfUnpriced` dedupes
+ * too, but only after the first call has already logged; this set keeps the
+ * round-start loop honest about what is about to be spent.
+ */
+function roundModels(roster: ThinkerRoster, enabledSlots: ThinkerSlot[]): string[] {
+  const models = new Set<string>([roster.planner.model, roster.master.model]);
+  for (const slot of enabledSlots) models.add(slot.model.model);
+  return [...models];
+}
+
+/**
+ * Say, before the first call, that part of the round is doomed.
+ *
+ * A roster can point at a provider whose key was never configured. The calls
+ * then fail where they are made — the planner falls back to the deterministic
+ * angles, a thinker reports an error, the synthesis assembles locally — so the
+ * round survives, but only by being wrong about which models it thought it was
+ * using. Same policy as `warnIfUnpriced`: the warning has to precede the
+ * spending, because by the time the first 401 lands the round has already
+ * decided its shape.
+ */
+function warnUnkeyedProviders(roster: ThinkerRoster, enabledSlots: ThinkerSlot[]): void {
+  const providers = new Set<ThinkerProvider>([roster.planner.provider, roster.master.provider]);
+  for (const slot of enabledSlots) providers.add(slot.model.provider);
+
+  for (const provider of providers) {
+    if (providerKeyPresent(provider)) continue;
+    console.warn(
+      `[deep-think] provider "${provider}" has no key configured; every model routed to it ` +
+        "will fail at call time. The round degrades per role: the planner falls back to the " +
+        "default angles, a thinker reports error, the synthesis assembles locally.",
+    );
+  }
+}
+
 /** One warning per model id; a round makes dozens of calls with the same one. */
 const unpricedModels = new Set<string>();
 
 /**
  * Say out loud that a round will report zero.
  *
- * `priceTextResponse` answers 0 for a model it has no rates for, so an
- * `OPENAI_DEEPTHINK_MODEL` the rate card has never heard of leaves `cost_usd`
- * undefined, `addCost` uncalled and the panel showing nothing — while the
- * account is charged in full. That silent zero is a documented failure mode of
- * this codebase; this env var is a new door into it, on the most expensive
- * operation the app has. The round still runs: a missing price is a bookkeeping
- * problem, not a reason to refuse to think.
+ * `priceTextResponse` answers 0 for a model it has no rates for, so a roster
+ * model the rate card has never heard of leaves `cost_usd` undefined, `addCost`
+ * uncalled and the panel showing nothing — while the account is charged in
+ * full. That silent zero is a documented failure mode of this codebase, and the
+ * roster is a new door into it, on the most expensive operation the app has.
+ * The round still runs: a missing price is a bookkeeping problem, not a reason
+ * to refuse to think.
  */
 function warnIfUnpriced(model: string): void {
   if (ratesFor(model) || unpricedModels.has(model)) return;

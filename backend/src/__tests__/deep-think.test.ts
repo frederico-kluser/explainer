@@ -1,9 +1,11 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { MAX_THINKERS, type DeepThinkEvent, type SearchFn } from "../types/deep-tools.js";
+import type { ModelChoice, ThinkerSlot } from "../types/thinker-roster.js";
+import { ROSTER_PATH, forgetRoster } from "../services/thinker-roster.js";
 import { priceTextResponse, type TextUsage } from "../services/pricing.js";
 
 // The engine talks to exactly two things: the Responses API over `fetch`, and a
@@ -19,6 +21,9 @@ const tmpHome = mkdtempSync(join(tmpdir(), "explainer-deep-think-"));
 process.env.HOME = tmpHome;
 process.env.OPENAI_API_KEY = "sk-test-nao-e-uma-chave-real";
 process.env.OPENAI_DEEPTHINK_MODEL = "gpt-5.2-mini";
+// Pinned so the "no roster file" assertions can name the exact OpenAI endpoint;
+// the shell running the suite should not decide where a round goes.
+delete process.env.OPENAI_BASE_URL;
 
 const mod = await import("../services/deep-think.js");
 const costs = await import("../services/costs.js");
@@ -41,18 +46,27 @@ const requests: Body[] = [];
  */
 const answered: Payload[] = [];
 const searchCalls: string[] = [];
+/** Where each request went and with which key — the provider-routing assertions. */
+const urls: string[] = [];
+const auths: string[] = [];
 let handler: (body: Body) => Payload | Promise<Payload> = () => textPayload("vazio");
 
-vi.stubGlobal("fetch", async (_url: string, init: { body: string; signal?: AbortSignal }) => {
-  const body = JSON.parse(init.body) as Body;
-  requests.push(body);
-  // An aborted request is dropped rather than answered: a provider does not send
-  // — or bill for — an answer nobody is waiting for, and a stub that ignores the
-  // signal delivers a cancelled round's answers into whatever test runs next.
-  const payload = await Promise.race([handler(body), rejectOnAbort(init.signal)]);
-  answered.push(payload);
-  return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
-});
+vi.stubGlobal(
+  "fetch",
+  async (url: unknown, init: { body: string; signal?: AbortSignal; headers?: Record<string, string> }) => {
+    urls.push(String(url));
+    auths.push(init.headers?.Authorization ?? "");
+    const body = JSON.parse(init.body) as Body;
+    requests.push(body);
+    // An aborted request is dropped rather than answered: a provider does not
+    // send — or bill for — an answer nobody is waiting for, and a stub that
+    // ignores the signal delivers a cancelled round's answers into whatever
+    // test runs next.
+    const payload = await Promise.race([handler(body), rejectOnAbort(init.signal)]);
+    answered.push(payload);
+    return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+  },
+);
 
 function rejectOnAbort(signal?: AbortSignal): Promise<never> {
   return new Promise<never>((_resolve, reject) => {
@@ -119,19 +133,26 @@ function searchCallPayload(query: string): Payload {
 // --- request inspection -----------------------------------------------------
 
 function stageOf(body: Body): "planner" | "thinker" | "synthesis" {
+  // Both wires carry the tool list on `body.tools` when a thinker gets one.
   if (Array.isArray(body.tools)) return "thinker";
-  return firstUserText(body).includes("resposta consolidada")
-    ? "synthesis"
-    : "planner";
+  const text = firstUserText(body);
+  if (text.includes("resposta consolidada")) return "synthesis";
+  // A thinker whose model does not accept tools is called WITHOUT them, so the
+  // marker above misses it; its prompt still names the role.
+  if (text.includes("Voce e um dos varios pensadores")) return "thinker";
+  return "planner";
 }
 
 /**
- * The adapter always sends `input` as an item array — even a one-turn prompt —
- * so a stage is told apart by the first user turn's wording, not by a string.
+ * The Responses adapter sends `input` as an item array, the Chat adapter sends
+ * `messages` — both carry `{ role, content }` — and a stage is told apart by
+ * the first user turn's wording, not by the wire.
  */
 function firstUserText(body: Body): string {
-  const input = body.input as Array<{ role?: string; content?: string }> | undefined;
-  return String(input?.find((item) => item.role === "user")?.content ?? "");
+  const turns = Array.isArray(body.input)
+    ? body.input
+    : ((body.messages as Array<{ role?: string; content?: string }> | undefined) ?? []);
+  return String(turns.find((item) => item.role === "user")?.content ?? "");
 }
 
 function thinkerPrompt(body: Body): string {
@@ -194,7 +215,18 @@ beforeEach(() => {
   requests.length = 0;
   answered.length = 0;
   searchCalls.length = 0;
+  urls.length = 0;
+  auths.length = 0;
   delete process.env.DEEP_THINK_MAX_SEARCHES;
+});
+
+afterEach(() => {
+  // A staged roster must not leak into the next test: everything outside the
+  // roster describe block is written against the default (no file).
+  rmSync(ROSTER_PATH, { force: true });
+  forgetRoster();
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
 });
 
 afterAll(() => {
@@ -204,11 +236,51 @@ afterAll(() => {
   rmSync(tmpHome, { recursive: true, force: true });
 });
 
-describe("dispatchDeepThink", () => {
-  it("clamps the thinker count into 1..MAX_THINKERS", () => {
-    handler = () => textPayload("sem plano");
+// --- roster staging ---------------------------------------------------------
+//
+// The engine reads the roster off disk at dispatch time, so a test that wants
+// a non-default roster writes the file and drops the service's cache. The
+// round and the default both follow the environment: `MODEL` is pinned at the
+// top of this file, so a choice that does not override it stays on it.
 
-    const low = mod.dispatchDeepThink({
+function rosterChoice(overrides: Partial<ModelChoice> = {}): ModelChoice {
+  return {
+    provider: "openai",
+    model: MODEL,
+    context_window: null,
+    supports_tools: true,
+    rate: null,
+    ...overrides,
+  };
+}
+
+/** Exactly MAX_THINKERS slots in index order; the first `count` enabled. */
+function enabledSlots(count: number, model: ModelChoice = rosterChoice()): ThinkerSlot[] {
+  return Array.from({ length: MAX_THINKERS }, (_, i) => ({
+    index: i + 1,
+    enabled: i < count,
+    model: { ...model },
+  }));
+}
+
+function writeRoster(master: ModelChoice, planner: ModelChoice, slots: ThinkerSlot[]): void {
+  mkdirSync(dirname(ROSTER_PATH), { recursive: true });
+  writeFileSync(
+    ROSTER_PATH,
+    JSON.stringify({ version: 1, master, planner, slots, updated_at: new Date().toISOString() }),
+    "utf-8",
+  );
+  forgetRoster();
+}
+
+describe("dispatchDeepThink", () => {
+  it("clamps the thinker count into 1..MAX_THINKERS", async () => {
+    handler = () => textPayload("sem plano");
+    // All ten slots enabled, so the ceiling tested here is the user's number,
+    // not the roster's default of four.
+    writeRoster(rosterChoice(), rosterChoice(), enabledSlots(MAX_THINKERS));
+
+    const low = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "vale a pena migrar?",
       thinkerCount: 0,
@@ -217,7 +289,7 @@ describe("dispatchDeepThink", () => {
     expect(low.thinkers).toHaveLength(1);
     mod.cancelDeepThink(low.id);
 
-    const high = mod.dispatchDeepThink({
+    const high = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "vale a pena migrar?",
       thinkerCount: 25,
@@ -228,10 +300,10 @@ describe("dispatchDeepThink", () => {
     mod.cancelDeepThink(high.id);
   });
 
-  it("returns a running job before any model call has finished", () => {
+  it("returns a running job before any model call has finished", async () => {
     handler = () => new Promise<Payload>((resolve) => setTimeout(() => resolve(textPayload("x")), 200));
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "devo trocar de banco de dados?",
       thinkerCount: 2,
@@ -275,7 +347,7 @@ describe("dispatchDeepThink", () => {
     };
 
     const conv = randomUUID();
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: conv,
       scenario: "devo reescrever o modulo de cobranca?",
       reflection: "acho que sim, mas o prazo assusta",
@@ -332,7 +404,7 @@ describe("dispatchDeepThink", () => {
       }
     };
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "vale automatizar o relatorio mensal?",
       thinkerCount: 3,
@@ -363,7 +435,7 @@ describe("dispatchDeepThink", () => {
       }
     };
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "abrir o codigo do projeto?",
       thinkerCount: 3,
@@ -389,7 +461,7 @@ describe("dispatchDeepThink", () => {
       new Promise<Payload>((resolve) => setTimeout(() => resolve(textPayload("[]")), 100));
 
     const conv = randomUUID();
-    const first = mod.dispatchDeepThink({
+    const first = await mod.dispatchDeepThink({
       conversationId: conv,
       scenario: "primeira rodada",
       thinkerCount: 2,
@@ -399,7 +471,7 @@ describe("dispatchDeepThink", () => {
     // Ten thinkers cost real money; a second concurrent round doubles the bill.
     let status = 0;
     try {
-      mod.dispatchDeepThink({ conversationId: conv, scenario: "segunda rodada", searchFn });
+      await mod.dispatchDeepThink({ conversationId: conv, scenario: "segunda rodada", searchFn });
       expect.unreachable("the second dispatch should have been refused");
     } catch (err) {
       expect(err).toBeInstanceOf(mod.DeepThinkError);
@@ -437,7 +509,7 @@ describe("dispatchDeepThink", () => {
       }
     };
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "quanto custa hospedar isso?",
       thinkerCount: 1,
@@ -475,7 +547,7 @@ describe("dispatchDeepThink", () => {
       if (event.type === "deep_think_activity") activities.push(event.activity);
     });
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "a busca esta fora, e agora?",
       thinkerCount: 1,
@@ -518,7 +590,7 @@ describe("dispatchDeepThink", () => {
       }
     };
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "isso vai estourar o tempo",
       thinkerCount: 2,
@@ -562,7 +634,7 @@ describe("dispatchDeepThink", () => {
       }
     };
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "cancelar no meio custa quanto?",
       thinkerCount: 3,
@@ -598,7 +670,7 @@ describe("dispatchDeepThink", () => {
       }
     };
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "estourar o tempo custa quanto?",
       thinkerCount: 2,
@@ -632,7 +704,7 @@ describe("dispatchDeepThink", () => {
     };
 
     const conversationId = randomUUID();
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId,
       scenario: "vale a pena trocar o banco?",
       thinkerCount: 1,
@@ -695,7 +767,7 @@ describe("dispatchDeepThink", () => {
       }
     };
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "o que as fontes dizem?",
       thinkerCount: 2,
@@ -722,7 +794,7 @@ describe("dispatchDeepThink", () => {
     });
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "e se o modelo nao estiver na tabela?",
       thinkerCount: 1,
@@ -756,7 +828,7 @@ describe("dispatchDeepThink", () => {
       }
     };
 
-    const job = mod.dispatchDeepThink({
+    const job = await mod.dispatchDeepThink({
       conversationId: randomUUID(),
       scenario: "isso vai ser lido em voz alta",
       thinkerCount: 1,
@@ -775,9 +847,257 @@ describe("dispatchDeepThink", () => {
     expect(done.synthesis).toContain("Resumo do que ficou");
   });
 
-  it("rejects an empty scenario", () => {
-    expect(() =>
+  it("rejects an empty scenario", async () => {
+    await expect(
       mod.dispatchDeepThink({ conversationId: randomUUID(), scenario: "   ", searchFn }),
-    ).toThrow(mod.DeepThinkError);
+    ).rejects.toThrow(mod.DeepThinkError);
+  });
+});
+
+// --- the roster -------------------------------------------------------------
+//
+// The engine reads `thinker-roster.json` at dispatch time, so these tests stage
+// a file and drop the service's cache. The Chat-wire tests run the OpenRouter
+// adapter for real against the same stubbed `fetch` — the request building, the
+// usage mapping and the price arithmetic all execute, exactly like the
+// Responses-wire tests above.
+
+describe("roster", () => {
+  /** The Chat-wire response shape OpenRouter and DeepSeek answer with. */
+  function chatTextPayload(text: string, model = MODEL): Payload {
+    return {
+      model,
+      usage: {
+        prompt_tokens: 1_000,
+        completion_tokens: 400,
+        prompt_tokens_details: { cached_tokens: 0 },
+      },
+      choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }],
+    };
+  }
+
+  /** A handler that answers every stage over the Chat wire. */
+  function chatHandler(model: string): (body: Body) => Payload {
+    return (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return chatTextPayload(
+            '[{"angle":"evidencia","prompt":"levante os numeros"},' +
+              '{"angle":"risco","prompt":"liste os modos de falha"}]',
+            model,
+          );
+        case "thinker":
+          return chatTextPayload(
+            `Pensamento sobre ${angleOf(thinkerPrompt(body))}, com conclusao.`,
+            model,
+          );
+        default:
+          return chatTextPayload("Consolidado.", model);
+      }
+    };
+  }
+
+  it("routes an OpenRouter choice to the OpenRouter adapter with its own key", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-v1-chave-de-teste-abcdefghijklmn";
+    const orChoice = rosterChoice({
+      provider: "openrouter",
+      model: "deepseek/deepseek-v4-pro",
+      effort: "high",
+    });
+    writeRoster(orChoice, orChoice, enabledSlots(2, orChoice));
+    handler = chatHandler(orChoice.model);
+
+    // The model is off the static rate card; the round must still run.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "devo trocar de banco de dados?",
+      thinkerCount: 2,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+    const warnings = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    warn.mockRestore();
+
+    expect(job.status).toBe("done");
+    expect(requests.length).toBeGreaterThan(0);
+
+    // The whole round — planner, thinkers and master — went to OpenRouter's
+    // endpoint, carrying OpenRouter's key, never the OpenAI one.
+    expect(urls.every((u) => u.startsWith("https://openrouter.ai/api/v1/chat/completions"))).toBe(
+      true,
+    );
+    expect(auths.every((a) => a === "Bearer sk-or-v1-chave-de-teste-abcdefghijklmn")).toBe(true);
+    // And the model id the operator chose, with its effort, on the Chat wire's
+    // own field.
+    expect(requests.every((b) => b.model === "deepseek/deepseek-v4-pro")).toBe(true);
+    expect(requests.every((b) => b.reasoning_effort === "high")).toBe(true);
+
+    // A model the rate card has never heard of warns instead of pricing at zero
+    // in silence — the same contract as the OpenAI path.
+    expect(warnings).toContain("deepseek/deepseek-v4-pro");
+    expect(warnings).toMatch(/rate card/i);
+  });
+
+  it("calls a thinker whose model does not accept tools without them", async () => {
+    const noTools = rosterChoice({ supports_tools: false });
+    writeRoster(rosterChoice(), rosterChoice(), enabledSlots(2, noTools));
+
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload('[{"angle":"evidencia","prompt":"p"},{"angle":"risco","prompt":"p"}]');
+        case "thinker":
+          return textPayload(`Pensamento sobre ${angleOf(thinkerPrompt(body))}, sem a web.`);
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "pensar sem ferramentas",
+      thinkerCount: 2,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    const thinkerBodies = requests.filter((b) => stageOf(b) === "thinker");
+    expect(thinkerBodies).toHaveLength(2);
+    // No `tools` key at all — the wire must not even see an empty tool list.
+    expect(thinkerBodies.every((b) => b.tools === undefined)).toBe(true);
+    // The web is lost, not the thinker: it still answered on its first turn.
+    expect(job.thinkers.every((t) => t.status === "done")).toBe(true);
+    expect(searchCalls).toHaveLength(0);
+  });
+
+  it("overrides the planner's angle with the slot's fixed angle", async () => {
+    const slots = enabledSlots(2);
+    slots[0]!.angle = "tributacao";
+    writeRoster(rosterChoice(), rosterChoice(), slots);
+
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload('[{"angle":"evidencia","prompt":"p"},{"angle":"risco","prompt":"p"}]');
+        case "thinker":
+          return textPayload(`Nota de ${angleOf(thinkerPrompt(body))}.`);
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "revisar a estrutura tributaria?",
+      thinkerCount: 2,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    // The slot's label won for that thinker; the planner's name survives on
+    // the other one.
+    expect(job.thinkers[0]?.angle).toBe("tributacao");
+    expect(job.thinkers[1]?.angle).toBe("risco");
+    const prompts = requests.filter((b) => stageOf(b) === "thinker").map((b) => thinkerPrompt(b));
+    expect(prompts[0]).toContain("O seu angulo e: tributacao");
+    expect(prompts[1]).toContain("O seu angulo e: risco");
+  });
+
+  it("passes a choice's effort through on the Responses wire", async () => {
+    const eager = rosterChoice({ effort: "high" });
+    writeRoster(eager, eager, enabledSlots(1, eager));
+
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload('[{"angle":"evidencia","prompt":"p"}]');
+        case "thinker":
+          return textPayload("Pensamento rapido.");
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "esforco alto",
+      thinkerCount: 1,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(
+      requests.every((b) => (b.reasoning as { effort?: string } | undefined)?.effort === "high"),
+    ).toBe(true);
+  });
+
+  it("falls back to today's model and provider when no roster file exists", async () => {
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload('[{"angle":"evidencia","prompt":"p"}]');
+        case "thinker":
+          return textPayload("Pensamento sem roster.");
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "roster ausente",
+      thinkerCount: 1,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    expect(requests.length).toBeGreaterThan(0);
+    // The default roster reproduces deepThinkModel() bit for bit: the same
+    // provider (OpenAI's Responses endpoint) and the same model id on every
+    // call of the round.
+    expect(urls.every((u) => u.startsWith("https://api.openai.com/v1/responses"))).toBe(true);
+    expect(requests.every((b) => b.model === MODEL)).toBe(true);
+    // And no effort is invented where the roster has none.
+    expect(requests.every((b) => b.reasoning === undefined)).toBe(true);
+  });
+
+  it("warns up front when the roster routes to a provider without a key", async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    const orChoice = rosterChoice({ provider: "openrouter", model: "deepseek/deepseek-v4-pro" });
+    writeRoster(orChoice, orChoice, enabledSlots(1, orChoice));
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "sem chave do openrouter",
+      thinkerCount: 1,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_error");
+    const warnings = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    warn.mockRestore();
+
+    // The round said, before spending, that this provider is doomed...
+    expect(warnings).toMatch(/no key configured/i);
+    expect(warnings).toContain("openrouter");
+    // ...and then degraded per role instead of crashing: the thinker reports
+    // the failure and the round finishes with an error naming the key.
+    expect(job.thinkers[0]?.status).toBe("error");
+    expect(job.status).toBe("error");
+    expect(job.error).toContain("OPENROUTER_API_KEY");
+  });
+
+  it("refuses a round when the roster has no enabled slots", async () => {
+    writeRoster(rosterChoice(), rosterChoice(), enabledSlots(0));
+
+    await expect(
+      mod.dispatchDeepThink({
+        conversationId: randomUUID(),
+        scenario: "ninguem pensa",
+        searchFn,
+      }),
+    ).rejects.toThrow(/Nenhum pensador habilitado no roster/);
   });
 });

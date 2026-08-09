@@ -187,7 +187,8 @@ export async function runDeepThink(
   const thinkerCount = countArg(args, "thinker_count");
 
   try {
-    const job = dispatchDeepThink({
+    // Async since wave 4: dispatch reads the roster off disk before answering.
+    const job = await dispatchDeepThink({
       conversationId,
       scenario,
       ...(reflection ? { reflection } : {}),
