@@ -1,14 +1,36 @@
 <!doctype html>
 <!--
-  EXPLAINER — deep-orchestrator v3.2.0
-  Execucao 20260809-013142-2852240, repositorio Explainer, branch main.
+  TEMPLATE — EXPLAINER do deep-orchestrator.
 
-  Documento de arquivo unico: Bootstrap 5 + Bootstrap Icons + highlight.js por
-  CDN (versoes travadas com SRI). Abre por file:// com duplo clique e imprime em
-  PDF com todas as abas.
+  Uso: o orquestrador, na fase COMMIT-FINAL, preenche este template e entrega o
+  EXPLAINER.html da execução. Duas formas de preencher:
 
-  Fontes: .deep-orchestrator/run-20260809-013142-2852240/TASK_PLAN.md,
-  o registro owned.tsv das worktrees, e o proprio git (024e1e4..f7c6347).
+  1. TOKENS INLINE  — substituição simples de string. Cada token {{NOME}} é
+     trocado pelo valor real:
+       20260809-091816  2026-08-09  main  Painel de agentes pensadores: botão + ModelSelect (filtro 2026+, OpenRouter) + chaves runtime + roster plugged no deep-think com roteamento multi-provedor
+       4  10  14
+     Os tokens inline aparecem na navbar, no hero, nos cards de estatística,
+     no rodapé e na tabela de placeholders da aba "Visão geral".
+
+  2. SLOTS — bloco substituído INTEIRO, delimitado por um par de comentários
+     HTML: um com o texto {{SLOT}} begin e outro com {{SLOT}} end (sem os
+     delimitadores — veja os exemplos reais no corpo do arquivo). O gerador
+     substitui TUDO entre o par pelo conteúdo real. O que está entre os
+     marcadores é EXEMPLO demonstrativo (fallback) e morre na geração.
+       {{WAVES_TABLE}}   (aba Ondas — <table> com colunas Onda|Worktree|Tarefas|Commits|Status)
+       {{FILES_TABLE}}   (aba Arquivos — <table> com colunas Arquivo|Tipo|Diff)
+       {{COMMITS_LIST}}  (aba Arquivos — lista de commits squash)
+       {{BEFORE_AFTER}}  (aba De-Para — seções de de-para adicionais)
+       {{DECISIONS}}     (aba Decisões — lista de premissas inferidas)
+       {{TIMELINE}}      (aba Timeline — linha do tempo da execução)
+
+  Exemplo de geração manual:
+       ./scripts/generate-explainer.sh > EXPLAINER.html
+  Ou: preencha os tokens/slots com sed/awk e salve como EXPLAINER.html.
+
+  Arquivo único, sem build: Bootstrap 5 + Bootstrap Icons + highlight.js por CDN
+  (versões travadas com SRI). Abre com duplo clique (file://) e imprime em PDF
+  com todas as abas.
 -->
 <html lang="pt-BR" data-bs-theme="dark">
 <head>
@@ -17,7 +39,7 @@
 <!-- Diz ao navegador que a página é escura ANTES do CSS carregar: sem flash
      branco, e os controles nativos (scrollbar, select, input) já nascem escuros. -->
 <meta name="color-scheme" content="dark">
-<title>EXPLAINER — npm run dev volta ao browser, e a interface volta a aparecer</title>
+<title>EXPLAINER — deep-orchestrator · de-para da execução</title>
 
 <link rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
@@ -117,8 +139,8 @@
     box-shadow: inset 0 -2px 0 var(--do-accent);
   }
   /* Telas pequenas: tabs mais compactas para caber na navbar. */
-  @media (max-width: 1199.98px) {
-    .navbar .nav-tabs .nav-link { padding: .4rem .45rem; font-size: .8rem; }
+  @media (max-width: 991.98px) {
+    .navbar .nav-tabs .nav-link { padding: .4rem .5rem; font-size: .8rem; }
   }
 
   /* Badges da paleta. */
@@ -133,9 +155,8 @@
   .diff-minus { color: var(--do-danger); font-variant-numeric: tabular-nums; }
 
   /* De-Para: cartões com borda indicando o lado da comparação. */
-  .depara-antes  { border-color: rgba(255,107,107,.45); }
+  .depara-antes  { border-color: rgba(139,139,167,.45); }
   .depara-depois { border-color: rgba(0,255,136,.35); }
-  .depara-pendente { border-color: rgba(255,170,0,.45); }
 
   /* Timeline vertical: linha + marcador ciano com brilho sutil. */
   .timeline { position: relative; }
@@ -214,19 +235,13 @@
         </button>
       </li>
       <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-pendencias" data-bs-toggle="tab" data-bs-target="#pane-pendencias"
-                type="button" role="tab" aria-controls="pane-pendencias" aria-selected="false">
-          <i class="bi bi-exclamation-triangle me-1"></i>Pendências
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
         <button class="nav-link" id="tab-timeline" data-bs-toggle="tab" data-bs-target="#pane-timeline"
                 type="button" role="tab" aria-controls="pane-timeline" aria-selected="false">
           <i class="bi bi-clock-history me-1"></i>Timeline
         </button>
       </li>
     </ul>
-    <span class="navbar-text small text-body-secondary d-none d-xl-inline">v3.2.0 · 09/08/2026</span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">v20260809-091816 · 2026-08-09</span>
   </div>
 </nav>
 
@@ -235,12 +250,11 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3"><code class="text-white">npm run dev</code> abria uma janela do Electron em vez do browser, e a janela mostrava só o texto cru da tela de configuração. Eram <strong>duas causas independentes</strong>. Foram 13 sub-agentes em 6 ondas, e a primeira prova visual que este repositório já teve.</p>
+    <p class="lead text-white-50 mb-3">Painel de agentes pensadores: botão + ModelSelect (filtro 2026+, OpenRouter) + chaves runtime + roster plugged no deep-think com roteamento multi-provedor</p>
     <div class="d-flex flex-wrap gap-2">
-      <span class="badge badge-accent">v3.2.0</span>
-      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>09/08/2026</span>
+      <span class="badge badge-accent">v20260809-091816</span>
+      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-09</span>
       <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
-      <span class="badge badge-soft"><i class="bi bi-hash me-1"></i>run 20260809-013142-2852240</span>
     </div>
   </header>
 
@@ -249,244 +263,104 @@
     <!-- ══════════════ ABA 1 · VISÃO GERAL ══════════════ -->
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
-      <h2 class="h4 pane-title">O pedido</h2>
-
-      <blockquote class="border-start border-3 ps-3 text-body-secondary fst-italic">
-        &ldquo;arrume a aplicação: quando rodo <code>npm run dev</code> ela abre uma janela própria em vez de abrir a URL no browser, e não renderiza nada da nossa interface — aparece só &lsquo;Bem-vindo ao Explainer / Configure sua chave da OpenAI para começar / OPENAI_API_KEY / sk-… / Configurações avançadas / Validar e Salvar / Onde encontro minha chave? / Pular configuração&rsquo;. Só entregue quando tiver arrumado, teste e valide, muitos subagents para deixar tudo perfeito.&rdquo;
-      </blockquote>
-
-      <p>Esse texto que o usuário colou não é um erro genérico: é literalmente o conteúdo de <code>frontend/src/components/SetupScreen.tsx</code> renderizado <strong>sem uma única regra de CSS aplicada</strong>. Foi o sintoma que apontou para a segunda causa.</p>
-
-      <h2 class="h4 pane-title mt-5">As duas causas raiz</h2>
-      <p>Elas são <strong>independentes</strong>. Corrigir uma sem a outra deixaria metade da queixa de pé.</p>
-
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><span class="badge badge-danger me-2">Causa A</span><strong>Abria janela em vez de browser</strong></div>
-            <div class="card-body">
-              <p class="card-text">O <code>package.json</code> da raiz tinha <code>"dev": "electron-vite dev"</code>. Rodar <code>npm run dev</code> subia o Electron — o contrário do que <code>README.md</code> e <code>AGENTS.md</code> descreviam havia commits, e a queixa literal do usuário.</p>
-              <p class="card-text text-body-secondary small mb-0">Corrigida em <code>013c98b</code> (onda1-dev-browser).</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><span class="badge badge-danger me-2">Causa B</span><strong>Nenhuma regra de CSS chegava na tela</strong></div>
-            <div class="card-body">
-              <p class="card-text">O bloco <code>renderer</code> do <code>electron.vite.config.ts</code> declarava <code>plugins: [react()]</code> e mais nada. O frontend é <strong>Tailwind v4</strong> via <code>@tailwindcss/vite</code>, e o Tailwind v4 não tem etapa PostCSS de reserva: sem o plugin, o CSS emitido eram <strong>66 kB de FONTE não compilada</strong> — <code>@theme default{…}</code>, o literal <code>@tailwind utilities;</code>, três <code>@apply</code> crus — que o browser lê e <strong>descarta inteiro</strong>.</p>
-              <p class="card-text text-body-secondary small mb-0">Corrigida em <code>dbaab96</code> (onda1-renderer-pipeline).</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <h2 class="h4 pane-title">Resumo da execução</h2>
+      <p class="text-body-secondary">Painel de agentes pensadores: botão + ModelSelect (filtro 2026+, OpenRouter) + chaves runtime + roster plugged no deep-think com roteamento multi-provedor</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
-        <div><strong>Por que exatamente aquele texto:</strong> descartado o CSS inteiro, o que sobra na tela é o DOM cru da primeira coisa que o app renderiza — a tela de setup. Título, rótulo do campo, placeholder <code>sk-…</code>, os dois links e o botão, um embaixo do outro, sem estilo. É a lista que o usuário colou, na ordem em que ele colou.</div>
+        <div><strong>O que é este documento:</strong> o EXPLAINER gerado pelo deep-orchestrator na fase COMMIT-FINAL, ao fim de cada execução. Mostra o de-para (antes/depois) de tudo que foi feito: ondas, worktrees, arquivos modificados, decisões autônomas e timeline.</div>
       </div>
 
-      <h2 class="h4 pane-title mt-5">Números da execução</h2>
       <div class="row g-3">
-        <div class="col-6 col-lg-3">
+        <div class="col-6 col-lg-4">
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">6</div>
+              <div class="display-6 fw-bold stat-value">4</div>
               <div class="text-body-secondary small">Ondas executadas</div>
             </div>
           </div>
         </div>
-        <div class="col-6 col-lg-3">
+        <div class="col-6 col-lg-4">
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">13</div>
-              <div class="text-body-secondary small">Sub-agentes (worktrees)</div>
+              <div class="display-6 fw-bold stat-value">10</div>
+              <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
         </div>
-        <div class="col-6 col-lg-3">
+        <div class="col-6 col-lg-4">
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">13</div>
-              <div class="text-body-secondary small">Commits: 1 PREP + 12 squash</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-6 col-lg-3">
-          <div class="card h-100 text-center">
-            <div class="card-body py-4">
-              <i class="bi bi-check2-square fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">915</div>
-              <div class="text-body-secondary small">Testes no gate final</div>
+              <div class="display-6 fw-bold stat-value">14</div>
+              <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
         </div>
       </div>
 
-      <h2 class="h4 pane-title mt-5">O gate final</h2>
-      <p><code>bash validate.sh</code> — <strong>11 seções, exit 0</strong>. As três últimas seções (<code>TypeCheck Root</code>, <code>Test Desktop</code>, <code>Build Desktop</code>) não existiam antes desta execução.</p>
+      <h2 class="h4 pane-title mt-5">Como este documento é gerado</h2>
+      <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
+<pre><code class="language-bash"># Gera o explainer a partir do template
+./scripts/generate-explainer.sh &gt; EXPLAINER.html
+# Ou preenche manualmente os placeholders 20260809-091816, 2026-08-09, main, ...</code></pre>
+      <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
 
-<pre><code class="language-bash">=== Lint Backend ===          npm --prefix backend run lint
-=== Lint Frontend ===         npm --prefix frontend run lint
-=== TypeCheck Backend ===     npm --prefix backend run typecheck
-=== TypeCheck Frontend ===    npm --prefix frontend run typecheck
-=== TypeCheck Root (4 projects) ===   npm run typecheck        # NOVO
-=== Test Backend ===          npm --prefix backend test                 # 570 testes / 25 arquivos
-=== Test Frontend ===         npm --prefix frontend test || true        # 331 testes / 11 arquivos
-=== Test Desktop (electron main) ===                                    # NOVO — 14 testes
-    npx vitest run --root . electron/main/services/__tests__/backend-process.test.ts
-=== Build Backend ===         npm --prefix backend run build
-=== Build Frontend ===        npm --prefix frontend run build
-=== Build Desktop ===         npx electron-vite build                   # NOVO
-=== GATE OK ===</code></pre>
-
-      <div class="alert alert-warning d-flex gap-2" role="alert">
-        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
-        <div><strong>A seção do frontend carrega <code>|| true</code></strong> — uma falha lá não derruba o gate. É por isso que <code>AGENTS.md</code> exige rodar <code>npm --prefix frontend test</code> à parte e reportar o resultado separadamente. Os 331 testes acima vieram dessa execução separada. As duas seções novas de desktop <strong>não</strong> têm <code>|| true</code>: elas foram feitas para reprovar.</div>
-      </div>
-
-      <h2 class="h4 pane-title mt-5">Como este documento foi montado</h2>
-      <p>A partir do template <code>templates/html-explainer.html</code> do deep-orchestrator, com três fontes de verdade e nada além delas:</p>
-      <ul>
-        <li><code>.deep-orchestrator/run-20260809-013142-2852240/TASK_PLAN.md</code> — diagnóstico, premissas, handoff de cada sub-agente, cada revisão adversarial, cada replan;</li>
-        <li><code>.deep-orchestrator/run-20260809-013142-2852240/owned.tsv</code> — o registro das 13 worktrees, com branch, SHA-base e SHA pós-merge de cada uma;</li>
-        <li>o git: <code>git log</code>, <code>git show --stat</code> e <code>git diff --numstat</code> no intervalo <code>024e1e4..f7c6347</code>, além do corpo integral de cada mensagem de commit.</li>
-      </ul>
-      <p class="text-body-secondary small">Onde o número medido divergiu do número escrito no plano, vale o medido. Onde nada podia ser verificado, a afirmação foi omitida em vez de arredondada.</p>
+      <details class="mt-4">
+        <summary class="text-body-secondary">Placeholders usados na geração</summary>
+        <div class="table-responsive mt-2">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr><th scope="col">Placeholder</th><th scope="col">Onde aparece</th><th scope="col">Preenchido com</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>&#123;&#123;VERSION&#125;&#125;</code></td><td>Navbar, hero, rodapé</td><td>Versão do orquestrador</td></tr>
+              <tr><td><code>&#123;&#123;DATE&#125;&#125;</code></td><td>Navbar, hero, rodapé</td><td>Data da execução</td></tr>
+              <tr><td><code>&#123;&#123;BRANCH&#125;&#125;</code></td><td>Hero, rodapé</td><td>Branch principal</td></tr>
+              <tr><td><code>&#123;&#123;TASK_SUMMARY&#125;&#125;</code></td><td>Visão geral</td><td>Resumo da tarefa</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_WAVES&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de ondas</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_AGENTS&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de sub-agentes</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_COMMITS&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de commits</td></tr>
+              <tr><td><code>&#123;&#123;WAVES_TABLE&#125;&#125;</code></td><td>Aba Ondas</td><td>Tabela HTML de ondas (Onda | Worktree | Tarefas | Commits | Status)</td></tr>
+              <tr><td><code>&#123;&#123;FILES_TABLE&#125;&#125;</code></td><td>Aba Arquivos</td><td>Tabela HTML de arquivos modificados (Arquivo | Tipo | Diff)</td></tr>
+              <tr><td><code>&#123;&#123;BEFORE_AFTER&#125;&#125;</code></td><td>Aba De-Para</td><td>Seções de de-para adicionais</td></tr>
+              <tr><td><code>&#123;&#123;DECISIONS&#125;&#125;</code></td><td>Aba Decisões</td><td>Lista de decisões autônomas</td></tr>
+              <tr><td><code>&#123;&#123;TIMELINE&#125;&#125;</code></td><td>Aba Timeline</td><td>Linha do tempo da execução</td></tr>
+              <tr><td><code>&#123;&#123;COMMITS_LIST&#125;&#125;</code></td><td>Aba Arquivos</td><td>Lista de commits squash</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
 
     <!-- ══════════════ ABA 2 · ONDAS EXECUTADAS ══════════════ -->
     <div class="tab-pane fade" id="pane-ondas" role="tabpanel"
          aria-labelledby="tab-ondas" tabindex="0" data-print-title="Ondas executadas">
       <h2 class="h4 pane-title">Ondas executadas</h2>
-      <p>Uma linha por sub-agente. Cada um trabalhou numa worktree Git isolada e nomeada, com um conjunto de arquivos <strong>disjunto</strong> dos demais da mesma onda. A integração foi squash-merge um a um, com <code>bash validate.sh</code> entre cada merge. As worktrees e os branches <code>do/explainer/&hellip;</code> foram removidos ao fim de cada onda; os branches ficaram arquivados em <code>refs/do-archive/20260809-013142-2852240/</code>.</p>
+      <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
 
-      <div class="table-responsive">
-        <table class="table table-hover align-middle">
-          <thead>
-            <tr>
-              <th scope="col">Onda</th>
-              <th scope="col">Worktree</th>
-              <th scope="col">O que entregou</th>
-              <th scope="col">Commit</th>
-              <th scope="col">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><span class="badge badge-soft">PREP</span></td>
-              <td><code>—</code></td>
-              <td>Commitou o andaime Electron que só existia na working tree do usuário. Sem isso, worktrees-filhas nascidas de <code>main</code> não veriam nada disso. <code>out/</code> foi para o <code>.gitignore</code>.</td>
-              <td><code class="font-monospace">024e1e4</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-backend-spawn</code></td>
-              <td><code>electron/main/index.ts</code> + <code>backend-process.ts</code> (novo, sem <code>import electron</code>, por isso testável): sonda a 3001 e classifica em <em>free</em> / <em>backend-alive</em> / <em>occupied-by-other</em> antes de qualquer spawn.</td>
-              <td><code class="font-monospace">2f5c3c4</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-setup-gate</code></td>
-              <td><code>App.tsx</code>, <code>SetupScreen.tsx</code>, <code>types/electron.d.ts</code> + 3 arquivos de teste. Quatro becos sem saída fechados — não um.</td>
-              <td><code class="font-monospace">1ac43e0</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-renderer-pipeline</code></td>
-              <td><code>electron.vite.config.ts</code>: <code>tailwindcss()</code> antes de <code>react()</code>, proxy <code>/api</code>, <code>dedupe</code> de React. <strong>Causa raiz B.</strong></td>
-              <td><code class="font-monospace">dbaab96</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-dev-browser</code></td>
-              <td><code>package.json</code> + <code>dev.sh</code>: <code>dev</code>/<code>start</code> voltam a ser <code>bash dev.sh</code>, e o script abre a URL sozinho. <strong>Causa raiz A.</strong></td>
-              <td><code class="font-monospace">013c98b</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>onda2-typecheck-green-gated</code></td>
-              <td><code>tsconfig.node.json</code>, <code>tsconfig.web.json</code>, <code>electron.vite.config.ts</code>, <code>validate.sh</code>: <code>moduleResolution: "bundler"</code>, três seções novas no gate, renderer minificado em produção.</td>
-              <td><code class="font-monospace">b463803</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>onda2-dev-ports-honest</code></td>
-              <td><code>dev.sh</code> + <code>frontend/vite.config.ts</code>: classifica 5173 e 3001 antes de gerar processo; <code>strictPort</code>; a sonda virou identidade (<code>GET /@vite/client</code> exigindo 200 com content-type de JavaScript).</td>
-              <td><code class="font-monospace">cfc7fe3</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>onda2-integrated-smoke</code></td>
-              <td><code>scripts/smoke-dev-browser.mjs</code> (1196 linhas) e <code>scripts/smoke-desktop-ui.mjs</code> (336). A <strong>primeira prova visual</strong> do repositório. Zero dependência nova.</td>
-              <td><code class="font-monospace">310bcaa</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>onda2-refresh-verifying-skill</code></td>
-              <td><code>.agents/skills/verifying-explainer-changes/</code>: a skill afirmava que componentes React não podiam ser renderizados na suíte — a onda 1 tornou isso falso. Evals de 6 para 12 casos.</td>
-              <td><code class="font-monospace">10fe465</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>onda2-readme-desktop</code></td>
-              <td><code>README.md</code> + <code>AGENTS.md</code>: seção do caminho desktop, tabela de scripts e a limitação conhecida do <code>npm run dist</code>.</td>
-              <td><code class="font-monospace">f50a03f</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 3</span></td>
-              <td><code>onda3-gate-reach-reconcile</code></td>
-              <td>Reconciliação: dois agentes da onda 2 escreveram sobre o mesmo fato em direções opostas. Um estendeu o <code>validate.sh</code>; o outro documentou em três lugares que o gate não cobria o desktop — e virou mentira no merge.</td>
-              <td><code class="font-monospace">443a740</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 4</span></td>
-              <td><code>onda4-artifacts-provenance</code></td>
-              <td><code>.agents/artifacts/project-analysis.md</code> e <code>skill-map.md</code> + 5 skills: números remedidos (o artefato dizia 82 testes de backend em 8 arquivos; são 570 em 25) e 15 citações <em>MOVED</em> refeitas.</td>
-              <td><code class="font-monospace">2d30f11</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 5</span></td>
-              <td><code>onda5-validation-report-numbers</code></td>
-              <td><code>.agents/artifacts/validation-report.md</code> + <code>.bootstrap-state.json</code>: 46 citações → 63, 60 casos de eval → 71, contados por dois métodos independentes que concordam.</td>
-              <td><code class="font-monospace">f7c6347</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 6</span></td>
-              <td><code>onda6-explainer-html</code></td>
-              <td><code>EXPLAINER.html</code> — este documento.</td>
-              <td><code class="font-monospace">—</code></td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <!-- WAVES_TABLE begin -->
+<table class="table table-sm table-hover mb-0">
+<thead><tr><th>Onda</th><th>Worktree</th><th>Tarefa</th><th>Commit</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>onda1-provider-adapters</td><td>Adapters OpenAI/OpenRouter/DeepSeek, listModels, campo released_at</td><td><code>69391bc</code></td><td>✅</td></tr>
+<tr><td>1</td><td>onda1-runtime-keys</td><td>Chave de provedor em runtime (env + store), rota loopbackOnly</td><td><code>8fb8f99</code></td><td>✅</td></tr>
+<tr><td>1</td><td>onda1-roster-store</td><td>Store persistido do roster com normalização defensiva</td><td><code>6717d2a</code></td><td>✅</td></tr>
+<tr><td>2</td><td>onda2-model-catalog</td><td>Catálogo unificado, filtro 2026+, busca, keep cross-provider</td><td><code>2ccabba</code></td><td>✅</td></tr>
+<tr><td>2</td><td>onda2-roster-routes</td><td>GET/PUT/POST do roster com warnings de provider_key_missing</td><td><code>f16aa9e</code></td><td>✅</td></tr>
+<tr><td>2</td><td>onda2-key-callsites</td><td>Migração de process.env → providerKey em openai/mermaid/memory/credits</td><td><code>6c63656</code></td><td>✅</td></tr>
+<tr><td>T1</td><td>test-onda1-backend-contracts</td><td>Testes de contrato, fuzz e composição dos providers</td><td><code>cba7ba2</code></td><td>✅</td></tr>
+<tr><td>3</td><td>onda3-deepthink-transport</td><td>Transporte do deep-think migrado para adapter (não fetch direto)</td><td><code>c6ed45a</code></td><td>✅</td></tr>
+<tr><td>3</td><td>onda3-desktop-keys</td><td>OpenRouter/DeepSeek no Electron, boot reordenado, SetupScreen</td><td><code>f7ad9d3</code></td><td>✅</td></tr>
+<tr><td>3</td><td>onda3-key-prompt</td><td>Card de chaves não-bloqueante no navegador (web)</td><td><code>d5bf997</code></td><td>✅</td></tr>
+<tr><td>4</td><td>onda4-deepthink-roster</td><td>Roster plugged no deep-think: roteamento de provider, tools gating, angle</td><td><code>fd4ca28</code></td><td>✅</td></tr>
+<tr><td>4</td><td>onda4-roster-ui</td><td>ModelSelect (combobox 2026+), ThinkerRosterPanel, botão Pensadores</td><td><code>8cbab58</code></td><td>✅</td></tr>
+</tbody></table>
+<!-- WAVES_TABLE end -->
 
-      <h3 class="h5 mt-5">A ordem de merge da onda 1 não era arbitrária</h3>
-      <p>O revisor de plano fixou a sequência, e o motivo do terceiro item é o que costuma passar batido:</p>
-      <ol>
-        <li><code>onda1-backend-spawn</code> — só toca <code>electron/</code>;</li>
-        <li><code>onda1-setup-gate</code> — só toca <code>frontend/</code>;</li>
-        <li><code>onda1-renderer-pipeline</code> — leva <code>package.json</code> <strong>e</strong> <code>package-lock.json</code> juntos;</li>
-        <li><code>onda1-dev-browser</code> — muda o próprio gate, então por último.</li>
-      </ol>
-      <p>Os itens 3 e 4 tocam o mesmo <code>package.json</code> em regiões distintas, sem conflito textual — confirmado por <code>git merge-tree</code>. Mas entre os dois merges a árvore ficaria com o manifesto de um e o lock do outro, e <code>npm ci</code> falharia nesse intervalo.</p>
+      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelos dados reais da execução.</p>
 
       <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
       <div class="d-flex flex-wrap gap-2">
@@ -500,199 +374,85 @@
     <div class="tab-pane fade" id="pane-arquivos" role="tabpanel"
          aria-labelledby="tab-arquivos" tabindex="0" data-print-title="Arquivos modificados">
       <h2 class="h4 pane-title">Arquivos modificados</h2>
-      <p>Duas contagens diferentes, porque há duas linhas de base legítimas:</p>
-      <div class="row g-3 mb-4">
-        <div class="col-md-6">
-          <div class="card h-100">
-            <div class="card-body">
-              <h3 class="h6 mb-2"><code>024e1e4..f7c6347</code> — o que os sub-agentes mudaram</h3>
-              <p class="mb-0"><span class="badge badge-accent">37 arquivos</span> <span class="diff-plus">+4.760</span> <span class="diff-minus">−147</span></p>
-              <p class="small text-body-secondary mb-0 mt-2">Da baseline do PREP até o fim. É o trabalho desta execução.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6">
-          <div class="card h-100">
-            <div class="card-body">
-              <h3 class="h6 mb-2"><code>5a93df1..f7c6347</code> — o que <code>main</code> ganhou</h3>
-              <p class="mb-0"><span class="badge badge-accent">57 arquivos</span> <span class="diff-plus">+16.048</span> <span class="diff-minus">−88</span></p>
-              <p class="small text-body-secondary mb-0 mt-2">Do último commit de <code>main</code> antes da execução. Inclui o andaime Electron inteiro, que o PREP trouxe da working tree.</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
 
-      <h3 class="h5">Detalhe por arquivo (<code>024e1e4..f7c6347</code>)</h3>
-      <div class="table-responsive">
-        <table class="table table-hover table-sm align-middle">
-          <thead>
-            <tr>
-              <th scope="col">Arquivo</th>
-              <th scope="col">Tipo</th>
-              <th scope="col" class="text-end">Diff</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td><code>scripts/smoke-dev-browser.mjs</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+1196</td></tr>
-            <tr><td><code>frontend/src/__tests__/setup-gate.test.tsx</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+480</td></tr>
-            <tr><td><code>scripts/smoke-desktop-ui.mjs</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+336</td></tr>
-            <tr><td><code>frontend/src/__tests__/app-setup-gate.test.tsx</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+266</td></tr>
-            <tr><td><code>electron/main/services/__tests__/backend-process.test.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+243</td></tr>
-            <tr><td><code>electron/main/services/backend-process.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+239</td></tr>
-            <tr><td><code>frontend/src/__tests__/setup-gate-caller.test.ts</code></td><td><span class="badge badge-ok">novo</span></td><td class="text-end diff-plus">+125</td></tr>
-            <tr><td><code>dev.sh</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+304</span> <span class="diff-minus">−13</span></td></tr>
-            <tr><td><code>package-lock.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+604</td></tr>
-            <tr><td><code>frontend/src/components/SetupScreen.tsx</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+219</span> <span class="diff-minus">−37</span></td></tr>
-            <tr><td><code>electron/main/index.ts</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+122</span> <span class="diff-minus">−13</span></td></tr>
-            <tr><td><code>.agents/skills/verifying-explainer-changes/evals.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+78</td></tr>
-            <tr><td><code>.agents/skills/verifying-explainer-changes/SKILL.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+70</span> <span class="diff-minus">−19</span></td></tr>
-            <tr><td><code>electron.vite.config.ts</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+67</span> <span class="diff-minus">−2</span></td></tr>
-            <tr><td><code>README.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+59</span> <span class="diff-minus">−9</span></td></tr>
-            <tr><td><code>.agents/artifacts/project-analysis.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+57</span> <span class="diff-minus">−15</span></td></tr>
-            <tr><td><code>AGENTS.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+33</span> <span class="diff-minus">−4</span></td></tr>
-            <tr><td><code>frontend/src/types/electron.d.ts</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+30</span> <span class="diff-minus">−2</span></td></tr>
-            <tr><td><code>frontend/src/App.tsx</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+23</span> <span class="diff-minus">−9</span></td></tr>
-            <tr><td><code>validate.sh</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+23</td></tr>
-            <tr><td><code>.agents/artifacts/skill-map.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+17</span> <span class="diff-minus">−1</span></td></tr>
-            <tr><td><code>package.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+13</span> <span class="diff-minus">−5</span></td></tr>
-            <tr><td><code>.agents/skills/.validation/verifying-explainer-changes.baseline.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+11</td></tr>
-            <tr><td><code>frontend/vite.config.ts</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+10</td></tr>
-            <tr><td><code>tsconfig.web.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+9</td></tr>
-            <tr><td><code>tsconfig.node.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+7</td></tr>
-            <tr><td><code>frontend/package-lock.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+95</td></tr>
-            <tr><td><code>.gitignore</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+5</td></tr>
-            <tr><td><code>.agents/artifacts/validation-report.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+5</span> <span class="diff-minus">−5</span></td></tr>
-            <tr><td><code>.agents/skills/integrating-openai-realtime/SKILL.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+4</span> <span class="diff-minus">−4</span></td></tr>
-            <tr><td><code>.agents/skills/adding-realtime-tools/SKILL.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+2</span> <span class="diff-minus">−2</span></td></tr>
-            <tr><td><code>.agents/skills/managing-conversation-materials/SKILL.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+2</span> <span class="diff-minus">−2</span></td></tr>
-            <tr><td><code>.agents/skills/writing-explainer-code/SKILL.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+2</span> <span class="diff-minus">−2</span></td></tr>
-            <tr><td><code>.agents/skills/catalog.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+1</span> <span class="diff-minus">−1</span></td></tr>
-            <tr><td><code>.agents/skills/dispatching-pi-agents/SKILL.md</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+1</span> <span class="diff-minus">−1</span></td></tr>
-            <tr><td><code>.agents/skills/.bootstrap-state.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end"><span class="diff-plus">+1</span> <span class="diff-minus">−1</span></td></tr>
-            <tr><td><code>frontend/package.json</code></td><td><span class="badge badge-accent">modificado</span></td><td class="text-end diff-plus">+1</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <!-- FILES_TABLE begin -->
+<table class="table table-sm table-hover mb-0">
+<thead><tr><th>Arquivo</th><th>Tipo</th><th>Onda</th></tr></thead>
+<tbody>
+<tr><td><code>backend/src/services/providers/types.ts</code></td><td>Contrato (modificado)</td><td>1</td></tr>
+<tr><td><code>backend/src/services/providers/openai-responses.ts</code></td><td>Adapter (novo)</td><td>1</td></tr>
+<tr><td><code>backend/src/services/providers/openai-chat.ts</code></td><td>Adapter + fix (modificado)</td><td>1+2</td></tr>
+<tr><td><code>backend/src/services/providers/index.ts</code></td><td>Registry (novo)</td><td>1</td></tr>
+<tr><td><code>backend/src/services/providers/keys.ts</code></td><td>Runtime key store (novo)</td><td>1</td></tr>
+<tr><td><code>backend/src/routes/provider-keys.ts</code></td><td>Rota loopback (novo)</td><td>1</td></tr>
+<tr><td><code>backend/src/services/thinker-roster.ts</code></td><td>Roster store (novo)</td><td>1</td></tr>
+<tr><td><code>backend/src/services/model-catalog.ts</code></td><td>Catálogo + cache (novo)</td><td>2</td></tr>
+<tr><td><code>backend/src/routes/models.ts</code></td><td>Rota do catálogo (expandido)</td><td>2</td></tr>
+<tr><td><code>backend/src/routes/thinkers.ts</code></td><td>Rota do roster (expandido)</td><td>2</td></tr>
+<tr><td><code>backend/src/services/openai.ts</code></td><td>Migrado para providerKey (modificado)</td><td>2</td></tr>
+<tr><td><code>backend/src/services/credits.ts</code></td><td>Migrado para providerKey (modificado)</td><td>2</td></tr>
+<tr><td><code>backend/src/services/memory.ts</code></td><td>Migrado para providerKeyPresent (modificado)</td><td>2</td></tr>
+<tr><td><code>backend/src/services/mermaid.ts</code></td><td>Migrado para providerKey (modificado)</td><td>2</td></tr>
+<tr><td><code>backend/src/services/deep-think.ts</code></td><td>Transporte → adapter → roster (modificado)</td><td>3+4</td></tr>
+<tr><td><code>electron/main/index.ts</code></td><td>Boot reordenado (modificado)</td><td>3</td></tr>
+<tr><td><code>electron/main/services/provider-key-sync.ts</code></td><td>Sync bridge (novo)</td><td>3</td></tr>
+<tr><td><code>electron/main/services/envKeys.ts</code></td><td>+OpenRouter/DeepSeek (modificado)</td><td>3</td></tr>
+<tr><td><code>electron/main/ipc/settings-handlers.ts</code></td><td>Validação multi-provedor (modificado)</td><td>3</td></tr>
+<tr><td><code>electron/main/storage/settings-store.ts</code></td><td>4 slots de chave (modificado)</td><td>3</td></tr>
+<tr><td><code>frontend/src/components/SetupScreen.tsx</code></td><td>Campo OpenRouter (modificado)</td><td>3</td></tr>
+<tr><td><code>frontend/src/components/ui/ProviderKeysPrompt.tsx</code></td><td>Card de chaves web (novo)</td><td>3</td></tr>
+<tr><td><code>frontend/src/components/ui/ModelSelect.tsx</code></td><td>Combobox 2026+ (novo)</td><td>4</td></tr>
+<tr><td><code>frontend/src/components/ui/ThinkerRosterPanel.tsx</code></td><td>Painel master/planner/10 slots (novo)</td><td>4</td></tr>
+<tr><td><code>frontend/src/App.tsx</code></td><td>+Card de chaves + botão Pensadores (modificado)</td><td>3+4</td></tr>
+<tr><td><code>frontend/src/lib/api.ts</code></td><td>+ProviderKeys + Roster helpers (modificado)</td><td>3+4</td></tr>
+<tr><td><code>frontend/src/types/index.ts</code></td><td>+ProviderKey + Roster types (modificado)</td><td>3+4</td></tr>
+</tbody></table>
+<!-- FILES_TABLE end -->
 
-      <h2 class="h4 pane-title mt-4">Commits</h2>
-      <p>Um commit squash por sub-agente, mais o PREP. Nenhuma worktree e nenhum branch de trabalho sobrou ao final — os branches ficaram arquivados em <code>refs/do-archive/20260809-013142-2852240/</code>.</p>
+      <p class="text-body-secondary small">Exemplo demonstrativo — valores aproximados, substituídos na geração.</p>
 
-      <ul class="list-group list-group-flush">
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">024e1e4</span>
-          <div><strong>PREP-onda-1:</strong> baseline do andaime Electron não commitado &mdash; <span class="text-body-secondary">30 arquivos, +11.358/−11</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">2f5c3c4</span>
-          <div><strong>onda1-backend-spawn:</strong> o app desktop sobe um backend que existe de verdade &mdash; <span class="text-body-secondary">3 arquivos, +604/−13</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">1ac43e0</span>
-          <div><strong>onda1-setup-gate:</strong> a tela de setup deixa de ser um beco sem saída &mdash; <span class="text-body-secondary">8 arquivos, +1.239/−48</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">dbaab96</span>
-          <div><strong>onda1-renderer-pipeline:</strong> a janela do desktop passa a ter CSS &mdash; <span class="text-body-secondary">3 arquivos, +672/−2</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">013c98b</span>
-          <div><strong>onda1-dev-browser:</strong> <code>npm run dev</code> volta a abrir o app no browser &mdash; <span class="text-body-secondary">2 arquivos, +95/−6</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">b463803</span>
-          <div><strong>onda2-typecheck-green-gated:</strong> o gate deixa de ser verde por omissão &mdash; <span class="text-body-secondary">4 arquivos, +50/−10</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">cfc7fe3</span>
-          <div><strong>onda2-dev-ports-honest:</strong> <code>npm run dev</code> deixa de mentir sobre portas &mdash; <span class="text-body-secondary">2 arquivos, +262/−46</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">310bcaa</span>
-          <div><strong>onda2-integrated-smoke:</strong> alguém finalmente olha a tela &mdash; <span class="text-body-secondary">4 arquivos, +1.539</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">10fe465</span>
-          <div><strong>onda2-refresh-verifying-skill:</strong> a skill parou de desaconselhar o que agora funciona &mdash; <span class="text-body-secondary">4 arquivos, +94/−13</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">f50a03f</span>
-          <div><strong>onda2-readme-desktop:</strong> a documentação alcança o caminho desktop &mdash; <span class="text-body-secondary">2 arquivos, +72/−10</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">443a740</span>
-          <div><strong>onda3-gate-reach-reconcile:</strong> o gate cresceu e a documentação não sabia &mdash; <span class="text-body-secondary">6 arquivos, +116/−40</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">2d30f11</span>
-          <div><strong>onda4-artifacts-provenance:</strong> os artefatos param de descrever um repositório que não existe mais &mdash; <span class="text-body-secondary">7 arquivos, +85/−27</span></div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">f7c6347</span>
-          <div><strong>onda5-validation-report-numbers:</strong> o relatório de validação volta a bater com o que os scripts respondem &mdash; <span class="text-body-secondary">2 arquivos, +6/−6</span></div>
-        </li>
-      </ul>
+      <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
+      <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
+
+      <!-- COMMITS_LIST begin -->
+<ol>
+<li><code>69391bc</code> — onda1-provider-adapters: adapters OpenAI/OpenRouter/DeepSeek, listModels, released_at</li>
+<li><code>6717d2a</code> — onda1-roster-store: store persistido do roster com normalização defensiva</li>
+<li><code>8fb8f99</code> — onda1-runtime-keys: chave de provedor em runtime por rota loopback</li>
+<li><code>912b69a</code> — PREP-onda-2: stubs de /api/models e /api/thinkers</li>
+<li><code>2ccabba</code> — onda2-model-catalog: catálogo unificado, filtro 2026+, keep cross-provider</li>
+<li><code>f16aa9e</code> — onda2-roster-routes: roster CRUD com provider-key warnings</li>
+<li><code>6c63656</code> — onda2-key-callsites: call sites migrados para runtime resolver</li>
+<li><code>cba7ba2</code> — test-onda1-backend-contracts: contract/fuzz/composition tests</li>
+<li><code>aa5188e</code> — fix lint: 1e400 → Number.POSITIVE_INFINITY</li>
+<li><code>c6ed45a</code> — onda3-deepthink-transport: fetch → adapter</li>
+<li><code>f7ad9d3</code> — onda3-desktop-keys: Electron OpenRouter, boot reorder</li>
+<li><code>d5bf997</code> — onda3-key-prompt: card de chaves web</li>
+<li><code>fd4ca28</code> — onda4-deepthink-roster: roster → deep-think com provider routing</li>
+<li><code>8cbab58</code> — onda4-roster-ui: ModelSelect + ThinkerRosterPanel + botão</li>
+</ol>
+<!-- COMMITS_LIST end -->
+
+      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — hashes fictícios, substituídos na geração.</p>
     </div>
 
     <!-- ══════════════ ABA 4 · DE-PARA (BEFORE/AFTER) ══════════════ -->
     <div class="tab-pane fade" id="pane-depara" role="tabpanel"
          aria-labelledby="tab-depara" tabindex="0" data-print-title="De-Para">
-      <h2 class="h4 pane-title">Causa A &mdash; <code>npm run dev</code> abria uma janela</h2>
+      <h2 class="h4 pane-title">De-Para: o que mudou</h2>
+      <p>Comparação lado a lado entre o estado inicial do repositório e o estado final após a execução.</p>
 
       <div class="row g-3 mb-4">
         <div class="col-lg-6">
           <div class="card h-100 depara-antes">
-            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong> <span class="badge badge-soft ms-2 font-monospace">024e1e4</span></div>
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
             <div class="card-body">
-<pre><code class="language-json">{
-  "dev": "electron-vite dev",
-  "build": "electron-vite build",
-  "typecheck": "npm run typecheck:node &amp;&amp; npm run typecheck:web",
-  "dist": "electron-vite build &amp;&amp; electron-builder"
-}</code></pre>
-              <p class="card-text small mb-0"><code>npm run dev</code> subia o Electron. <code>build</code> deixara de ser o build web. <code>typecheck</code> cobria só os dois <code>tsconfig</code> do desktop.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-depois">
-            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong> <span class="badge badge-soft ms-2 font-monospace">f7c6347</span></div>
-            <div class="card-body">
-<pre><code class="language-json">{
-  "dev": "bash dev.sh",
-  "start": "bash dev.sh",
-  "dev:desktop": "electron-vite dev",
-  "build": "npm --prefix backend run build &amp;&amp; npm --prefix frontend run build",
-  "build:desktop": "electron-vite build",
-  "typecheck": "npm --prefix backend run typecheck &amp;&amp; npm --prefix frontend run typecheck &amp;&amp; npm run typecheck:node &amp;&amp; npm run typecheck:web",
-  "dist": "npm run build:desktop &amp;&amp; electron-builder",
-  "smoke:dev": "node scripts/smoke-dev-browser.mjs",
-  "smoke:desktop": "node scripts/smoke-desktop-ui.mjs"
-}</code></pre>
-              <p class="card-text small mb-0">O caminho desktop <strong>não</strong> foi destruído — ficou explícito.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <p>E o <code>dev.sh</code> passou a abrir a URL sozinho, <strong>depois</strong> que a porta responde — não no momento do bind, que é quando o <code>server.open</code> do Vite dispararia e ainda não há página. Sem dependência nova: a sonda é um <code>node -e</code> com <code>net.connect</code>, e a abertura tenta <code>xdg-open</code>, <code>open</code> e <code>cmd.exe /c start</code> nessa ordem. <code>BROWSER=none</code>, <code>NO_OPEN=1</code> e <code>--no-open</code> desligam tudo.</p>
-
-      <hr class="my-5">
-
-      <h2 class="h4 pane-title">Causa B &mdash; a janela não tinha CSS</h2>
-
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong> &mdash; <code>electron.vite.config.ts</code></div>
-            <div class="card-body">
-<pre><code class="language-ts">renderer: {
-  root: resolve(__dirname, 'frontend'),
-  build: { /* … */ },
-  resolve: { alias: { '@': …, '@shared': … } },
-  define: { __APP_VERSION__: … },
-  plugins: [react()]          // ← e mais nada
-}</code></pre>
-              <p class="card-text small mb-0">Sem <code>tailwindcss()</code>, sem <code>server.proxy</code>, sem <code>dedupe</code>.</p>
+              <p class="card-text text-body-secondary">Estado inicial do repositório — apenas o skill de orquestração, sem recursos auxiliares.</p>
+              <ul class="list-unstyled mb-0 d-grid gap-2">
+                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>SKILL.md</code> — definição do orquestrador (XML, fases, regras)</li>
+                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>README.md</code> — documentação pública</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -700,248 +460,82 @@
           <div class="card h-100 depara-depois">
             <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
             <div class="card-body">
-<pre><code class="language-ts">renderer: {
-  root: resolve(__dirname, 'frontend'),
-  esbuild: { keepNames: true },
-  resolve: {
-    alias: { '@': …, '@shared': … },
-    dedupe: ['react', 'react-dom']
-  },
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-        xfwd: true
-      }
-    }
-  },
-  // tailwindcss() ANTES de react() — a ordem de frontend/vite.config.ts
-  plugins: [tailwindcss(), react()]
-}</code></pre>
+              <p class="card-text text-body-secondary">Estado final — três novos diretórios e o skill atualizado.</p>
+              <ul class="list-unstyled mb-0 d-grid gap-2">
+                <li><i class="bi bi-terminal me-2 text-body-secondary"></i><code>scripts/</code> — brave-search.sh · check-brave-credits.sh</li>
+                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>prompts/</code> — ecc-prompts.md · ecc-skills.md · search-prompts.md</li>
+                <li><i class="bi bi-file-earmark-code me-2 text-body-secondary"></i><code>templates/</code> — html-explainer.html</li>
+                <li><i class="bi bi-gear me-2 text-body-secondary"></i><code>SKILL.md</code> — atualizado (ondas ilimitadas, novos recursos)</li>
+              </ul>
             </div>
           </div>
         </div>
       </div>
 
-      <h3 class="h5">A prova da causa raiz, medida em bytes</h3>
-      <div class="table-responsive mb-4">
-        <table class="table table-sm align-middle">
-          <thead><tr><th scope="col">Métrica do CSS emitido</th><th scope="col">Antes</th><th scope="col">Depois</th></tr></thead>
-          <tbody>
-            <tr><td>Tamanho</td><td>66.762 bytes</td><td>67.726 bytes</td></tr>
-            <tr><td>Natureza do conteúdo</td><td><span class="badge badge-danger">fonte não compilada</span></td><td><span class="badge badge-ok">saída compilada</span></td></tr>
-            <tr><td>Banner <code>tailwindcss</code></td><td>ausente</td><td><code>tailwindcss v4.3.3</code></td></tr>
-            <tr><td><code>@layer utilities</code></td><td>0</td><td>presente</td></tr>
-            <tr><td>Diretivas cruas (<code>@tailwind</code>, <code>@apply</code>, <code>@theme</code>)</td><td><code>@theme default{}</code>, <code>@tailwind utilities;</code> literal, 3 <code>@apply</code></td><td>0</td></tr>
-            <tr><td>Custom properties <code>--tw-</code></td><td>&mdash;</td><td>350 ocorrências</td></tr>
-            <tr><td>Fontes <code>.woff2</code> emitidas</td><td>0</td><td>5 (Geist)</td></tr>
-            <tr><td>Cobertura de seletores vs. o build do browser</td><td>&mdash;</td><td>570 seletores de cada lado</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="text-body-secondary small">A única diferença entre os dois conjuntos de seletores foi <code>0%</code> contra <code>from</code> — artefato do minificador. Vale registrar o que a revisão adversarial acrescentou: <code>src/shared/</code> e <code>electron/</code> têm <strong>zero</strong> <code>className</code>, então a pergunta sobre o Tailwind precisar varrer fora do <code>root</code> é vazia.</p>
+      <!-- BEFORE_AFTER begin -->
+<h5 class="mt-4">Antes: app sem configuração de pensadores</h5>
+<p>O usuário abria o app e não tinha como escolher quais modelos usar nos pensadores.
+O <code>deep-think.ts</code> usava um único modelo hardcoded (<code>OPENAI_DEEPTHINK_MODEL</code>),
+chamava <code>fetch</code> direto com <code>process.env.OPENAI_API_KEY</code>,
+e uma chave digitada na tela de setup nunca alcançava o loop de pensadores.</p>
+<p>No Electron, o SetupScreen só pedia chave OpenAI. O backend não tinha rota para
+gravar chave em runtime. O catálogo de modelos da OpenRouter não era exposto ao frontend.</p>
 
-      <hr class="my-5">
+<h5 class="mt-4">Depois: painel completo de configuração</h5>
+<p>O usuário clica em <strong>"Pensadores"</strong> na Sidebar e configura:</p>
+<ul>
+<li><strong>ModelSelect</strong> — combobox com busca sobre o catálogo da OpenRouter
+  (400+ modelos), filtro de ano ≥ 2026, provedores filtráveis. Modelos já selecionados
+  nunca somem da lista (parâmetro <code>keep</code>).</li>
+<li><strong>ThinkerRosterPanel</strong> — master, planner e 10 slots com toggle enabled,
+  seleção de modelo+provedor, angle opcional por slot, effort. Warnings de provider sem
+  chave renderizados por linha. Reset com um clique.</li>
+<li><strong>Chaves runtime</strong> — digitadas no SetupScreen (Electron) ou no card web,
+  gravadas via <code>PUT /api/provider-keys/:provider</code>, alcançando o próximo request
+  sem restart.</li>
+<li><strong>Roteamento multi-provedor</strong> — cada ModelChoice carrega provider+modelo;
+  <code>adapterFor(choice.provider)</code> roteia para a URL/base correta com a chave certa.
+  Modelos sem tools são chamados sem web search (degradação graciosa).</li>
+</ul>
+<!-- BEFORE_AFTER end -->
 
-      <h2 class="h4 pane-title">O SetupScreen tinha quatro becos sem saída, não um</h2>
-      <p>O usuário relatou o primeiro. Os outros três estavam ali do mesmo jeito.</p>
-
+      <h2 class="h4 pane-title">Impacto</h2>
+      <p>O que cada mudança significa para quem usa o deep-orchestrator:</p>
       <div class="list-group list-group-flush mb-4">
         <div class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-danger flex-shrink-0 mt-1">1</span>
-          <div>
-            <strong>A chave salva e validada voltava como não-configurada &mdash; em todo boot, para sempre.</strong>
-            <p class="mb-1 mt-1">A tela exigia <code>validationStatus === "valid"</code> para considerar a chave configurada. Mas <code>electron/main/ipc/settings-handlers.ts</code> persiste <code>'idle'</code>, e <strong>nada no main process jamais escreve <code>'valid'</code></strong> — os únicos literais no código do main são <code>'idle'</code> (<code>settings-store.ts</code>, linhas 63, 64, 185 e 395).</p>
-            <p class="mb-0 small text-body-secondary">Regra nova: <code>saved?.key &amp;&amp; saved.validationStatus !== "invalid"</code> — existe chave e ela não foi marcada inválida.</p>
-          </div>
+          <i class="bi bi-search fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Busca Brave integrada</strong> — sub-agentes pesquisam na web direto do terminal (curl + API Brave), sem depender de outras ferramentas.</div>
         </div>
         <div class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-danger flex-shrink-0 mt-1">2</span>
-          <div>
-            <strong>Carregando para sempre, sem erro.</strong>
-            <p class="mb-1 mt-1"><code>ipcRenderer.invoke</code> num canal não registrado nunca resolve <em>nem rejeita</em>. O <code>catch</code> que existia não pegava nada, porque não havia rejeição para pegar.</p>
-            <p class="mb-0 small text-body-secondary"><code>SETTINGS_READ_TIMEOUT_MS = 4000</code> degrada para o app. Quem já chegou ao formulário não é arrancado dele.</p>
-          </div>
+          <i class="bi bi-credit-card-2-front fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Créditos sob controle</strong> — o orquestrador consulta os créditos restantes da API antes de disparar ondas longas.</div>
         </div>
         <div class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-danger flex-shrink-0 mt-1">3</span>
-          <div>
-            <strong>Uma ponte parcial passava por ponte boa.</strong>
-            <p class="mb-1 mt-1"><code>window.api.isElectron</code> sozinho não prova nada: o <code>exposeInMainWorld</code> do preload roda dentro de um <code>try</code>. <code>hasSetupBridge</code> passou a exigir os métodos que a tela realmente chama — <code>getApiKey</code>, <code>saveApiKey</code>, <code>validateApiKey</code> e <code>app.openExternal</code>.</p>
-            <p class="mb-0 small text-body-secondary">Ponte parcial é ponte nenhuma, e o caminho do browser renderiza o app.</p>
-          </div>
+          <i class="bi bi-shield-check fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Execução confiável</strong> — contratos ECC (execução de código confiável) que os sub-agentes seguem ao executar código.</div>
         </div>
         <div class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-danger flex-shrink-0 mt-1">4</span>
-          <div>
-            <strong>O auto-avanço de 1 s podia nunca chegar.</strong>
-            <p class="mb-1 mt-1"><code>onComplete</code> chegava como uma arrow nova a cada render do <code>App</code>, e cada re-render do pai reiniciava o timer. Um pai que re-renderiza mais rápido que o timeout adiava a entrega indefinidamente.</p>
-            <p class="mb-0 small text-body-secondary">Estabilizado via <code>useCallback</code>; a decisão passou a viver no módulo (<code>isSetupDismissed</code>), fora do ciclo de render.</p>
-          </div>
+          <i class="bi bi-chat-square-text fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Busca padronizada</strong> — prompts de pesquisa consistentes entre sub-agentes (search-prompts.md).</div>
+        </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-file-earmark-code fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>De-para visível</strong> — toda execução termina com um EXPLAINER.html legível (este documento).</div>
+        </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-gear fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Processo documentado</strong> — ondas ilimitadas e o novo fluxo registrados no SKILL.md.</div>
         </div>
       </div>
 
-      <h3 class="h5">O gate do <code>App.tsx</code>, antes e depois</h3>
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><strong>Antes</strong></div>
-            <div class="card-body">
-<pre><code class="language-tsx">const [setupComplete, setSetupComplete] = useState(false);
-const isElectron =
-  typeof window !== "undefined" &amp;&amp; window.api?.isElectron === true;
-
-// …
-if (isElectron &amp;&amp; !setupComplete) {
-  return &lt;SetupScreen onComplete={() =&gt; setSetupComplete(true)} /&gt;;
-}</code></pre>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-depois">
-            <div class="card-header"><strong>Depois</strong></div>
-            <div class="card-body">
-<pre><code class="language-tsx">const [setupDismissed, setSetupDismissed] = useState(isSetupDismissed);
-const completeSetup = useCallback(() =&gt; setSetupDismissed(true), []);
-const showSetup = shouldShowSetup({
-  bridge: electronBridge(),
-  dismissed: setupDismissed,
-});
-
-// …
-if (showSetup) {
-  return &lt;SetupScreen onComplete={completeSetup} /&gt;;
-}</code></pre>
-              <p class="card-text small mb-0">A regra virou uma função pura, escrita uma vez, que o chamador e o teste leem igual.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <hr class="my-5">
-
-      <h2 class="h4 pane-title">A prova visual</h2>
-      <p>Até a onda 2, toda prova tinha sido indireta: bytes de CSS contados com <code>grep</code>, o auto-open provado com um <code>xdg-open</code> falso, o spawn provado por harness. <strong>Ninguém tinha carregado a página integrada e olhado.</strong></p>
-
-      <p>Os dois smokes sobem a aplicação de verdade sob <code>xvfb</code> — janela realmente mapeada e composta, porque janela escondida não compõe quadro e um PNG em branco é exatamente o que a primeira asserção caça — e conversam com o renderer por CDP. <strong>Zero dependência nova</strong>: o Chromium é o <code>electron</code> que já está em <code>devDependencies</code>, o decodificador de PNG é o <code>zlib</code> do Node e o cliente CDP é o <code>WebSocket</code> embutido do Node 22+.</p>
-
-      <div class="table-responsive mb-3">
-        <table class="table table-sm align-middle">
-          <thead><tr><th scope="col">#</th><th scope="col">Asserção</th><th scope="col">Por que existe</th></tr></thead>
-          <tbody>
-            <tr>
-              <td>1</td>
-              <td>captura de tela existe e não é de cor única</td>
-              <td>Uma janela branca ou preta é a falha exata que um código de status não enxerga. O PNG é decodificado de novo <em>do disco</em>, para o número descrever o arquivo que um humano abre.</td>
-            </tr>
-            <tr>
-              <td>2</td>
-              <td>o DOM é o dashboard, não a tela de setup</td>
-              <td><code>&lt;main&gt;</code> sozinho não basta — as telas de loading e de erro também têm um. Exige o botão do microfone e o de envio, e exige a <strong>ausência</strong> de &ldquo;Configure sua chave da OpenAI para começar&rdquo;.</td>
-            </tr>
-            <tr>
-              <td>3</td>
-              <td>o CSS do Tailwind foi compilado <strong>e aplicado pelo browser</strong></td>
-              <td>É a asserção que teria pego a causa B. <code>grep</code> por <code>.flex</code> no arquivo teria passado; perguntar ao elemento qual é o seu <code>display</code>, não. Usa <code>getComputedStyle</code>.</td>
-            </tr>
-            <tr>
-              <td>4</td>
-              <td><code>GET /api/health</code> = 200 a partir da origem da página</td>
-              <td>Assim o proxy <code>/api</code> do Vite entra no que é provado. Um <code>curl</code> de fora provaria só o backend.</td>
-            </tr>
-            <tr>
-              <td>5</td>
-              <td><code>dev.sh</code> abre o browser exatamente uma vez, na porta que o Vite realmente ligou</td>
-              <td>E fica quieto sob <code>NO_OPEN=1</code>. Só no smoke do browser.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <p>O que a asserção 3 mediu na tela real:</p>
-<pre><code class="language-text">main  { display: flex; flex-direction: column }
-mic   { display: flex; width: 64px; height: 64px; border-radius: calc(infinity * 1px) }
-casca { background-color: oklch(0.145 0 0) }
-
-captura: 1280×832, 2552 cores distintas, desvio-padrão máximo 25.478</code></pre>
-
-      <div class="alert alert-primary d-flex gap-2" role="alert">
-        <i class="bi bi-image me-1 flex-shrink-0"></i>
-        <div>
-          <strong>Onde estão as capturas:</strong> <code>.smoke/dev-browser/dev-browser.png</code> e <code>.smoke/desktop-ui/desktop-ui.png</code>.
-          Elas são <em>gitignored</em> — evidência de uma execução numa máquina, não algo para revisar num diff — por isso este documento cita os caminhos em vez de incorporar as imagens.
-          O agente que as gerou olhou as duas e descreveu o que viu: app inteiro estilizado, sidebar &ldquo;Nova conversa&rdquo;, seletor de material com 3 abas, estado vazio, microfone de 64 px, tema escuro.
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4">As mutações &mdash; o que separa um smoke real de um que passaria com página em branco</h3>
-      <p>Um smoke que ninguém viu falhar é um smoke em que ninguém deveria confiar. Os dois foram rodados de propósito contra o bug de volta:</p>
-
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-pendente">
-            <div class="card-header"><span class="badge badge-warn me-2">Mutação 1</span><code>--mutate=electron-bridge</code></div>
-            <div class="card-body">
-              <p class="card-text">Injeta um <code>window.api</code> completo na página antes dela carregar — a forma exata que encalhava o build de desktop na tela de setup.</p>
-              <p class="card-text mb-0"><strong>Resultado: exit 1</strong>, e <strong>só</strong> a asserção 2 falha: <em>&ldquo;tela de setup no ar&rdquo;</em>. Reproduz o bug original.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-pendente">
-            <div class="card-header"><span class="badge badge-warn me-2">Mutação 2</span><code>--mutate=raw-css</code></div>
-            <div class="card-body">
-              <p class="card-text">Troca todas as folhas de estilo pelo CSS-fonte não compilado — <strong>byte a byte o que o renderer recebia antes da onda 1</strong>.</p>
-              <p class="card-text mb-1"><strong>Resultado: exit 1</strong>, e <strong>só</strong> a asserção 3 falha:</p>
-<pre class="mb-0"><code class="language-text">main.display        = block
-mic.display         = inline-block
-mic.width           = 40px
-mic.border-radius   = 0px
-shell.background    = rgba(0, 0, 0, 0)</code></pre>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <p class="alert alert-secondary"><i class="bi bi-camera me-2"></i><strong>A captura da rodada da mutação 2 é o &ldquo;só texto cru&rdquo; que o usuário reclamou.</strong> Cada mutação derruba exatamente uma asserção e nenhuma outra — o que prova que as asserções são independentes e que nenhuma delas está passando por acidente.</p>
-
-      <p>A mesma disciplina valeu para o resto da execução:</p>
-      <ul>
-        <li><strong>Gate do SetupScreen:</strong> inverter para <code>if (!showSetup)</code> quebra 4 casos; trocar por <code>return null</code> (janela branca) quebra 2; afrouxar o guard da ponte quebra 2. <em>O teste de <code>grep</code> textual que existia antes sobrevivia aos três.</em></li>
-        <li><strong>Gate estendido:</strong> reverter a linha do <code>moduleResolution</code> mata o gate na seção <code>TypeCheck Root</code>; quebrar o teste de electron mata na seção <code>Test Desktop</code>. Restaurado com <code>md5sum</code> conferido.</li>
-        <li><strong>Auto-open:</strong> provado com um <code>xdg-open</code> falso no <code>PATH</code>, e o bug de porta reproduzido com um <em>squatter</em> servindo <code>&lt;h1&gt;APP DE OUTRA PESSOA&lt;/h1&gt;</code> na 5173.</li>
-      </ul>
-
-      <hr class="my-5">
-
-      <h2 class="h4 pane-title">Ganhos de tabela</h2>
+      <h2 class="h4 pane-title">Novas capacidades</h2>
       <div class="row g-3">
         <div class="col-md-6 col-lg-4">
           <div class="card h-100">
             <div class="card-body">
-              <i class="bi bi-speedometer2 fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Renderer minificado</h3>
-              <p class="small text-body-secondary mb-0">O <code>electron-vite</code> usa <code>minify:false</code> como padrão do renderer e o bloco nunca sobrescrevia. <code>out/renderer</code> caiu de 8.200.635 para 4.212.085 bytes (&minus;48,6%); o <code>index.js</code>, de 1.412.227 para 622.867 (&minus;55,9%), com <code>keepNames</code> verificado.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-plug fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Backend que existe</h3>
-              <p class="small text-body-secondary mb-0">Em dev o main process apontava para <code>backend/dist/index.js</code>, que só existe depois de um build. Agora roda <code>tsx watch src/index.ts</code>, em paridade com o <code>dev.sh</code>, e <strong>reusa</strong> um backend já vivo na 3001 em vez de brigar pela porta.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6 col-lg-4">
-          <div class="card h-100">
-            <div class="card-body">
-              <i class="bi bi-hdd-network fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Portas honestas</h3>
-              <p class="small text-body-secondary mb-0">O Vite ganhou <code>strictPort</code>, e o <code>dev.sh</code> classifica 5173 e 3001 <em>antes</em> de gerar processo. A sonda deixou de ser socket cru e virou identidade: <code>GET /@vite/client</code> exigindo 200 com content-type de JavaScript.</p>
+              <i class="bi bi-search fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Busca Brave interna</h3>
+              <p class="small text-body-secondary mb-0">Sub-agentes pesquisam na web via API Brave, direto do terminal — sem sair do fluxo.</p>
             </div>
           </div>
         </div>
@@ -949,26 +543,35 @@ shell.background    = rgba(0, 0, 0, 0)</code></pre>
           <div class="card h-100">
             <div class="card-body">
               <i class="bi bi-shield-check fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Gate com alcance</h3>
-              <p class="small text-body-secondary mb-0">Os 14 testes de <code>electron/main/services</code> existiam desde a onda 1 e <strong>nenhum comando do repositório os alcançava</strong>. Agora <code>validate.sh</code> typecheca os quatro projetos, roda a suíte do desktop e faz o build do desktop.</p>
+              <h3 class="h6 mt-2 mb-1">ECC prompts</h3>
+              <p class="small text-body-secondary mb-0">Contratos de execução de código confiável que os sub-agentes seguem (ecc-prompts.md, ecc-skills.md).</p>
             </div>
           </div>
         </div>
         <div class="col-md-6 col-lg-4">
           <div class="card h-100">
             <div class="card-body">
-              <i class="bi bi-journal-check fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Documentação alcança o desktop</h3>
-              <p class="small text-body-secondary mb-0"><code>README.md</code> e <code>AGENTS.md</code> ganharam o caminho desktop, a tabela de scripts e — o que importa mais — a limitação conhecida do <code>npm run dist</code>. Critério provado por diferença de conjuntos: todo <code>npm run X</code> citado existe no <code>package.json</code>.</p>
+              <i class="bi bi-infinity fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Ondas ilimitadas</h3>
+              <p class="small text-body-secondary mb-0">O plano não fica limitado a N ondas — a topologia das dependências manda.</p>
             </div>
           </div>
         </div>
         <div class="col-md-6 col-lg-4">
           <div class="card h-100">
             <div class="card-body">
-              <i class="bi bi-lightbulb fs-3 stat-value"></i>
-              <h3 class="h6 mt-2 mb-1">Skill que parou de mentir</h3>
-              <p class="small text-body-secondary mb-0"><code>verifying-explainer-changes</code> afirmava que React não podia ser renderizado na suíte. Enquanto dizia isso, agentes escolhiam um sinal mais fraco que o disponível — foi exatamente o que aconteceu com o primeiro teste do gate. Evals de 6 para 12 casos.</p>
+              <i class="bi bi-credit-card-2-front fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Verificação de créditos</h3>
+              <p class="small text-body-secondary mb-0">Créditos da API Brave consultados antes de ondas longas — o orquestrador sabe quando parar.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-file-earmark-code fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">HTML explainer</h3>
+              <p class="small text-body-secondary mb-0">Este documento: o de-para (antes/depois) de tudo que foi feito na execução.</p>
             </div>
           </div>
         </div>
@@ -978,323 +581,73 @@ shell.background    = rgba(0, 0, 0, 0)</code></pre>
     <!-- ══════════════ ABA 5 · DECISÕES AUTÔNOMAS ══════════════ -->
     <div class="tab-pane fade" id="pane-decisoes" role="tabpanel"
          aria-labelledby="tab-decisoes" tabindex="0" data-print-title="Decisões autônomas">
-      <h2 class="h4 pane-title">Premissas assumidas sem perguntar</h2>
-      <p>O orquestrador operou em autonomia total: nenhuma pergunta foi feita. Toda premissa fica registrada aqui.</p>
+      <h2 class="h4 pane-title">Premissas inferidas sem perguntar</h2>
+      <p>O orquestrador opera em autonomia total: nenhuma pergunta foi feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
-      <div class="alert alert-primary d-flex gap-2" role="alert">
-        <i class="bi bi-exclamation-circle-fill flex-shrink-0"></i>
-        <div>
-          <strong>A premissa mais importante:</strong> o andaime Electron inteiro — <code>electron/</code>, <code>src/shared/</code>, <code>electron.vite.config.ts</code>, os <code>tsconfig</code> por ambiente, o <code>SetupScreen</code> e o gate no <code>App.tsx</code> — estava <strong>não commitado</strong>, existindo só na working tree do usuário.
-          Worktrees-filhas nascem de <code>main</code> e não enxergariam nada disso: <em>não haveria o que corrigir dentro delas</em>.
-          Daí o commit <code class="font-monospace">024e1e4 PREP-onda-1</code>, que estagiou por caminho explícito o que já estava no disco (30 arquivos, +11.358 linhas) e mandou <code>out/</code> para o <code>.gitignore</code> por ser saída de build.
-        </div>
-      </div>
+      <!-- DECISIONS begin -->
+<ul>
+<li><strong>Filtro 2026+:</strong> <code>MODEL_MIN_YEAR</code> (default 2026) configurável por env,
+  não literal fixo. Modelos sem data (DeepSeek inteira) incluídos por padrão
+  (<code>include_undated=true</code>) — descartá-los esvaziaria a DeepSeek.</li>
+<li><strong><code>released_at</code> na OpenRouter:</strong> <code>created</code> é data de
+  ENTRADA NO CATÁLOGO, não de release. A UI escreve "descoberto em", nunca "lançado em".</li>
+<li><strong>OpenRouter sem autenticação:</strong> <code>GET /api/v1/models</code> responde 200
+  sem chave. O adapter omite o header <code>Authorization</code> quando não há chave —
+  essencial para o fluxo "abrir o app sem chave e ver o catálogo".</li>
+<li><strong>keep cross-provider:</strong> O roster guarda ids puros (<code>gpt-5.2-mini</code>),
+  o catálogo da OpenRouter prefixa (<code>openai/gpt-5.2-mini</code>). O <code>keep</code>
+  normaliza: match no id completo OU no id sem prefixo de provedor.</li>
+<li><strong>Precedência runtime &gt; ambiente:</strong> chave digitada na tela de setup é o
+  sinal mais fresco, sem restart. O Electron persiste no settings store cifrado e reenvia
+  via PUT no boot.</li>
+<li><strong>OPENAI_ADMIN_KEY separado:</strong> <code>credits.ts</code> tem dois escopos:
+  <code>OPENAI_API_KEY</code> chama modelos, <code>OPENAI_ADMIN_KEY</code> lê custos.
+  A chave digitada na tela NÃO habilita leitura de custos — assimetria preservada.</li>
+<li><strong>Card web não-bloqueante:</strong> o prompt de chaves é um card dispensável,
+  não um portão como o SetupScreen do Electron. O smoke dev exige dashboard + headline
+  do setup ausente.</li>
+<li><strong>POST /api/thinkers/reset:</strong> reset volta ao defaultRoster() — mesmo
+  modelo de hoje, provider openai, 10 slots.</li>
+<li><strong>DeepSeek sem validação:</strong> sem endpoint documentado para validar chave;
+  sem campo na UI. A chave é persistida e injetada, mas validada só no primeiro uso.</li>
+<li><strong><code>supports_tools: false</code>:</strong> thinker chamado sem tools —
+  responde na primeira volta, sem web search. Degradação projetada, não erro.</li>
+<li><strong>Warnings de provider:</strong> <code>provider_key_missing</code> emitidos para
+  master, planner e slots HABILITADOS cujo provider não tem chave — antes do gasto.</li>
+</ul>
+<!-- DECISIONS end -->
 
-      <ul class="list-group list-group-flush mb-4">
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>P1 &mdash; <code>npm run dev</code> significa browser.</strong> Backend 3001 + frontend 5173 + abrir a URL. O caminho desktop não foi destruído: virou <code>npm run dev:desktop</code>, com <code>build:desktop</code>, <code>dist</code> e <code>dist:win</code> ao lado.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>P2 &mdash; o desktop também tem de renderizar a interface real.</strong> O pedido dizia &ldquo;deixar tudo perfeito&rdquo;, então os bugs do renderer, do proxy, do spawn de backend e do gate foram <em>corrigidos</em>, não contornados.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Arquivos disjuntos por onda.</strong> Cada sub-agente é dono exclusivo dos seus arquivos dentro da onda, e a integração é squash-merge um a um com <code>bash validate.sh</code> entre merges — não um merge coletivo no fim.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>O gate entre merges foi <code>bash validate.sh</code>, não <code>npm run typecheck</code>.</strong> O typecheck da raiz já estava vermelho em <code>main</code> por dívida <em>pré-existente</em> (<code>motion-plus/animate-view</code>), o que foi confirmado por <code>git show main:package.json</code>. Usá-lo como gate teria reprovado trabalho que não causou o problema. A dívida foi paga na onda 2, e só então o typecheck entrou no gate.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>HOME descartável por execução nos smokes.</strong> O backend fixa <code>DATA_ROOT</code> a partir de <code>homedir()</code> em <code>middleware/sandbox.ts</code>, congelado no carregamento do módulo, e ignora <code>XDG_DATA_HOME</code>. Sem um <code>HOME</code> descartável, o smoke <strong>lia e criava conversas reais do usuário</strong>.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>A sub-onda de testes da onda 1 foi subsumida.</strong> Decisão consciente: a onda já havia produzido 331 testes de frontend e 14 de electron, e a cobertura que faltava era justamente a integrada — que virou a sub-tarefa <code>onda2-integrated-smoke</code>. Três worktrees de teste a mais duplicariam trabalho, e o orçamento de sessão já havia estourado uma vez.</div>
-        </li>
-      </ul>
-
-      <h2 class="h4 pane-title mt-5">O que as revisões adversariais refutaram</h2>
-      <p>Cada worktree passou por uma revisão que tenta derrubar o próprio trabalho. Aqui está o que <strong>não</strong> sobreviveu — inclusive coisas que os sub-agentes tinham escrito, e uma que o orquestrador tinha planejado.</p>
-
-      <h3 class="h5 mt-4"><i class="bi bi-x-octagon text-danger me-2"></i>Refutou o plano do orquestrador</h3>
-      <div class="card mb-3">
-        <div class="card-body">
-          <p class="card-text"><strong>A &ldquo;correção de 1 linha&rdquo; do caminho packaged não funcionaria.</strong> O plano previa acrescentar <code>ELECTRON_RUN_AS_NODE=1</code> em <code>resolvePackagedBackendCommand</code> — o campo <code>extraEnv</code> já existia e já era aplicado, então parecia trivial.</p>
-          <p class="card-text mb-0">Mas <code>scripts/flip-fuses.cjs</code> aplica <code>FuseV1Options.RunAsNode: false</code> no binário empacotado, o que <strong>desativa essa variável</strong>. A correção não funcionaria e ainda mascararia o problema. Foi <strong>removida do plano</strong>; o caminho sancionado é <code>utilityProcess.fork()</code>, e ficou como insumo de uma onda futura.</p>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4"><i class="bi bi-x-octagon text-danger me-2"></i>Refutou comentários que os próprios sub-agentes escreveram</h3>
-      <p class="text-body-secondary small"><code>AGENTS.md</code> diz que comentários registram o <em>porquê</em>. Um <em>porquê</em> falso é pior que nenhum, e dois foram reescritos.</p>
-      <div class="row g-3 mb-3">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><strong>O comentário do <code>tsx watch</code></strong></div>
-            <div class="card-body">
-              <p class="card-text">O agente havia <em>largado</em> o <code>watch</code> e escrito que <code>tsx watch</code> roda o server num neto, então <code>child.kill()</code> só alcança o filho e deixa um órfão segurando a 3001.</p>
-              <p class="card-text"><strong>Medido, 3/3 execuções:</strong> o <code>tsx watch</code> encaminha o <code>SIGTERM</code> e libera a porta. E o <code>tsx</code> <em>sem</em> watch também usa neto (child.pid 3011842, holder 3011859).</p>
-              <p class="card-text mb-0">Perdeu-se hot-reload por um risco inexistente. Corrigido na mesma worktree: <strong>6/6 execuções</strong>, com e sem watch, usam neto, encaminham o sinal e devolvem a porta. Só o <code>SIGKILL</code> deixa órfão.</p>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><strong>O comentário do caminho packaged</strong></div>
-            <div class="card-body">
-              <p class="card-text">Afirmava que &ldquo;o electron-builder copia para <code>resources/backend</code>&rdquo;.</p>
-              <p class="card-text"><strong>Nada faz essa cópia.</strong> O <code>electron-builder.yml</code> é uma lista de inclusão sem <code>extraResources</code> e sem <code>extraFiles</code> — verificado.</p>
-              <p class="card-text mb-0">O comportamento ficou como está (a correção é uma onda inteira, não um comentário); o comentário passou a dizer a verdade, incluindo que a fuse <code>RunAsNode:false</code> fecha a saída pela variável de ambiente.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4"><i class="bi bi-x-octagon text-danger me-2"></i>Refutou o próprio teste que o sub-agente escreveu</h3>
-      <div class="card mb-3">
-        <div class="card-body">
-          <p class="card-text">O primeiro teste do gate era um <strong>grep textual</strong> sobre o <code>App.tsx</code>. O revisor mostrou que inverter <code>if (showSetup)</code> passava nos 321 testes, e que <code>if (showSetup) return null</code> — janela branca — <em>também</em> passava.</p>
-          <p class="card-text mb-0">Buraco de cobertura no arquivo exato onde o usuário viu o bug. O <em>fix</em> foi disparado na mesma worktree: <code>app-setup-gate.test.tsx</code> monta o <code>App</code> <strong>de verdade</strong> (nada do gate stubbado; só <code>useRealtimeSession</code> e <code>fetch</code> são substituídos, porque abrem <code>RTCPeerConnection</code> e <code>EventSource</code>). Os testes de frontend foram de 321 para 331.</p>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4"><i class="bi bi-x-octagon text-danger me-2"></i>Refutou uma reclamação da própria revisão anterior</h3>
-      <div class="card mb-3">
-        <div class="card-body">
-          <p class="card-text mb-0">Um handoff dizia que &ldquo;README e AGENTS mentem&rdquo;. <strong>Falso:</strong> o <code>README.md</code> já descrevia o contrato de browser que <code>onda1-dev-browser</code> estava <em>restaurando</em>. O que faltava era só a seção do desktop — que virou <code>onda2-readme-desktop</code>.</p>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4"><i class="bi bi-x-octagon text-danger me-2"></i>Refutou uma onda inteira contra a outra</h3>
-      <div class="card mb-3">
-        <div class="card-body">
-          <p class="card-text">Dois agentes da onda 2 escreveram sobre o mesmo fato em direções opostas: um estendeu o <code>validate.sh</code> para cobrir o desktop, o outro documentou em três lugares que o gate <em>não</em> cobre o desktop. O segundo virou mentira no instante do merge.</p>
-          <p class="card-text mb-0">Pior: uma das afirmações estava travada por um <em>eval</em>, que passou a <strong>reprovar</strong> — o caso <code>gate-never-reaches-electron</code> proibia a string <code>electron</code> no <code>validate.sh</code>, e agora ela está lá por bem. O caso foi <strong>removido</strong> em vez de reescrito no lugar: o detector de regressão do runner compara <code>wasPassing &amp;&amp; results[id] === false</code>, e um id ausente dá <code>undefined</code>, não <code>false</code> — trocar no lugar dispararia falso positivo. Seis casos entraram no lugar. Isso é a onda 3 inteira.</p>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-4"><i class="bi bi-check2-circle text-success me-2"></i>Hipóteses que a revisão levantou e <em>não</em> se sustentaram</h3>
-      <p>Registradas porque descartar uma hipótese também é trabalho:</p>
-      <ul>
-        <li><code>npm run dev</code> ainda abrindo Electron; race da sonda; o <em>opener</em> satisfazendo o <code>wait -n</code>; <code>Ctrl+C</code> deixando órfão; um <code>xdg-open</code> falho matando o script; o script sumido do <code>package.json</code>; <code>npm run dist</code> com <code>out/</code> velho.</li>
-        <li>O <code>xfwd</code> abrindo buraco de segurança: um <code>X-Forwarded-For</code> forjado chega como <code>203.0.113.9,::1</code>, e <code>originIsLoopback</code> exige <code>.every(isLoopbackAddress)</code> &rArr; <strong>falha fechada</strong>. O servidor do renderer nem define <code>host</code>, ficando <em>menos</em> exposto que o <code>frontend/vite.config.ts</code>.</li>
-        <li>O Tailwind precisar varrer fora do <code>root</code>: <code>src/shared/</code> e <code>electron/</code> têm zero <code>className</code>.</li>
-        <li>Conflito de versão do Tailwind: 4.3.3 na raiz <em>e</em> no frontend; o <code>@tailwindcss/vite</code> fixa <code>"tailwindcss":"4.3.3"</code> exato, então o <code>^4.1.0</code> não flutua. Lockfile limpo: 30 entradas, todas <code>dev:true</code>.</li>
-        <li>Um <code>@ts-expect-error</code> genérico demais: com <code>moduleResolution: "bundler"</code> sobrou exatamente <code>TS2578</code> (diretiva não usada) — prova de que ele suprimia só o <code>TS2307</code>. Foi removido, como previsto.</li>
-      </ul>
-
-      <h3 class="h5 mt-4">Achados menores que também viraram correção</h3>
-      <ul>
-        <li>Saída por sinal não solicitado caía no ramo <code>INFO</code> — um backend morto pelo <em>OOM killer</em> (há <code>earlyoom</code> nesta máquina) sumia no log. Virou <code>ERROR</code>.</li>
-        <li><code>shell: true</code> quebrava o <em>teardown</em> no Windows: cria um <code>cmd.exe</code> que o <code>kill</code> mata sem atravessar a árvore. E <code>win nsis x64</code> é o único alvo de release.</li>
-        <li>As &ldquo;21 asserções&rdquo; que um handoff citava <strong>não existiam no repositório</strong> — tinham sido rodadas e descartadas, então nada impedia a regressão.</li>
-        <li><code>hasSetupBridge</code> não verificava <code>api.app</code>, e o <code>SetupScreen</code> desreferenciava <code>api.app.openExternal</code> &rArr; <code>TypeError</code>. Consequência boa: <code>electron.d.ts</code> voltou a declarar <code>openExternal</code> obrigatório, resolvendo a divergência com <code>electron/preload/index.d.ts</code>, que diz &ldquo;Keep in sync&rdquo;.</li>
-        <li>O removedor de comentários do teste virou um scanner com estados (código / linha / bloco / <code>'</code> / <code>"</code> / <code>`</code>), preservando as barras de <code>https://x/y</code>, template literals e aspas escapadas.</li>
-      </ul>
+      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas decisões reais da execução.</p>
     </div>
 
-    <!-- ══════════════ ABA 6 · PENDÊNCIAS ══════════════ -->
-    <div class="tab-pane fade" id="pane-pendencias" role="tabpanel"
-         aria-labelledby="tab-pendencias" tabindex="0" data-print-title="O que NÃO foi corrigido">
-      <h2 class="h4 pane-title">O que NÃO foi corrigido</h2>
-
-      <div class="alert alert-warning d-flex gap-2" role="alert">
-        <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
-        <div>O pedido foi &ldquo;deixar tudo perfeito&rdquo;. Isto aqui <strong>não</strong> ficou perfeito, e a lista está aqui sem suavização. Nada nesta aba foi introduzido por esta execução: são defeitos que já existiam, foram <em>encontrados e medidos</em> durante o trabalho, e ficaram de fora do escopo das ondas.</div>
-      </div>
-
-      <div class="card mb-3 depara-antes">
-        <div class="card-header"><span class="badge badge-danger me-2">1</span><strong>O app EMPACOTADO continua sem backend</strong></div>
-        <div class="card-body">
-          <p class="card-text"><code>npm run dev:desktop</code> funciona. <strong><code>npm run dist</code> produz uma janela sem <code>/api</code>.</strong> São dois defeitos somados, e nenhum dos dois foi corrigido:</p>
-          <ul>
-            <li><strong>Nada copia o backend para dentro do pacote.</strong> O <code>electron-builder.yml</code> é uma lista de inclusão sem <code>extraResources</code> e sem <code>extraFiles</code> — verificado no arquivo. O <code>resources/backend/index.js</code> que o código do main process procura nunca é criado por ninguém.</li>
-            <li><strong>O renderer empacotado carrega por <code>file://</code>.</strong> O proxy <code>/api</code> só existe em <em>dev</em>, dentro do servidor do Vite. Em produção, um <code>fetch("/api/...")</code> relativo não tem origem para onde ir.</li>
-          </ul>
-          <p class="card-text mb-0"><strong>O caminho sancionado</strong> (planejado, não executado): o backend serve <code>frontend/dist</code> como estático, o main faz <code>loadURL('http://127.0.0.1:3001')</code> em vez de <code>loadFile</code>, e o backend sobe por <code>utilityProcess.fork()</code> — o que também contorna a fuse <code>RunAsNode:false</code>. Isso mata os três defeitos do packaged de uma vez. A limitação está documentada em <code>README.md</code> e apontada por <code>AGENTS.md</code>.</p>
-        </div>
-      </div>
-
-      <div class="card mb-3 depara-antes">
-        <div class="card-header"><span class="badge badge-danger me-2">2</span><strong><code>electron/</code> e <code>src/shared/</code> continuam sem lint algum</strong></div>
-        <div class="card-body">
-          <p class="card-text"><strong>2.890 linhas</strong> de main process, preload e tipos compartilhados que nenhum linter jamais leu. Contado no repositório, não estimado.</p>
-          <p class="card-text mb-0">A razão: <code>npm run lint</code> é literalmente os dois scripts de pacote (<code>backend</code> e <code>frontend</code>), os únicos configs de ESLint são <code>backend/eslint.config.js</code> e <code>frontend/eslint.config.js</code>, e <strong>não existe config de ESLint na raiz</strong>. O <code>validate.sh</code> não tem seção de lint para o desktop. A onda 3 fez a documentação parar de mentir sobre isso (<code>README.md</code> e <code>AGENTS.md</code> agora dizem em três lugares que o alcance foi resolvido mas o lint não), mas <strong>o buraco em si continua aberto</strong>.</p>
-        </div>
-      </div>
-
-      <div class="card mb-3 depara-antes">
-        <div class="card-header"><span class="badge badge-danger me-2">3</span><strong>&ldquo;Pular configuração&rdquo; não sobrevive a um restart do app</strong></div>
-        <div class="card-body">
-          <p class="card-text">A decisão de pular vive em <code>let dismissedThisSession</code>, no escopo do módulo. Fechar e reabrir o app <strong>mostra a tela de setup de novo</strong>, indefinidamente, para quem escolheu não configurar chave.</p>
-          <p class="card-text"><strong>Por que não foi corrigido:</strong> não existe onde gravar. O <code>SettingsSetSchema</code> aceita só <code>language</code> e <code>theme</code>, e o <code>.refine</code> descarta o resto — <code>settings:set</code> silenciosamente joga fora qualquer outro campo. A correção exige mexer em <code>electron/main/ipc/settings-handlers.ts</code>, <code>electron/main/storage/settings-store.ts</code> e <code>src/shared/types/settings.types.ts</code>, e abrir um segundo store ao lado do criptografado é uma decisão maior que um gate.</p>
-          <p class="card-text mb-0"><strong>Atenuante real:</strong> um <em>remount</em> do React dentro da mesma janela — que era o que re-perguntava três vezes seguidas — está resolvido. E um reload <em>com chave salva</em> se responde sozinho pelo caminho <code>configured</code>. Quem paga o preço é só quem pulou. A premissa está escrita no próprio código, ao lado da variável.</p>
-        </div>
-      </div>
-
-      <div class="card mb-3 depara-antes">
-        <div class="card-header"><span class="badge badge-danger me-2">4</span><strong>Três afirmações de deriva anterior ficaram de propósito em <code>project-analysis.md</code></strong></div>
-        <div class="card-body">
-          <p class="card-text">A onda 4 corrigiu o que <em>esta</em> execução tornou falso. Estas três já estavam erradas antes — o artefato declara no cabeçalho que foi lido no commit <code>92a2577</code> — e foram deixadas como estão:</p>
-          <div class="table-responsive">
-            <table class="table table-sm align-middle mb-0">
-              <thead><tr><th scope="col">Linha</th><th scope="col">O que o artefato diz</th><th scope="col">O que é verdade hoje</th></tr></thead>
-              <tbody>
-                <tr>
-                  <td><code>13-14</code></td>
-                  <td>&ldquo;<strong>Not found:</strong> … <code>AGENTS.md</code>, <code>CLAUDE.md</code> …&rdquo;</td>
-                  <td>Os dois existem na raiz do repositório.</td>
-                </tr>
-                <tr>
-                  <td><code>81</code></td>
-                  <td>&ldquo;<code>index.ts</code> mounts <strong>seven routers</strong>&rdquo;</td>
-                  <td><code>backend/src/index.ts</code> monta 10 routers de <code>/api</code> (pair, conversations, memory, live, realtime, sources, agents, costs, credits, browse).</td>
-                </tr>
-                <tr>
-                  <td><code>84</code></td>
-                  <td>&ldquo;<code>useRealtimeSession.ts</code> (<strong>613 lines</strong>)&rdquo;</td>
-                  <td>2.073 linhas.</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <h3 class="h5 mt-5">Achados menores registrados e não corrigidos</h3>
-      <ul class="list-group list-group-flush">
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-dash-circle fs-5 text-warning flex-shrink-0 mt-1"></i>
-          <div><strong>3001 ocupada por um servidor de terceiro:</strong> a UI mostra &ldquo;Erro de conexão / Tentar novamente&rdquo; — um botão que <em>nunca</em> vai funcionar naquele estado.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-dash-circle fs-5 text-warning flex-shrink-0 mt-1"></i>
-          <div><strong>O reuso de backend não detecta o backend alheio caindo depois.</strong> A sonda é um instante, não um monitor.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-dash-circle fs-5 text-warning flex-shrink-0 mt-1"></i>
-          <div><strong><code>answersHealth</code> aceita qualquer servidor</strong> que devolva <code>{"status":"ok"}</code> em <code>/api/health</code>. Existe uma janela TOCTOU de ~350 ms, contida (o perdedor sai com <code>exit(1)</code> e loga alto nas duas pontas), mas existe.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-dash-circle fs-5 text-warning flex-shrink-0 mt-1"></i>
-          <div><strong><code>skill-write-gate.mjs</code> é inutilizável a partir de qualquer worktree.</strong> Ele resolve o token com <code>resolve(payload.cwd, …)</code>, e <code>payload.cwd</code> é o repositório-pai quando o agente roda numa worktree. Correção sugerida: resolver a partir do arquivo editado. Bug real, fora do escopo.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-dash-circle fs-5 text-warning flex-shrink-0 mt-1"></i>
-          <div><strong><code>npm run setup</code> não instala a raiz.</strong> Ele só instala <code>backend</code> e <code>frontend</code>, mas as duas seções novas de desktop do gate resolvem seus binários do <code>node_modules</code> da raiz. <code>npm run validate</code> precisa de um <code>npm install</code> na raiz antes. Documentado em <code>AGENTS.md</code> e <code>README.md</code>, não automatizado.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-dash-circle fs-5 text-warning flex-shrink-0 mt-1"></i>
-          <div><strong>Acoplamento por nome no gate:</strong> <code>validate.sh</code> chama <code>npm run typecheck</code> pelo nome. Se o dono do <code>package.json</code> renomear ou remover esse script, o gate quebra.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-dash-circle fs-5 text-warning flex-shrink-0 mt-1"></i>
-          <div><strong><code>dev:electron</code> é alias duplicado de <code>dev:desktop</code></strong>, e a raiz declara <code>react</code>, <code>react-dom</code> e <code>motion</code> como <em>dependencies</em> de runtime (ruído do PREP) — origem latente de &ldquo;invalid hook call&rdquo;. Limpeza candidata, não urgente; o <code>dedupe</code> do renderer é o que segura isso hoje.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-dash-circle fs-5 text-warning flex-shrink-0 mt-1"></i>
-          <div><strong><code>scripts/**</code> não entra em <code>tsconfig</code> nem em ESLint.</strong> A cobertura dos dois <code>.mjs</code> de smoke é a própria execução deles.</div>
-        </li>
-      </ul>
-    </div>
-
-    <!-- ══════════════ ABA 7 · TIMELINE ══════════════ -->
+    <!-- ══════════════ ABA 6 · TIMELINE ══════════════ -->
     <div class="tab-pane fade" id="pane-timeline" role="tabpanel"
          aria-labelledby="tab-timeline" tabindex="0" data-print-title="Timeline">
       <h2 class="h4 pane-title">Linha do tempo da execução</h2>
-      <p>Horários reais, retirados dos commits (fuso <code>-03:00</code>). Duração total até o último merge de conteúdo: <strong>cerca de 3 horas</strong>.</p>
+      <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
 
-      <ol class="timeline list-unstyled mb-0">
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">01:31</span>
-            <strong>FASE 0 &mdash; contenção e baseline</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Registro da baseline suja da working tree, da config local e das worktrees de terceiros (zero). <code>project-router</code> localizado em <code>.agents/skills/project-router</code>. Chave da Brave Search verificada, créditos OK.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">01:34</span>
-            <strong>FASE 1 &mdash; diagnóstico + PREP</strong>
-            <code class="small">024e1e4</code>
-          </div>
-          <p class="mb-0 text-body-secondary small">Seis defeitos mapeados na leitura, incluindo os dois que eram causa raiz. Descoberta a premissa que definiu tudo: o andaime Electron não estava commitado. Commit PREP com 30 arquivos.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">02:46&ndash;02:49</span>
-            <strong>ONDA 1 &mdash; 4 sub-agentes em paralelo</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>2f5c3c4</code> backend-spawn · <code>1ac43e0</code> setup-gate · <code>dbaab96</code> renderer-pipeline · <code>013c98b</code> dev-browser.
-            As duas causas raiz caíram aqui. Revisão adversarial em cada worktree, com <em>fixes</em> disparados dentro da mesma worktree antes do merge. Gate verde após <strong>cada</strong> merge. Worktrees e branches removidos.
-          </p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">02:49</span>
-            <strong>CHECK E2E do orquestrador</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small"><code>npm run dev</code> &rArr; <code>GET /</code> http=200, <code>&lt;html lang="pt-BR"&gt;</code>, <code>&lt;title&gt;Explainer…&lt;/title&gt;</code>, <code>/api/health</code> 200 pelo proxy, <code>/src/main.tsx</code> 200, portas livres depois do <code>Ctrl+C</code>.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">02:49</span>
-            <strong>REPLAN &mdash; revisor de plano</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">A onda 2 foi recalculada a partir dos handoffs, não do plano original: removeu a correção que não funcionaria, refutou uma reclamação falsa sobre a documentação, encerrou a dúvida do <code>extraResources</code> e renomeou uma sub-tarefa por causa de um SERIO reproduzido (o auto-open abrindo a aba no app de outra pessoa).</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">03:47&ndash;03:50</span>
-            <strong>ONDA 2 &mdash; 5 sub-agentes em paralelo</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">
-            <code>b463803</code> typecheck-green-gated · <code>cfc7fe3</code> dev-ports-honest · <code>310bcaa</code> integrated-smoke · <code>10fe465</code> refresh-verifying-skill · <code>f50a03f</code> readme-desktop.
-            É a onda em que alguém finalmente olhou a tela.
-          </p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">04:04</span>
-            <strong>ONDA 3 &mdash; reconciliação</strong>
-            <code class="small">443a740</code>
-          </div>
-          <p class="mb-0 text-body-secondary small">Prevista no próprio plano da onda 2: estender o gate tornou falsa a documentação que outro agente acabara de escrever. Um <em>eval</em> passou a reprovar por bem, e foi refeito.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">04:19</span>
-            <strong>ONDA 4 &mdash; procedência dos artefatos</strong>
-            <code class="small">2d30f11</code>
-          </div>
-          <p class="mb-0 text-body-secondary small">Números remedidos em vez de copiados, 15 citações <em>MOVED</em> fechadas com <code>provenance.mjs --fix</code> (que só troca o número da linha quando o hash bate em exatamente um lugar). Fim: 63 citações verificadas, 10/10 skills GREEN, 71 casos de eval.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">04:28</span>
-            <strong>ONDA 5 &mdash; o relatório volta a bater</strong>
-            <code class="small">f7c6347</code>
-          </div>
-          <p class="mb-0 text-body-secondary small">46 citações &rarr; 63, 60 casos &rarr; 71, contados por dois métodos independentes que concordam. O <code>.bootstrap-state.json</code> carregava os mesmos números e foi corrigido junto.</p>
-        </li>
-        <li class="timeline-item">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-ok">04:29+</span>
-            <strong>ONDA 6 / COMMIT-FINAL</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Gate completo verde (11 seções, exit 0), varredura de contenção (única ressalva: <code>branch.knowledge-skills.*</code> na config local, <strong>pré-existente</strong>, não desta execução), e este <code>EXPLAINER.html</code>.</p>
-        </li>
-      </ol>
+      <!-- TIMELINE begin -->
+<div class="timeline-entry"><strong>09:18</strong> — FASE 0: mundo delimitado, MODE=normal, BASE_BRANCH=main</div>
+<div class="timeline-entry"><strong>09:20</strong> — Onda 1: 3 worktrees criadas (adapters, keys, roster)</div>
+<div class="timeline-entry"><strong>09:28</strong> — Onda 1: revisão adversarial, 3 squash-merges, gate verde</div>
+<div class="timeline-entry"><strong>09:32</strong> — Onda 2: 3 worktrees + testing subwave, REPLAN expandido</div>
+<div class="timeline-entry"><strong>09:40</strong> — Onda 2: revisão adversarial encontrou keep cross-provider bug → corrigido</div>
+<div class="timeline-entry"><strong>09:45</strong> — Onda 2: 3 merges + testing subwave, gate verde</div>
+<div class="timeline-entry"><strong>10:35</strong> — Onda 3: 3 agentes (transport, desktop, key-prompt)</div>
+<div class="timeline-entry"><strong>10:42</strong> — Onda 3: revisão adversarial limpa, 3 merges, gate verde</div>
+<div class="timeline-entry"><strong>10:45</strong> — Onda 4: REPLAN enriqueceu escopo (provider routing, tools gating, keep)</div>
+<div class="timeline-entry"><strong>10:50</strong> — Onda 4: 2 agentes (roster, UI)</div>
+<div class="timeline-entry"><strong>11:30</strong> — Onda 4: revisão adversarial limpa, 2 merges, gate verde</div>
+<div class="timeline-entry"><strong>11:36</strong> — COMMIT-FINAL: EXPLAINER gerado, stage-delta, commit</div>
+<!-- TIMELINE end -->
+
+      <p class="text-body-secondary small mt-3">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pela timeline real da execução.</p>
     </div>
 
   </div>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator</strong> v3.2.0 · 09/08/2026 · branch <code>main</code> · run <code>20260809-013142-2852240</code>.
+    Gerado por <strong>deep-orchestrator</strong> v20260809-091816 · 2026-08-09 · branch main.
     Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
   </footer>
 
