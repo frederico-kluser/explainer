@@ -18,6 +18,7 @@ import costsRouter, { creditsRouter } from "./routes/costs.js";
 import browseRouter from "./routes/browse.js";
 import { createPairRouter } from "./routes/pair.js";
 import { attachDeepThinkToMemory } from "./services/memory-recorder.js";
+import { attachListenOutcome } from "./services/listen.js";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
@@ -140,26 +141,40 @@ function lanAddress(): string | null {
   return null;
 }
 
-app.listen(PORT, HOST, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
+// No callback here on purpose: Express 5 would alias it onto the server's
+// `error` event too, and the banner below would announce a backend that never
+// bound. `attachListenOutcome` explains what that cost.
+const server = app.listen(PORT, HOST);
 
-  // Two lines because there are two audiences, and conflating them is what made
-  // the key look mandatory: here the app opens with nothing, and the link is
-  // only for the device that is not this computer. Printing both every boot is
-  // what makes "abra essa url" a complete instruction either way.
-  const uiPort = Number(process.env.EXPLAINER_PUBLIC_PORT) || 5173;
-  const uiHost = lanAddress() ?? "localhost";
-  console.log(
-    configuredKey
-      ? "[access] Usando a EXPLAINER_ACCESS_KEY do ambiente."
-      : "[access] Nenhuma EXPLAINER_ACCESS_KEY definida — gerei uma só para esta execução.",
-  );
-  console.log(
-    `[access] Neste computador não precisa de chave: http://localhost:${uiPort}`,
-  );
-  console.log(
-    `[access] Para outro aparelho no wifi, compartilhe: http://${uiHost}:${uiPort}/?k=${ACCESS_KEY}`,
-  );
+attachListenOutcome(server, {
+  port: PORT,
+  host: HOST,
+  onFailure: (message) => {
+    console.error(message);
+    process.exit(1);
+  },
+  onListening: () => {
+    console.log(`Backend running on http://localhost:${PORT}`);
+
+    // Two lines because there are two audiences, and conflating them is what
+    // made the key look mandatory: here the app opens with nothing, and the
+    // link is only for the device that is not this computer. Printing both
+    // every boot is what makes "abra essa url" a complete instruction either
+    // way.
+    const uiPort = Number(process.env.EXPLAINER_PUBLIC_PORT) || 5173;
+    const uiHost = lanAddress() ?? "localhost";
+    console.log(
+      configuredKey
+        ? "[access] Usando a EXPLAINER_ACCESS_KEY do ambiente."
+        : "[access] Nenhuma EXPLAINER_ACCESS_KEY definida — gerei uma só para esta execução.",
+    );
+    console.log(
+      `[access] Neste computador não precisa de chave: http://localhost:${uiPort}`,
+    );
+    console.log(
+      `[access] Para outro aparelho no wifi, compartilhe: http://${uiHost}:${uiPort}/?k=${ACCESS_KEY}`,
+    );
+  },
 });
 
 export default app;
