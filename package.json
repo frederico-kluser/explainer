@@ -25,6 +25,8 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "test": "npm --prefix backend test && npm --prefix frontend test",
     "validate": "bash validate.sh",
+    "smoke:dev": "node scripts/smoke-dev-browser.mjs",
+    "smoke:desktop": "node scripts/smoke-desktop-ui.mjs",
     "dist": "npm run build:desktop && electron-builder",
     "dist:win": "npm run build:desktop && electron-builder --win --x64",
     "postinstall": "node scripts/postinstall.cjs"

@@ -29,3 +29,8 @@ frontend/public/rootCA.pem
 
 # electron-vite build output
 out/
+
+# Screenshots, logs and throwaway XDG roots written by `npm run smoke:dev` and
+# `npm run smoke:desktop`. Evidence of one run on one machine — the PNGs are
+# what a human opens when a smoke goes red, not something to review in a diff.
+.smoke/
