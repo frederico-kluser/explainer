@@ -20,6 +20,13 @@ import {
   installProcessHandlers
 } from './services/logging/logger';
 import { settingsStore } from './storage/settings-store';
+import {
+  BACKEND_PORT,
+  probeBackendPort,
+  resolveDevBackendCommand,
+  resolvePackagedBackendCommand,
+  type BackendCommandResolution
+} from './services/backend-process';
 import { collectEnvApiKeys, loadDotEnvFile, pickProvidersToSeed } from './services/envKeys';
 import type { AppSettings } from '@shared/types/settings.types';
 
@@ -101,22 +108,122 @@ if (!gotSingleInstanceLock) {
 
 // ---------------------------------------------------------------------------
 // Backend child process — the Express server the browser's WebRTC session
-// talks to. Spawned with the same executable (the packaged binary embeds the
-// Node runtime), PORT forced to 3001.
+// talks to. Dev: `tsx watch` over `backend/src`, the same command `dev.sh` and
+// `backend/package.json` run — the old dev path pointed at
+// `backend/dist/index.js`, a file no dev flow builds, so the desktop app came
+// up with no `/api` at all and said so nowhere. PORT forced to 3001.
+//
+// The PACKAGED branch is not wired up: nothing copies a backend into
+// `resources/`, and the `RunAsNode: false` fuse blocks the way it tries to run
+// one. `resolvePackagedBackendCommand` documents both; it needs
+// `utilityProcess.fork()` and `extraResources` to become real.
+//
+// Resolution lives in `services/backend-process.ts` so it can be tested outside
+// Electron.
+//
+// Stays null whenever we did NOT start it: a backend that was already running
+// belongs to whoever started it, and `before-quit` must not kill a process it
+// does not own.
 // ---------------------------------------------------------------------------
 let backendProcess: ChildProcess | null = null;
 
-function startBackend(): void {
-  const backendPath = app.isPackaged
-    ? join(process.resourcesPath, 'backend', 'index.js')
-    : join(__dirname, '..', '..', 'backend', 'dist', 'index.js');
-  backendProcess = spawn(process.execPath, [backendPath], {
-    env: { ...process.env, PORT: '3001' },
+/**
+ * Set right before the teardown kill, and the only reliable way to tell a
+ * shutdown from a crash: `tsx` catches SIGTERM and re-exits with 128+signal
+ * instead of dying from it, so a perfectly normal quit arrives as
+ * `(code 143, signal null)` — indistinguishable, by the arguments alone, from
+ * a backend that fell over.
+ */
+let backendStopRequested = false;
+
+async function startBackend(): Promise<void> {
+  const status = await probeBackendPort();
+
+  if (status === 'backend-alive') {
+    // `npm run dev` in a terminal, or the previous main process after an
+    // electron-vite reload. Either way the UI already has its backend, and a
+    // second one would only lose the race for the port and exit(1).
+    bootLog.info(
+      `[backend] a backend already answers on port ${BACKEND_PORT} — reusing it instead of spawning a second one.`
+    );
+    return;
+  }
+
+  if (status === 'occupied-by-other') {
+    bootLog.error(
+      `[backend] port ${BACKEND_PORT} is held by a process that does not answer /api/health. ` +
+        'Not spawning — the backend exits(1) when it cannot bind. Free the port ' +
+        `(\`lsof -i :${BACKEND_PORT}\`) and start the app again.`
+    );
+    return;
+  }
+
+  const resolution: BackendCommandResolution = app.isPackaged
+    ? {
+        ok: true,
+        command: resolvePackagedBackendCommand(process.resourcesPath, process.execPath)
+      }
+    : resolveDevBackendCommand(join(__dirname, '..', '..'), process.execPath);
+
+  if (!resolution.ok) {
+    bootLog.error(`[backend] not started — ${resolution.error}`);
+    return;
+  }
+
+  const { command } = resolution;
+  bootLog.info(`[backend] starting ${command.label}`);
+
+  const child = spawn(command.file, command.args, {
+    cwd: command.cwd,
+    env: { ...process.env, PORT: String(BACKEND_PORT), ...command.extraEnv },
     stdio: 'pipe'
   });
-  backendProcess.stdout?.on('data', (d) => bootLog.info(`[backend] ${d.toString().trim()}`));
-  backendProcess.stderr?.on('data', (d) => bootLog.warn(`[backend] ${d.toString().trim()}`));
-  backendProcess.on('exit', (code) => bootLog.info(`[backend] exited with code ${code}`));
+  backendProcess = child;
+
+  child.stdout?.on('data', (d) => bootLog.info(`[backend] ${d.toString().trim()}`));
+  child.stderr?.on('data', (d) => bootLog.warn(`[backend] ${d.toString().trim()}`));
+
+  // A spawn that never starts emits `error` and nothing else — no stderr, no
+  // exit. It is the silent failure, so it gets the loudest line.
+  child.on('error', (error) => {
+    bootLog.error(
+      `[backend] failed to spawn ${command.label}: ${error.message}. ` +
+        'If the dependencies are missing, run `npm run setup` at the repository root.'
+    );
+  });
+
+  // Only the teardown WE asked for is quiet. Every other exit took the UI's
+  // `/api` with it, and the whole point of this handler is that such an exit
+  // must not be discoverable only by the app going mute.
+  child.on('exit', (code, signal) => {
+    if (backendStopRequested) {
+      bootLog.info(`[backend] exited (code ${code}, signal ${signal})`);
+      return;
+    }
+
+    if (signal !== null) {
+      // A signalled exit is never the teardown: measured, tsx CATCHES the
+      // SIGTERM from `child.kill()` and re-exits, so an orderly quit arrives as
+      // `(143, null)` — a signal, never. Reaching this line therefore means a
+      // signal tsx could not catch, SIGKILL being the one that happens by
+      // itself on this machine (`earlyoom`), and that one was measured to leave
+      // the server running below tsx still listening on the port.
+      bootLog.error(
+        `[backend] killed by ${signal} — the UI now has no /api and no voice session. ` +
+          'An uncatchable signal does not reach the server process below tsx, so port ' +
+          `${BACKEND_PORT} may still be held by it: check \`lsof -i :${BACKEND_PORT}\` ` +
+          'before starting the app again.'
+      );
+      return;
+    }
+
+    bootLog.error(
+      `[backend] exited with code ${code} — the UI now has no /api and no voice session. ` +
+        (code === 0
+          ? 'It stopped on its own, without being asked to.'
+          : 'The backend prints the reason on the lines above.')
+    );
+  });
 }
 
 /**
@@ -190,8 +297,9 @@ app.whenReady().then(() => {
   // Registers all IPC handlers (settings/app — see electron/main/ipc/index.ts).
   registerAllHandlers();
 
-  // Backend child process — the WebRTC/session server for the UI.
-  startBackend();
+  // Backend child process — the WebRTC/session server for the UI. Not awaited:
+  // the port probe costs up to ~600 ms and the window must not wait on it.
+  void startBackend();
 
   // Persisted settings applied on the rise (key seeding from the env). A
   // failure here degrades instead of crashing the boot: the app starts on the
@@ -252,6 +360,7 @@ const IPC_CHANNELS = [
 // Synchronous by design — before-quit must not await anything.
 app.on('before-quit', () => {
   if (backendProcess && !backendProcess.killed) {
+    backendStopRequested = true;
     backendProcess.kill();
   }
   backendProcess = null;
