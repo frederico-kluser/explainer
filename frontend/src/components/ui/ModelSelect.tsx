@@ -259,7 +259,7 @@ export function ModelSelect({
 
       <Combobox.Portal>
         <Combobox.Positioner sideOffset={4} align="start">
-          <Combobox.Popup className="z-50 w-[min(22rem,var(--available-width))] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
+          <Combobox.Popup className="z-[100] w-[min(22rem,var(--available-width))] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
             {/* The two controls every list read shares: which provider's
                 catalogue is on screen, and whether undated models survive. */}
             <div className="space-y-1.5 border-b border-border p-2">

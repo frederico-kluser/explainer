@@ -33,7 +33,7 @@ import { PanelsSheet } from "@/components/ui/PanelsSheet";
 import { SessionAlerts } from "@/components/ui/SessionAlerts";
 import { FirstRun } from "@/components/ui/FirstRun";
 import { ProviderKeysPrompt } from "@/components/ui/ProviderKeysPrompt";
-import { BottomSheet } from "@/components/ui/sheet";
+import { CenteredOverlay } from "@/components/ui/centered-overlay";
 import { ThinkerRosterPanel } from "@/components/ui/ThinkerRosterPanel";
 import { shouldShowFirstRun } from "@/components/ui/mobile-shell";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
@@ -969,15 +969,15 @@ export function App() {
         </>
       )}
 
-      {/* The roster of thinkers. The sheet mounts its panel only while open —
-          that is what makes every open re-read the server. */}
-      <BottomSheet
+      {/* The roster of thinkers. Mounted as a centered overlay — the panel
+          carries its own scroll container, and the background is locked. */}
+      <CenteredOverlay
         open={thinkersOpen}
-        onOpenChange={setThinkersOpen}
+        onClose={() => setThinkersOpen(false)}
         title="Pensadores"
       >
         <ThinkerRosterPanel />
-      </BottomSheet>
+      </CenteredOverlay>
 
       {/* First contact. `othersPresent` is hard-coded false: presence lands with
           the shared-call work, and inventing it here would drop an onboarding

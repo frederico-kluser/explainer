@@ -40,7 +40,7 @@ export type WireProtocol = "openai-responses" | "openai-chat";
  * `services/providers/types.ts` rather than restated there: two copies of a
  * literal union drift the moment a provider adds a level.
  */
-export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ModelChoice {
   provider: ThinkerProvider;

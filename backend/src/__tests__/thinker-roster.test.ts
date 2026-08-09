@@ -33,7 +33,6 @@ const {
   setRoster,
   forgetRoster,
 } = await import("../services/thinker-roster.js");
-const { TEXT_MODEL } = await import("../services/openai.js");
 const { MAX_THINKERS } = await import("../types/thinker-roster.js");
 
 afterAll(() => {
@@ -70,27 +69,28 @@ describe("defaultRoster", () => {
     );
   });
 
-  it("starts every role on the model deep_think resolves today", () => {
-    // `deepThinkModel()` is OPENAI_DEEPTHINK_MODEL || OPENAI_TEXT_MODEL ||
-    // TEXT_MODEL, and the planner, the thinkers and the synthesiser all call it.
-    // If this drifts, switching the roster on changes the bill of someone who
-    // never opened the settings screen.
+  it("starts every role on DeepSeek V4 Pro", () => {
+    // The default roster is now hardcoded to DeepSeek V4 Pro across all roles.
+    // This is a deliberate choice, not an env-var lookup — the operator asked
+    // for DeepSeek V4 Pro as the default.
     const roster = defaultRoster();
-    expect(roster.master).toMatchObject({ provider: "openai", model: TEXT_MODEL });
-    expect(roster.planner).toMatchObject({ provider: "openai", model: TEXT_MODEL });
+    expect(roster.master).toMatchObject({ provider: "deepseek", model: "deepseek-v4-pro" });
+    expect(roster.planner).toMatchObject({ provider: "deepseek", model: "deepseek-v4-pro" });
     for (const slot of roster.slots) {
-      expect(slot.model.provider).toBe("openai");
-      expect(slot.model.model).toBe(TEXT_MODEL);
+      expect(slot.model.provider).toBe("deepseek");
+      expect(slot.model.model).toBe("deepseek-v4-pro");
     }
   });
 
-  it("follows OPENAI_DEEPTHINK_MODEL ahead of OPENAI_TEXT_MODEL", () => {
-    process.env.OPENAI_TEXT_MODEL = "gpt-5.2-nano";
+  it("does not read the old env vars — the default is a constant", () => {
+    // defaultRoster() used to resolve OPENAI_DEEPTHINK_MODEL || "deepseek-v4-pro".
+    // That coupling is gone: the default is always deepseek-v4-pro, so a
+    // deployment that only ever exports OPENAI vars still gets the same
+    // roster. The operator changes it through the settings screen.
     process.env.OPENAI_DEEPTHINK_MODEL = "gpt-5.2";
+    process.env.OPENAI_TEXT_MODEL = "gpt-5.2-nano";
     try {
-      expect(defaultRoster().master.model).toBe("gpt-5.2");
-      delete process.env.OPENAI_DEEPTHINK_MODEL;
-      expect(defaultRoster().master.model).toBe("gpt-5.2-nano");
+      expect(defaultRoster().master.model).toBe("deepseek-v4-pro");
     } finally {
       delete process.env.OPENAI_DEEPTHINK_MODEL;
       delete process.env.OPENAI_TEXT_MODEL;
@@ -122,7 +122,7 @@ describe("defaultRoster", () => {
     const roster = defaultRoster();
     const last = roster.slots[MAX_THINKERS - 1]!;
     expect(last.enabled).toBe(false);
-    expect(last.model.model).toBe(TEXT_MODEL);
+    expect(last.model.model).toBe("deepseek-v4-pro");
   });
 
   it("has discovered nothing yet: no effort, null window, null rate", () => {
@@ -145,7 +145,7 @@ describe("normalizeRoster", () => {
   it("returns the default for anything that is not an object", () => {
     for (const value of [null, undefined, "nope", 42, []]) {
       expect(normalizeRoster(value).slots).toHaveLength(MAX_THINKERS);
-      expect(normalizeRoster(value).master.model).toBe(TEXT_MODEL);
+      expect(normalizeRoster(value).master.model).toBe("deepseek-v4-pro");
     }
   });
 
@@ -233,8 +233,8 @@ describe("normalizeRoster", () => {
 
       // Nothing from a shape this build cannot read is salvaged — half a roster
       // nobody wrote is worse than the defaults.
-      expect(refused.master.provider).toBe("openai");
-      expect(refused.master.model).toBe(TEXT_MODEL);
+      expect(refused.master.provider).toBe("deepseek");
+      expect(refused.master.model).toBe("deepseek-v4-pro");
       expect(refused.slots.map((slot) => slot.model.model)).not.toContain(
         "survivor",
       );
@@ -339,8 +339,8 @@ describe("normalizeRoster", () => {
       updated_at: 12345,
     });
 
-    expect(roster.master.provider).toBe("openai");
-    expect(roster.master.model).toBe(TEXT_MODEL);
+    expect(roster.master.provider).toBe("deepseek");
+    expect(roster.master.model).toBe("deepseek-v4-pro");
     expect(roster.master.supports_tools).toBe(true);
     // A bad `enabled` falls to what the default roster would have said for row 1.
     expect(roster.slots[0]!.enabled).toBe(true);
@@ -386,7 +386,7 @@ describe("getRoster / setRoster", () => {
     const roster = await getRoster();
     expect(roster.version).toBe(1);
     expect(roster.slots).toHaveLength(MAX_THINKERS);
-    expect(roster.master.model).toBe(TEXT_MODEL);
+    expect(roster.master.model).toBe("deepseek-v4-pro");
 
     // Reading must not create the file: the defaults follow the environment, and
     // writing them here would freeze today's .env into a file that stops
@@ -492,7 +492,7 @@ describe("getRoster / setRoster", () => {
     const saved = await setRoster({ slots: [] });
     expect(saved.slots).toHaveLength(MAX_THINKERS);
     expect(saved.slots.map((slot) => slot.model.model)).toEqual(
-      Array.from({ length: MAX_THINKERS }, () => TEXT_MODEL),
+      Array.from({ length: MAX_THINKERS }, () => "deepseek-v4-pro"),
     );
   });
 
@@ -609,7 +609,7 @@ describe("getRoster / setRoster", () => {
     });
 
     const roster = await getRoster();
-    expect(roster.master.model).toBe(TEXT_MODEL);
+    expect(roster.master.model).toBe("deepseek-v4-pro");
     expect(roster.slots).toHaveLength(MAX_THINKERS);
   });
 
@@ -620,7 +620,7 @@ describe("getRoster / setRoster", () => {
 
     const roster = await getRoster();
     expect(roster.version).toBe(1);
-    expect(roster.master.model).toBe(TEXT_MODEL);
+    expect(roster.master.model).toBe("deepseek-v4-pro");
   });
 
   it("normalises a stored roster of three slots back to MAX_THINKERS", async () => {

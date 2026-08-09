@@ -41,7 +41,6 @@ const { setProviderKey, clearProviderKey } = await import(
 );
 const { errorHandler } = await import("../middleware/error-handler.js");
 const { MAX_THINKERS } = await import("../types/thinker-roster.js");
-const { TEXT_MODEL } = await import("../services/openai.js");
 
 // ---------------------------------------------------------------------------
 // Isolation
@@ -189,7 +188,7 @@ describe("GET /api/thinkers", () => {
     // that a switched-off row is here AND still carries its model.
     const off = body.roster.slots.filter((slot) => !slot.enabled);
     expect(off.length).toBeGreaterThan(0);
-    for (const slot of off) expect(slot.model.model).toBe(TEXT_MODEL);
+    for (const slot of off) expect(slot.model.model).toBe("deepseek-v4-pro");
   });
 
   it("reports the key status of all three providers in the same response", async () => {
@@ -197,6 +196,7 @@ describe("GET /api/thinkers", () => {
     // OpenRouter" and "OpenRouter has no key" at the same time, or it shows a
     // roster that does not run.
     process.env.OPENAI_API_KEY = A_KEY;
+    process.env.DEEPSEEK_API_KEY = A_KEY;
     setProviderKey("deepseek", A_KEY);
 
     const { body } = await get();
@@ -223,6 +223,7 @@ describe("GET /api/thinkers", () => {
     // Asserted on the raw text, not on a parsed field: a key added to some
     // future field would still pass a per-field check.
     process.env.OPENAI_API_KEY = A_KEY;
+    process.env.DEEPSEEK_API_KEY = A_KEY;
     setProviderKey("openrouter", A_KEY);
 
     const text = await (await fetch(base)).text();
@@ -267,7 +268,7 @@ describe("PUT /api/thinkers", () => {
 
     expect(res.status).toBe(200);
     expect(body.roster.planner.model).toBe("so-o-planner");
-    expect(body.roster.master.model).toBe(TEXT_MODEL);
+    expect(body.roster.master.model).toBe("deepseek-v4-pro");
     expect(body.roster.slots).toHaveLength(MAX_THINKERS);
   });
 
@@ -396,6 +397,8 @@ describe("provider-key warnings", () => {
     // Not a rejection: the operator may be building the roster before pasting
     // the key. Saved in silence is the worse of the two failures.
     process.env.OPENAI_API_KEY = A_KEY;
+    process.env.DEEPSEEK_API_KEY = A_KEY;
+    process.env.DEEPSEEK_API_KEY = A_KEY;
 
     const { res, body } = await put({
       slots: await slotsWith(3, {
@@ -428,6 +431,11 @@ describe("provider-key warnings", () => {
     const { body } = await put({
       master: choice("deepseek-v4-pro", "deepseek"),
       planner: choice("x-ai/grok-4", "openrouter"),
+      slots: Array.from({ length: MAX_THINKERS }, (_, i) => ({
+        index: i + 1,
+        enabled: false,
+        model: choice("deepseek-v4-pro", "deepseek"),
+      })),
     });
 
     const by = new Map(body.warnings.map((warning) => [warning.role, warning]));
@@ -459,6 +467,7 @@ describe("provider-key warnings", () => {
     // A disabled slot keeps its model and the round never calls it, so a key it
     // would not use is not a problem the operator has to fix now.
     process.env.OPENAI_API_KEY = A_KEY;
+    process.env.DEEPSEEK_API_KEY = A_KEY;
 
     const { body } = await put({
       slots: await slotsWith(10, {
@@ -477,10 +486,11 @@ describe("provider-key warnings", () => {
     // it after the operator saved something would show a green roster that does
     // not run.
     process.env.OPENAI_API_KEY = A_KEY;
+    process.env.DEEPSEEK_API_KEY = A_KEY;
     await put({
       slots: await slotsWith(1, {
         enabled: true,
-        model: choice("deepseek-v4-pro", "deepseek"),
+        model: choice("x-ai/grok-4", "openrouter"),
       }),
     });
 
@@ -490,13 +500,14 @@ describe("provider-key warnings", () => {
     expect(body.warnings).toHaveLength(1);
     expect(body.warnings[0]).toMatchObject({
       role: "thinker",
-      provider: "deepseek",
+      provider: "openrouter",
       slot_index: 1,
     });
   });
 
   it("warns once per row, so the UI can mark each one", async () => {
     process.env.OPENAI_API_KEY = A_KEY;
+    process.env.DEEPSEEK_API_KEY = A_KEY;
     const { body: current } = await get();
 
     const { body } = await put({
@@ -526,11 +537,11 @@ describe("POST /api/thinkers/reset", () => {
     const { res, body } = await reset();
 
     expect(res.status).toBe(200);
-    expect(body.roster.master).toMatchObject({ provider: "openai", model: TEXT_MODEL });
-    expect(body.roster.planner).toMatchObject({ provider: "openai", model: TEXT_MODEL });
+    expect(body.roster.master).toMatchObject({ provider: "deepseek", model: "deepseek-v4-pro" });
+    expect(body.roster.planner).toMatchObject({ provider: "deepseek", model: "deepseek-v4-pro" });
     expect(body.roster.slots).toHaveLength(MAX_THINKERS);
     expect(body.roster.slots.map((slot) => slot.model.model)).toEqual(
-      Array.from({ length: MAX_THINKERS }, () => TEXT_MODEL),
+      Array.from({ length: MAX_THINKERS }, () => "deepseek-v4-pro"),
     );
     // `DEEP_THINK_THINKERS` is unset here, so the default is .env.example's 4.
     expect(body.roster.slots.filter((slot) => slot.enabled)).toHaveLength(4);
@@ -540,10 +551,10 @@ describe("POST /api/thinkers/reset", () => {
     await put({ master: choice("deepseek-v4-pro", "deepseek") });
     await reset();
 
-    expect(readStoredRoster().master.model).toBe(TEXT_MODEL);
+    expect(readStoredRoster().master.model).toBe("deepseek-v4-pro");
 
     forgetRoster();
     const { body } = await get();
-    expect(body.roster.master.model).toBe(TEXT_MODEL);
+    expect(body.roster.master.model).toBe("deepseek-v4-pro");
   });
 });

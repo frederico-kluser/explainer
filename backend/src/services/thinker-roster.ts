@@ -23,7 +23,6 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
 import { DATA_ROOT, ensureDir } from "../middleware/sandbox.js";
-import { TEXT_MODEL } from "./openai.js";
 import {
   MAX_THINKERS,
   type ModelChoice,
@@ -108,20 +107,10 @@ function defaultEnabledCount(): number {
   return Math.min(MAX_THINKERS, Math.max(1, Math.floor(requested)));
 }
 
-/**
- * The model id every role starts on: the expression `deepThinkModel()` in
- * `services/deep-think.ts` resolves, character for character.
- */
-function defaultModelId(): string {
-  return (
-    process.env.OPENAI_DEEPTHINK_MODEL || process.env.OPENAI_TEXT_MODEL || TEXT_MODEL
-  );
-}
-
 function defaultChoice(): ModelChoice {
   return {
-    provider: "openai",
-    model: defaultModelId(),
+    provider: "deepseek",
+    model: "deepseek-v4-pro",
     context_window: null,
     supports_tools: true,
     rate: null,
@@ -131,27 +120,22 @@ function defaultChoice(): ModelChoice {
 /**
  * The roster a machine that has never opened the settings screen runs on.
  *
- * Every field is derived from what `services/deep-think.ts` already does, not
- * from a preference, because switching the roster on must not change the
- * behaviour of someone who never touched it:
+ * Default is now DeepSeek V4 Pro across all roles, following the operator's
+ * request. The model id is the provider-bare form (`deepseek-v4-pro`) because
+ * the DeepSeek adapter calls it directly:
  *
- *   - provider `openai` — the round talks to `OPENAI_BASE_URL` with the OpenAI
- *     key, and it is the only provider deep-think has ever used.
- *   - model — `OPENAI_DEEPTHINK_MODEL || OPENAI_TEXT_MODEL || TEXT_MODEL`. The
- *     planner (`max_output_tokens: 1_200`), the thinkers (`1_400`) and the
- *     synthesiser (`1_000`) all call that one resolver today, so master, planner
- *     and every slot start on the same id. That they START together is not the
- *     same as the planner FOLLOWING the master: they are independent fields from
- *     here on, which is the point `ThinkerRoster.planner` makes about the five-
- *     fold bill a master upgrade would otherwise drag along.
+ *   - provider `deepseek` — the round talks to `https://api.deepseek.com` with
+ *     the DeepSeek key.
+ *   - model — `deepseek-v4-pro`. Master, planner and every slot start on the
+ *     same id; that they start together does not mean the planner follows the
+ *     master — they are independent fields from here on.
  *   - enabled slots — `DEEP_THINK_THINKERS` (4 by default). The rest are born
  *     disabled but WITH the model filled in, because a disabled slot keeps its
  *     model.
  *   - `effort` absent — deep-think sends no reasoning field at all, and per
  *     `ChatRequest.effort` an absent effort means "send nothing", which is not
- *     the same as sending a default: a non-reasoning model rejects the field
- *     outright.
- *   - `supports_tools: true` — the thinkers are already called with
+ *     the same as sending a default: the model's own default (high) applies.
+ *   - `supports_tools: true` — the thinkers are called with
  *     `tools: [SEARCH_TOOL]`. It describes what the MODEL accepts; the planner
  *     and the synthesiser are called without tools regardless, and that is a
  *     call-site decision rather than a property of their model.

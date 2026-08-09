@@ -20,8 +20,9 @@ import { priceTextResponse, type TextUsage } from "../services/pricing.js";
 const tmpHome = mkdtempSync(join(tmpdir(), "explainer-deep-think-"));
 process.env.HOME = tmpHome;
 process.env.OPENAI_API_KEY = "sk-test-nao-e-uma-chave-real";
+process.env.DEEPSEEK_API_KEY = "sk-ds-test-nao-e-uma-chave-real";
 process.env.OPENAI_DEEPTHINK_MODEL = "gpt-5.2-mini";
-// Pinned so the "no roster file" assertions can name the exact OpenAI endpoint;
+// Pinned so the "no roster file" assertions can name the exact endpoint;
 // the shell running the suite should not decide where a round goes.
 delete process.env.OPENAI_BASE_URL;
 
@@ -111,6 +112,16 @@ function textPayload(text: string): Payload {
     model: MODEL,
     usage: USAGE,
     output: [{ type: "message", content: [{ type: "output_text", text }] }],
+  };
+}
+
+// --- Chat Completions shape (DeepSeek / OpenRouter) ---------------------------
+
+function chatPayload(text: string): Record<string, unknown> {
+  return {
+    model: "deepseek-v4-pro",
+    choices: [{ message: { content: text, role: "assistant" }, finish_reason: "stop", index: 0 }],
+    usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
   };
 }
 
@@ -218,6 +229,10 @@ beforeEach(() => {
   urls.length = 0;
   auths.length = 0;
   delete process.env.DEEP_THINK_MAX_SEARCHES;
+  // Most tests exercise orchestration against the Responses API stubs, so
+  // they write an OpenAI roster. The default (DeepSeek, no file) is tested
+  // exclusively in the roster describe block, which stages its own files.
+  writeRoster(rosterChoice(), rosterChoice(), enabledSlots(4));
 });
 
 afterEach(() => {
@@ -226,7 +241,6 @@ afterEach(() => {
   rmSync(ROSTER_PATH, { force: true });
   forgetRoster();
   delete process.env.OPENROUTER_API_KEY;
-  delete process.env.DEEPSEEK_API_KEY;
 });
 
 afterAll(() => {
@@ -1034,14 +1048,20 @@ describe("roster", () => {
   });
 
   it("falls back to today's model and provider when no roster file exists", async () => {
-    handler = (body) => {
+    // Remove the file the beforeEach staged — this test needs the true default.
+    rmSync(ROSTER_PATH, { force: true });
+    forgetRoster();
+
+    handler = (body: Body) => {
+      // The default roster is now DeepSeek, which uses the Chat Completions
+      // wire — the handler must answer in that shape.
       switch (stageOf(body)) {
         case "planner":
-          return textPayload('[{"angle":"evidencia","prompt":"p"}]');
+          return chatPayload('[{"angle":"evidencia","prompt":"p"}]');
         case "thinker":
-          return textPayload("Pensamento sem roster.");
+          return chatPayload("Pensamento sem roster.");
         default:
-          return textPayload("Consolidado.");
+          return chatPayload("Consolidado.");
       }
     };
 
@@ -1054,13 +1074,10 @@ describe("roster", () => {
     await waitFor(job.id, "deep_think_done");
 
     expect(requests.length).toBeGreaterThan(0);
-    // The default roster reproduces deepThinkModel() bit for bit: the same
-    // provider (OpenAI's Responses endpoint) and the same model id on every
-    // call of the round.
-    expect(urls.every((u) => u.startsWith("https://api.openai.com/v1/responses"))).toBe(true);
-    expect(requests.every((b) => b.model === MODEL)).toBe(true);
-    // And no effort is invented where the roster has none.
-    expect(requests.every((b) => b.reasoning === undefined)).toBe(true);
+    // The default roster is now DeepSeek V4 Pro — every call goes to the
+    // DeepSeek Chat Completions endpoint with the provider-bare model id.
+    expect(urls.every((u) => u.startsWith("https://api.deepseek.com/v1/chat/completions"))).toBe(true);
+    expect(requests.every((b) => b.model === "deepseek-v4-pro")).toBe(true);
   });
 
   it("warns up front when the roster routes to a provider without a key", async () => {

@@ -164,12 +164,9 @@ export function ThinkerRosterPanel() {
                 ...slot,
                 model: {
                   ...slot.model,
-                  // Free text on purpose: the backend owns the closed list of
-                  // effort levels and drops whatever is not on it, which is
-                  // what makes an invalid value disappear only at save time.
-                  effort: (effort.trim() === ""
-                    ? undefined
-                    : effort) as ModelChoice["effort"],
+                  // Effort is a closed <select> — empty means "use the model
+                  // default", any other value is one of the six valid levels.
+                  effort: (effort === "" ? undefined : effort) as ModelChoice["effort"],
                 },
               }
             : slot,
@@ -455,14 +452,20 @@ function SlotCard({
           title="Sobrepõe o ângulo do planner para este pensador"
           className="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
         />
-        <input
-          type="text"
+        <select
           value={slot.model.effort ?? ""}
           onChange={(event) => onEffortChange(event.target.value)}
-          placeholder="Esforço (opcional)"
-          title="Quanto o modelo é convidado a pensar: minimal, low, medium ou high"
-          className="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
-        />
+          title="Quanto o modelo é convidado a pensar"
+          className="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+        >
+          <option value="">Esforço (padrão do modelo)</option>
+          <option value="minimal">minimal</option>
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max</option>
+        </select>
       </div>
 
       {warnings.map((warning) => (
