@@ -246,6 +246,30 @@ export interface DiscoveredModel {
    * why the price travels with the choice instead of being looked up later.
    */
   rate: { input: number; cached_input: number; output: number } | null;
+  /**
+   * When the provider published the model, ISO 8601
+   * (`"2026-03-11T00:00:00.000Z"`), or `null` when the catalogue does not say.
+   *
+   * `null` MUST NOT be read as "recent". A year filter has to decide explicitly
+   * what it does with unknown, because the two providers disagree about whether
+   * this is knowable at all: OpenRouter and OpenAI both publish a `created`
+   * epoch, DeepSeek's catalogue publishes nothing but `id`/`object`/`owned_by`,
+   * so every DeepSeek model arrives here as `null`. A filter that treats
+   * unknown as recent silently keeps a 2023 model; one that treats it as old
+   * silently drops the whole DeepSeek catalogue. Neither is a default worth
+   * inheriting by accident, which is why this comment refuses to pick one.
+   */
+  released_at: string | null;
+  /**
+   * Whose model this is — hence whose key calls it and whose balance pays.
+   *
+   * Discovery fans out across providers and the results land in ONE catalogue,
+   * where `id` alone no longer identifies anything: `deepseek-v4-pro` is
+   * reachable both directly and as OpenRouter's `deepseek/deepseek-v4-pro`, at
+   * different prices and through different keys. Without this field the unified
+   * catalogue cannot route a chosen model back to an adapter.
+   */
+  provider: ThinkerProvider;
 }
 
 /**
