@@ -297,7 +297,7 @@ const HOSTILE: Array<[string, unknown]> = [
       planner: {
         model: "m",
         context_window: Number.POSITIVE_INFINITY,
-        rate: { input: 1e400, cached_input: 0, output: 0 },
+        rate: { input: Number.POSITIVE_INFINITY, cached_input: 0, output: 0 },
       },
       slots: [],
     },
