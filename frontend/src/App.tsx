@@ -21,6 +21,13 @@ import { DeepThinkCard } from "@/components/ui/DeepThinkCard";
 import { MemoryPanel } from "@/components/ui/MemoryPanel";
 import { MermaidDiagram } from "@/components/ui/MermaidDiagram";
 import { Button } from "@/components/ui/button";
+import { MobileTopBar } from "@/components/ui/MobileTopBar";
+import { ConversationsSheet } from "@/components/ui/ConversationsSheet";
+import { PanelsSheet } from "@/components/ui/PanelsSheet";
+import { SessionAlerts } from "@/components/ui/SessionAlerts";
+import { FirstRun } from "@/components/ui/FirstRun";
+import { shouldShowFirstRun } from "@/components/ui/mobile-shell";
+import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import * as api from "@/lib/api";
 import {
   mergeConversationItems,
@@ -76,7 +83,20 @@ export function App() {
     cancelJob,
     reloadMemory,
     setSpeed,
+    micFailure,
+    audioBlocked,
+    playAudio,
+    callDropped,
   } = useRealtimeSession(activeConvId);
+
+  // Which shell is on screen. This is a JavaScript decision and not a `md:`
+  // utility because the rail and the two sheets hold the same panels: mounting
+  // both copies would fetch the memory twice and hand the same Motion
+  // `layoutId` to two elements, one of them invisible.
+  const compact = useCompactLayout();
+  const [navOpen, setNavOpen] = useState(false);
+  const [panelsOpen, setPanelsOpen] = useState(false);
+  const [firstRunDismissed, setFirstRunDismissed] = useState(false);
 
   const micState: MicButtonState =
     status === "connecting"
@@ -121,9 +141,13 @@ export function App() {
     [dismissToast],
   );
 
+  // A microphone that will not open is reported by `SessionAlerts`, which keeps
+  // the sentence on screen and puts a link or a button under it. Toasting the
+  // same message would say it twice and take it away after five seconds — and
+  // the certificate instructions are four sentences long.
   useEffect(() => {
-    if (sessionError) showError(sessionError);
-  }, [sessionError, showError]);
+    if (sessionError && !micFailure) showError(sessionError);
+  }, [sessionError, micFailure, showError]);
 
   const transition = useMotionUITransition("gentle");
 
@@ -325,25 +349,65 @@ export function App() {
     [handleCreate, handleSelect],
   );
 
+  // Choosing is the drawer's whole purpose, so it gets out of the way behind
+  // the choice instead of leaving the transcript covered.
+  const selectFromSheet = useCallback(
+    (id: string) => {
+      setNavOpen(false);
+      handleSelect(id);
+    },
+    [handleSelect],
+  );
+
+  const createFromSheet = useCallback(() => {
+    setNavOpen(false);
+    void handleCreate();
+  }, [handleCreate]);
+
+  // The sheet is a native modal `<dialog>` and the palette portals to the body,
+  // so a palette opened underneath it would be inert — visible and dead. The
+  // sheet closes first, and the palette is then the only modal on the page.
+  const searchFromSheet = useCallback(() => {
+    setNavOpen(false);
+    openCommandPalette();
+  }, [openCommandPalette]);
+
   // ── Materials ─────────────────────────────────────────────────
+  /** Resolves to whether the material actually landed, so a caller can chain. */
   const handleMaterialAdd = useCallback(
-    async (spec: SourceSpec) => {
-      if (!activeConvId) return;
+    async (spec: SourceSpec): Promise<boolean> => {
+      if (!activeConvId) return false;
       setSourceBusy(true);
       try {
         const envelope = await api.addMaterial(activeConvId, spec);
         setMaterials(envelope.materials);
         setGreeting(envelope.greeting);
         setConversations(await api.listConversations());
+        return true;
       } catch (err) {
         showError(
           err instanceof Error ? err.message : "Não foi possível carregar o material.",
         );
+        return false;
       } finally {
         setSourceBusy(false);
       }
     },
     [activeConvId, showError],
+  );
+
+  // One tap does both halves of first contact. Splitting them is where the
+  // first call gets lost: a phone that has just been told what the app is
+  // should not then be asked to find a second button.
+  //
+  // The await spends the tap, so WebKit may refuse to start the voice — that
+  // refusal is what `audioBlocked` is for, and it puts "Tocar áudio" on screen
+  // inside a gesture of its own.
+  const startFromFirstRun = useCallback(
+    async (spec: SourceSpec) => {
+      if (await handleMaterialAdd(spec)) await connect();
+    },
+    [connect, handleMaterialAdd],
   );
 
   const handleMaterialRemove = useCallback(
@@ -404,8 +468,8 @@ export function App() {
   // ── Loading / error screen ────────────────────────────────────
   if (isLoading || loadError) {
     return (
-      <div className="dark flex h-screen overflow-hidden bg-background text-foreground">
-        <aside className="flex w-72 shrink-0 flex-col gap-2 border-r border-border bg-muted/20 px-3 py-4">
+      <div className="dark flex h-dvh overflow-hidden bg-background text-foreground">
+        <aside className="hidden w-72 shrink-0 flex-col gap-2 border-r border-border bg-muted/20 px-3 py-4 md:flex">
           <Skeleton className="mb-2 h-9 w-full rounded-lg" animate />
           <Skeleton className="h-9 w-full rounded-md" animate />
           <Skeleton className="h-9 w-full rounded-md" animate />
@@ -451,9 +515,84 @@ export function App() {
     );
   }
 
+  // ── The four panels, placed twice ─────────────────────────────
+  // Written once and mounted in exactly one of two places: the lower half of
+  // the rail on desktop, the four tabs of the ⋯ sheet on a phone. `compact`
+  // decides, so only one copy exists — two `MemoryPanel`s would each fetch, and
+  // two `Sidebar`s would claim the same `layoutId`.
+  const agentsPanel =
+    jobs.length > 0 || deepThinkJobs.length > 0 ? (
+      <div
+        className={cn(
+          "space-y-2",
+          compact ? "pb-1" : "border-t border-border px-3 py-3",
+        )}
+      >
+        {/* Both kinds of background work under one heading: the user dispatched
+            "um agente" either way, and two headings would suggest two places to
+            look. `deepThinkJobs` stays empty for good on a server without a
+            BRAVE_API_KEY — the tools simply are not in the session — so an empty
+            list here is the ordinary case and never an error. In the sheet the
+            tab is already called Agentes, so the heading only repeats itself. */}
+        {!compact && (
+          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            Agentes
+          </p>
+        )}
+        {jobs.map((job) => (
+          <AgentJobCard key={job.id} job={job} onCancel={cancelJob} />
+        ))}
+        {/* No `onCancel`: `POST /api/agents/:jobId/cancel` resolves the id
+            through the pi job registry, so a round's id 404s there. The card
+            hides the button when the prop is absent rather than offering one
+            that cannot work. */}
+        {deepThinkJobs.map((job) => (
+          <DeepThinkCard key={job.id} job={job} />
+        ))}
+      </div>
+    ) : (
+      // The rail simply omits the section; a tab cannot omit itself.
+      compact && (
+        <p className="py-6 text-center text-xs text-muted-foreground">
+          Nenhum agente trabalhando agora.
+        </p>
+      )
+    );
+
+  const voicePanel = (
+    <VoiceSettings
+      settings={settings}
+      live={status === "live"}
+      onChangeVoice={(voice) => void handleVoiceChange(voice)}
+      onChangeSpeed={(speed) => void handleSpeedChange(speed)}
+    />
+  );
+
+  const costsPanel = (
+    <CostPanel
+      sessionUsd={sessionUsd}
+      costs={costs}
+      credits={credits}
+      refreshing={creditsLoading}
+      onRefresh={() => void refreshCredits()}
+    />
+  );
+
+  // `status` as the reload trigger: the memory grows during a call, so the
+  // count on this line is stale exactly when a call ends. Importing or erasing
+  // replaces the file — drawings included — which is why `onChanged` re-seeds
+  // the gallery instead of only redrawing here.
+  const memoryPanel = (
+    <MemoryPanel
+      conversationId={activeConvId}
+      refreshToken={status}
+      onChanged={reloadMemory}
+    />
+  );
+
   // ── Render ────────────────────────────────────────────────────
   return (
-    <div className="dark flex h-screen overflow-hidden bg-background text-foreground">
+    <div className="dark flex h-dvh overflow-hidden bg-background text-foreground">
       <ToastStack>
         {toasts.map((toastId) => {
           const message = toastDataRef.current.get(toastId) ?? "";
@@ -477,75 +616,66 @@ export function App() {
         })}
       </ToastStack>
 
-      <Sidebar
-        conversations={conversations}
-        activeId={activeConvId}
-        onSelect={handleSelect}
-        onCreate={handleCreate}
-        onDelete={handleDelete}
-        onRename={handleRename}
-        onOpenPalette={openCommandPalette}
-      >
-        {/* Both kinds of background work under one heading: the user dispatched
-            "um agente" either way, and two headings would suggest two places to
-            look. `deepThinkJobs` stays empty for good on a server without a
-            BRAVE_API_KEY — the tools simply are not in the session — so an empty
-            list here is the ordinary case and never an error. */}
-        {(jobs.length > 0 || deepThinkJobs.length > 0) && (
-          <div className="space-y-2 border-t border-border px-3 py-3">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Agentes
-            </p>
-            {jobs.map((job) => (
-              <AgentJobCard key={job.id} job={job} onCancel={cancelJob} />
-            ))}
-            {/* No `onCancel`: `POST /api/agents/:jobId/cancel` resolves the id
-                through the pi job registry, so a round's id 404s there. The card
-                hides the button when the prop is absent rather than offering one
-                that cannot work. */}
-            {deepThinkJobs.map((job) => (
-              <DeepThinkCard key={job.id} job={job} />
-            ))}
-          </div>
-        )}
-
-        <VoiceSettings
-          settings={settings}
-          live={status === "live"}
-          onChangeVoice={(voice) => void handleVoiceChange(voice)}
-          onChangeSpeed={(speed) => void handleSpeedChange(speed)}
-        />
-
-        <CostPanel
-          sessionUsd={sessionUsd}
-          costs={costs}
-          credits={credits}
-          refreshing={creditsLoading}
-          onRefresh={() => void refreshCredits()}
-        />
-
-        {/* `status` as the reload trigger: the memory grows during a call, so
-            the count on this line is stale exactly when a call ends. Importing
-            or erasing replaces the file — drawings included — which is why
-            `onChanged` re-seeds the gallery instead of only redrawing here. */}
-        <MemoryPanel
-          conversationId={activeConvId}
-          refreshToken={status}
-          onChanged={reloadMemory}
-        />
-      </Sidebar>
+      {!compact && (
+        <Sidebar
+          conversations={conversations}
+          activeId={activeConvId}
+          onSelect={handleSelect}
+          onCreate={handleCreate}
+          onDelete={handleDelete}
+          onRename={handleRename}
+          onOpenPalette={openCommandPalette}
+        >
+          {agentsPanel}
+          {voicePanel}
+          {costsPanel}
+          {memoryPanel}
+        </Sidebar>
+      )}
 
       {/* ── Main area ───────────────────────────────────────────── */}
       <main className="flex min-w-0 flex-1 flex-col">
+        {/* On a phone the rail's 288px left 72px for the conversation, so it is
+            behind ☰ and the panels behind ⋯. What a rail shows without being
+            asked — where you are, whether the call is running, what it costs,
+            whether an agent is still working — moves into this bar. */}
+        {compact && (
+          <MobileTopBar
+            title={
+              conversations.find((c) => c.id === activeConvId)?.title ??
+              "Explainer"
+            }
+            live={status === "live"}
+            connecting={status === "connecting"}
+            sessionUsd={sessionUsd}
+            runningJobs={runningJobs.length}
+            onOpenConversations={() => setNavOpen(true)}
+            onOpenPanels={() => setPanelsOpen(true)}
+          />
+        )}
+
         {/* Source: full picker while choosing, one line once the call is open */}
-        <div className="border-b border-border px-4 py-3">
+        <div className="border-b border-border px-3 py-2 md:px-4 md:py-3">
           <div className="mx-auto max-w-3xl">
             {status === "live" && materials.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-400">
-                  <span className="size-1.5 rounded-full bg-emerald-400" />
-                  ao vivo
-                </span>
+              // Wrapping put this row on four lines at 360px. On a phone it is
+              // one line that scrolls sideways instead, and the two parts the
+              // top bar already carries — that the call is live, what it has
+              // cost — are dropped rather than repeated.
+              <div
+                className={cn(
+                  "flex items-center gap-x-2 gap-y-1 text-xs",
+                  compact
+                    ? "-mx-3 overflow-x-auto px-3 [&>*]:shrink-0"
+                    : "flex-wrap",
+                )}
+              >
+                {!compact && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-400">
+                    <span className="size-1.5 rounded-full bg-emerald-400" />
+                    ao vivo
+                  </span>
+                )}
 
                 {/* The one thing the user cannot otherwise tell apart: a session
                     that starts fresh and one that was handed the summary of
@@ -571,12 +701,16 @@ export function App() {
                     {material.label}
                   </span>
                 ))}
-                <span className="text-muted-foreground">
-                  · encerre para trocar de material
-                </span>
-                <span className="ml-auto tabular-nums text-muted-foreground">
-                  ${sessionUsd.toFixed(4)} nesta sessão
-                </span>
+                {!compact && (
+                  <>
+                    <span className="text-muted-foreground">
+                      · encerre para trocar de material
+                    </span>
+                    <span className="ml-auto tabular-nums text-muted-foreground">
+                      ${sessionUsd.toFixed(4)} nesta sessão
+                    </span>
+                  </>
+                )}
               </div>
             ) : (
               <MaterialPicker
@@ -591,9 +725,16 @@ export function App() {
         </div>
 
         {/* Transcript */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 md:p-4">
           {conversationItems.length > 0 ? (
-            <div className="mx-auto max-w-3xl space-y-4" aria-live="polite">
+            // `ChatBubble` caps a bubble at 80% of the column and belongs to
+            // another wave, so the compact width is set from out here, through
+            // the `data-role` the bubble already carries. At 360px, 80% throws
+            // away 72px of a screen that has none to spare.
+            <div
+              className="mx-auto max-w-3xl space-y-4 [&_[data-role]>div]:max-w-[92%] md:[&_[data-role]>div]:max-w-[80%]"
+              aria-live="polite"
+            >
               {conversationItems.map((item) => {
                 // Full width, in the flow, and not inside a ChatBubble: a
                 // drawing is the answer to the turn that asked for it, and the
@@ -657,14 +798,37 @@ export function App() {
         </div>
 
         {/* ── Bottom bar ──────────────────────────────────────── */}
-        <div className="border-t border-border p-4">
-          <div className="mx-auto flex max-w-3xl items-center gap-4">
-            <MicButton
-              state={micState}
-              onConnect={() => void connect()}
-              onDisconnect={disconnect}
-              disabled={materials.length === 0}
-            />
+        <div
+          className={cn(
+            "sticky bottom-0 border-t border-border bg-background p-3 md:p-4",
+            // viewport-fit=cover puts the last row of pixels behind the home
+            // indicator; without this the send button is under it.
+            compact && "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
+          )}
+        >
+          <SessionAlerts
+            micFailure={micFailure}
+            micMessage={sessionError}
+            audioBlocked={audioBlocked}
+            callDropped={callDropped}
+            onRetry={() => void connect()}
+            onPlayAudio={playAudio}
+          />
+
+          {/* Reversed on a phone: the 64px microphone is the one control that
+              has to be reachable one-handed, and that is the bottom right. */}
+          <div className="mx-auto flex max-w-3xl flex-row-reverse items-center gap-3 md:flex-row md:gap-4">
+            {/* The caption under the button lives inside `MicButton`, another
+                wave's file, so the compact layout hides it from out here: on a
+                phone it only makes the bar taller. */}
+            <div className="shrink-0 [&>div>span]:hidden md:[&>div>span]:block">
+              <MicButton
+                state={micState}
+                onConnect={() => void connect()}
+                onDisconnect={disconnect}
+                disabled={materials.length === 0}
+              />
+            </div>
 
             <div
               className={cn(
@@ -689,7 +853,9 @@ export function App() {
                     ? "Ou digite, se preferir…"
                     : "Conecte para conversar"
                 }
-                className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                // 16px on a phone: iOS Safari zooms the page in when a field
+                // under 16px takes focus, and it never zooms back out.
+                className="min-w-0 flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground md:text-sm"
               />
               <button
                 type="button"
@@ -711,6 +877,54 @@ export function App() {
           )}
         </div>
       </main>
+
+      {/* ── The two drawers ─────────────────────────────────────── */}
+      {compact && (
+        <>
+          <ConversationsSheet
+            open={navOpen}
+            onOpenChange={setNavOpen}
+            onSearch={searchFromSheet}
+          >
+            <Sidebar
+              conversations={conversations}
+              activeId={activeConvId}
+              onSelect={selectFromSheet}
+              onCreate={createFromSheet}
+              onDelete={handleDelete}
+              onRename={handleRename}
+              onOpenPalette={searchFromSheet}
+            />
+          </ConversationsSheet>
+
+          <PanelsSheet
+            open={panelsOpen}
+            onOpenChange={setPanelsOpen}
+            agents={agentsPanel}
+            voice={voicePanel}
+            cost={costsPanel}
+            memory={memoryPanel}
+          />
+        </>
+      )}
+
+      {/* First contact. `othersPresent` is hard-coded false: presence lands with
+          the shared-call work, and inventing it here would drop an onboarding
+          card over a call somebody else is already in. When the roster exists,
+          this is the one line that reads it. */}
+      {shouldShowFirstRun({
+        compact,
+        materialCount: materials.length,
+        conversationItemCount: conversationItems.length,
+        dismissed: firstRunDismissed,
+        othersPresent: false,
+      }) && (
+        <FirstRun
+          busy={sourceBusy}
+          onStart={(spec) => void startFromFirstRun(spec)}
+          onDismiss={() => setFirstRunDismissed(true)}
+        />
+      )}
 
       {/* Command palette — trigger hidden off-screen; dialog renders in portal */}
       <div className="absolute -left-[9999px] -top-[9999px]" aria-hidden="true">

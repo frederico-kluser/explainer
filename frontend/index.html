@@ -2,7 +2,16 @@
 <html lang="pt-BR" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover hands the app the whole screen, notch included, and
+         makes env(safe-area-inset-*) report something other than zero — the top
+         bar and the microphone bar pad themselves with it.
+         interactive-widget=resizes-content shrinks the layout viewport when the
+         keyboard opens, so 100dvh follows it down and the text field stays above
+         the keys instead of behind them. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <title>Explainer — converse por voz sobre qualquer material</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🎤</text></svg>">
 
