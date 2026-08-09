@@ -1,8 +1,12 @@
 import "./load-env.js"; // must run before anything reads process.env
 
+import { randomBytes } from "node:crypto";
+import { networkInterfaces } from "node:os";
+
 import express from "express";
 import cors from "cors";
 import { errorHandler } from "./middleware/error-handler.js";
+import { accessKeyGate, loopbackOnly } from "./middleware/access-key.js";
 
 import conversationsRouter from "./routes/conversations.js";
 import memoryRouter from "./routes/memory.js";
@@ -11,10 +15,26 @@ import sourcesRouter from "./routes/sources.js";
 import agentsRouter from "./routes/agents.js";
 import costsRouter, { creditsRouter } from "./routes/costs.js";
 import browseRouter from "./routes/browse.js";
+import { createPairRouter } from "./routes/pair.js";
 import { attachDeepThinkToMemory } from "./services/memory-recorder.js";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
+
+// The interface the backend listens on stays loopback, deliberately.
+//
+// The wifi story is served by the Vite dev server, which runs on the host and
+// proxies `/api` here — a phone on the network reaches this process through
+// that hop, so the socket itself never has to face the LAN. `EXPLAINER_HOST` is
+// the opt-in for the case where something else serves the built frontend.
+const HOST = process.env.EXPLAINER_HOST || "127.0.0.1";
+
+// The key that guards every `/api` route. Generated when the environment has
+// none, rather than defaulting to open: a host who never edited `.env` would
+// otherwise publish their OpenAI spend, their `~/Projects` tree and an
+// irreversible memory delete to everyone on the wifi, and find out later.
+const configuredKey = process.env.EXPLAINER_ACCESS_KEY?.trim();
+const ACCESS_KEY = configuredKey || randomBytes(16).toString("base64url");
 
 // A deliberation round emits its synthesis on an event bus and then forgets it —
 // `pruneJobs` empties the registry and a restart empties it for good. This is
@@ -38,6 +58,11 @@ app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   next();
 });
+
+// The access gate, before the body parsers on purpose: a request that cannot
+// prove it was invited has no business getting a 25 mb JSON body read into
+// memory first. `/api/health` and `/api/pair` answer in front of it.
+app.use("/api", accessKeyGate(ACCESS_KEY));
 
 // JSON body parsers, largest first.
 //
@@ -66,6 +91,10 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+// --- Pairing (outside the gate: it is the door) ---
+
+app.use("/api/pair", createPairRouter(ACCESS_KEY));
+
 // --- Routes ---
 
 app.use("/api/conversations", conversationsRouter);
@@ -76,7 +105,8 @@ app.use("/api/realtime", realtimeRouter);
 app.use("/api/sources", sourcesRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/costs", costsRouter);
-app.use("/api/credits", creditsRouter);
+// Holding the key buys a conversation, not a look at the owner's wallet.
+app.use("/api/credits", loopbackOnly, creditsRouter);
 app.use("/api/browse", browseRouter);
 
 // --- 404 for unknown API routes (JSON, not Express' HTML default) ---
@@ -91,8 +121,30 @@ app.use(errorHandler);
 
 // --- Start ---
 
-app.listen(PORT, "127.0.0.1", () => {
+/** First non-internal IPv4 address, so the printed link is the shareable one. */
+function lanAddress(): string | null {
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === "IPv4" && !address.internal) return address.address;
+    }
+  }
+  return null;
+}
+
+app.listen(PORT, HOST, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
+
+  // The link is the whole interface to the key: whoever opens it is paired, and
+  // whoever did not receive it cannot spend the host's OpenAI credit. Printing
+  // it every boot is what makes "abra essa url" a complete instruction.
+  const uiPort = Number(process.env.EXPLAINER_PUBLIC_PORT) || 5173;
+  const uiHost = lanAddress() ?? "localhost";
+  console.log(
+    configuredKey
+      ? "[access] Usando a EXPLAINER_ACCESS_KEY do ambiente."
+      : "[access] Nenhuma EXPLAINER_ACCESS_KEY definida — gerei uma só para esta execução.",
+  );
+  console.log(`[access] Link para compartilhar: http://${uiHost}:${uiPort}/?k=${ACCESS_KEY}`);
 });
 
 export default app;

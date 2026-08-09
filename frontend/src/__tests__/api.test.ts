@@ -460,6 +460,49 @@ describe("clearMemory", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Pairing
+// ---------------------------------------------------------------------------
+
+describe("claimAccessKey", () => {
+  it("posts the key to /api/pair and resolves on 204", async () => {
+    mockFetchResponse({ ok: true, status: 204 });
+
+    await expect(api.claimAccessKey("chave-do-link")).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/pair",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ key: "chave-do-link" }),
+      }),
+    );
+  });
+
+  // The key is sent in the body, never the query string: the address bar, the
+  // history and any log in front of the server would all keep a copy.
+  it("keeps the key out of the URL", async () => {
+    mockFetchResponse({ ok: true, status: 204 });
+
+    await api.claimAccessKey("chave-do-link");
+
+    expect(fetch).toHaveBeenCalledWith("/api/pair", expect.anything());
+  });
+
+  it("surfaces a refusal as ApiError with status 401", async () => {
+    mockFetchResponse({
+      ok: false,
+      status: 401,
+      text: JSON.stringify({ error: "Chave de acesso inválida." }),
+    });
+
+    const failure = await api.claimAccessKey("errada").catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(api.ApiError);
+    expect((failure as InstanceType<typeof api.ApiError>).status).toBe(401);
+    expect((failure as Error).message).toMatch(/Chave de acesso inválida/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The mint cannot hang forever
 // ---------------------------------------------------------------------------
 

@@ -75,6 +75,24 @@ function postJSON(path: string, body: unknown, init?: RequestInit): Promise<Resp
   });
 }
 
+// ----- Access -----
+
+/**
+ * Trade the key from the shared link for the cookie every later request carries.
+ *
+ * A cookie and not an `Authorization` header because `new EventSource(url)`
+ * takes no headers — a bearer scheme would put the secret in the query string
+ * of every SSE stream, where it survives in logs and history. The cookie is
+ * sent by `fetch` (default `credentials: "same-origin"`) and by `EventSource`
+ * alike, so nothing below this line has to know the key exists.
+ *
+ * Throws `ApiError` with `status: 401` when the key is refused.
+ */
+export async function claimAccessKey(key: string): Promise<void> {
+  const response = await postJSON("/api/pair", { key });
+  await handleEmpty(response);
+}
+
 // ----- Sources -----
 
 /** Add a material to a conversation. Returns the whole list back. */
