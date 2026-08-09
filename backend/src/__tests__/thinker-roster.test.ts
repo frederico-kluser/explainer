@@ -125,16 +125,17 @@ describe("defaultRoster", () => {
     expect(last.model.model).toBe("deepseek-v4-pro");
   });
 
-  it("has discovered nothing yet: no effort, null window, null rate", () => {
+  it("defaults every role to effort max, with nothing discovered yet", () => {
     const roster = defaultRoster();
     for (const choiceUnderTest of [
       roster.master,
       roster.planner,
       ...roster.slots.map((slot) => slot.model),
     ]) {
-      // Absent, not "minimal": `ChatRequest.effort` says undefined means "send
-      // nothing", and a non-reasoning model rejects the field outright.
-      expect(choiceUnderTest.effort).toBeUndefined();
+      // "max", not absent: the operator asked for the strongest reasoning
+      // level the model accepts, and it is sent on every role. Context window
+      // and rate are still undiscovered on a fresh roster.
+      expect(choiceUnderTest.effort).toBe("max");
       expect(choiceUnderTest.context_window).toBeNull();
       expect(choiceUnderTest.rate).toBeNull();
     }
@@ -254,7 +255,7 @@ describe("normalizeRoster", () => {
     expect(roster.slots[0]!.model.model).toBe("kept-while-off");
   });
 
-  it("drops an unknown effort and keeps a known one", () => {
+  it("falls back to max for an unknown effort and keeps a known one", () => {
     const build = (effort: unknown): ThinkerRoster =>
       normalizeRoster({
         version: 1,
@@ -264,12 +265,34 @@ describe("normalizeRoster", () => {
         updated_at: "2026-08-01T00:00:00.000Z",
       });
 
+    // A value outside the six levels is repaired to the default rather than
+    // dropped: an old roster must not run without a reasoning level.
     for (const bad of ["ultra", "LOW", "", 3, null, {}]) {
-      expect(build(bad).master.effort).toBeUndefined();
-      expect(build(bad).master).not.toHaveProperty("effort");
+      expect(build(bad).master.effort).toBe("max");
     }
-    for (const good of ["minimal", "low", "medium", "high"]) {
+    for (const good of ["minimal", "low", "medium", "high", "xhigh", "max"]) {
       expect(build(good).master.effort).toBe(good);
+    }
+  });
+
+  it("migrates a roster stored without effort to max on every choice", () => {
+    const roster = normalizeRoster({
+      version: 1,
+      master: choice("gpt-5.2"),
+      planner: choice("gpt-5.2-mini"),
+      slots: [
+        { index: 1, enabled: true, model: choice("a") },
+        { index: 2, enabled: false, model: choice("b") },
+      ],
+      updated_at: "2026-08-01T00:00:00.000Z",
+    });
+
+    for (const choiceUnderTest of [
+      roster.master,
+      roster.planner,
+      ...roster.slots.map((slot) => slot.model),
+    ]) {
+      expect(choiceUnderTest.effort).toBe("max");
     }
   });
 
@@ -576,13 +599,33 @@ describe("getRoster / setRoster", () => {
     expect(reloaded.slots[8]!.model.model).toBe("modelo-guardado");
   });
 
-  it("never lets an invalid effort reach the disk", async () => {
+  it("replaces an invalid effort with max before writing to disk", async () => {
     await setRoster({ master: { ...choice("gpt-5.2"), effort: "ultra" } });
-    expect(readFileSync(ROSTER_PATH, "utf-8")).not.toContain("effort");
-    expect(readStoredRoster().master).not.toHaveProperty("effort");
+    // Scoped to the patched choice, not the whole file: the default roster's
+    // slots legitimately carry `effort: "max"` too.
+    expect(readStoredRoster().master.effort).toBe("max");
 
     await setRoster({ master: { ...choice("gpt-5.2"), effort: "high" } });
     expect(readStoredRoster().master.effort).toBe("high");
+  });
+
+  it("migrates a roster on disk that predates effort to max on first read", async () => {
+    writeStoredRoster({
+      version: 1,
+      master: choice("gpt-5.2"),
+      planner: choice("gpt-5.2-mini"),
+      slots: [{ index: 1, enabled: true, model: choice("a") }],
+      updated_at: "2026-08-01T00:00:00.000Z",
+    });
+
+    const roster = await getRoster();
+    for (const choiceUnderTest of [
+      roster.master,
+      roster.planner,
+      ...roster.slots.map((slot) => slot.model),
+    ]) {
+      expect(choiceUnderTest.effort).toBe("max");
+    }
   });
 
   it("stores an unreadable rate and window as null rather than zero", async () => {

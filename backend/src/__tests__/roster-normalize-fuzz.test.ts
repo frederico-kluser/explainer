@@ -38,7 +38,7 @@ afterAll(() => {
 // table over inputs nobody would write on purpose.
 
 const PROVIDERS = ["openai", "openrouter", "deepseek"];
-const EFFORTS = ["minimal", "low", "medium", "high"];
+const EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"];
 const MAX_MODEL_ID_CHARS = 200;
 const MAX_ANGLE_CHARS = 200;
 

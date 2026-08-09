@@ -69,6 +69,8 @@ const REASONING_EFFORTS: readonly ReasoningEffort[] = [
   "low",
   "medium",
   "high",
+  "xhigh",
+  "max",
 ];
 
 /** A model id is an identifier, not a document. */
@@ -111,6 +113,7 @@ function defaultChoice(): ModelChoice {
   return {
     provider: "deepseek",
     model: "deepseek-v4-pro",
+    effort: "max",
     context_window: null,
     supports_tools: true,
     rate: null,
@@ -132,9 +135,10 @@ function defaultChoice(): ModelChoice {
  *   - enabled slots — `DEEP_THINK_THINKERS` (4 by default). The rest are born
  *     disabled but WITH the model filled in, because a disabled slot keeps its
  *     model.
- *   - `effort` absent — deep-think sends no reasoning field at all, and per
- *     `ChatRequest.effort` an absent effort means "send nothing", which is not
- *     the same as sending a default: the model's own default (high) applies.
+ *   - `effort: "max"` — every role opens at the strongest reasoning level the
+ *     model accepts, per the operator's request. (The old default sent no
+ *     reasoning field, which is not the same thing: the model's own default,
+ *     high, applied instead.)
  *   - `supports_tools: true` — the thinkers are called with
  *     `tools: [SEARCH_TOOL]`. It describes what the MODEL accepts; the planner
  *     and the synthesiser are called without tools regardless, and that is a
@@ -197,7 +201,7 @@ function normalizeProvider(
     : fallback;
 }
 
-/** Undefined for anything outside the four levels — see `defaultRoster`. */
+/** Undefined for anything outside the six levels — see `defaultRoster`. */
 function normalizeEffort(value: unknown): ReasoningEffort | undefined {
   return typeof value === "string" &&
     (REASONING_EFFORTS as readonly string[]).includes(value)
@@ -267,10 +271,12 @@ function normalizeChoice(value: unknown, fallback: ModelChoice): ModelChoice {
     rate: normalizeRate(value.rate),
   };
 
-  // Both optional fields are assigned only when they survived, so a rejected
-  // value leaves no key behind — not on disk, and not on the object a route
-  // hands to the browser.
-  const effort = normalizeEffort(value.effort);
+  // `discovered_at` is assigned only when it survived, so a rejected value
+  // leaves no key behind — not on disk, and not on the object a route hands to
+  // the browser. `effort` is the opposite: absent or out of range falls to the
+  // default, so a roster written before effort existed migrates to "max" on
+  // first read instead of running without a reasoning level forever.
+  const effort = normalizeEffort(value.effort) ?? fallback.effort;
   if (effort) choice.effort = effort;
 
   const discoveredAt = normalizeTimestamp(value.discovered_at);
@@ -328,7 +334,7 @@ function normalizeSlot(
  *
  *   - exactly `MAX_THINKERS` slots, `index` 1..MAX_THINKERS in order, no
  *     duplicates;
- *   - `provider` one of the three, `effort` one of the four or absent;
+ *   - `provider` one of the three, `effort` one of the six;
  *   - `model` a non-empty string;
  *   - `context_window` and `rate` `null` whenever they were not fully readable.
  */
