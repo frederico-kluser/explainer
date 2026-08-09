@@ -168,3 +168,71 @@ export function priceTextResponse(model: string, usage: TextUsage): number {
     per1M(usage.output_tokens ?? 0, rates.text.output)
   );
 }
+
+// ---------------------------------------------------------------------------
+// Caller-resolved rates
+// ---------------------------------------------------------------------------
+
+/**
+ * A text rate the caller resolved elsewhere, in **USD per 1M tokens** — the
+ * same unit as the static card above, so a row of `RATES` and a `ResolvedRate`
+ * are interchangeable.
+ *
+ * The unit is not arbitrary: OpenRouter's catalogue (`GET /api/v1/models`)
+ * publishes `pricing.prompt` as a decimal string in USD *per token*, and
+ * `openai/gpt-5.2` reads `"0.00000175"` there — times 1e6 that is 1.75, exactly
+ * the number the card above already carries for that model. Multiplying a
+ * catalogue price by 1e6 is the whole conversion into this unit.
+ */
+export interface ResolvedRate {
+  /** USD per 1M input tokens. */
+  input: number;
+  /** USD per 1M cached input tokens. */
+  cachedInput: number;
+  /** USD per 1M output tokens. */
+  output: number;
+}
+
+/**
+ * Price a text response against a rate the **caller** resolved, falling back to
+ * the static card when it has none.
+ *
+ * A roster of thinkers can name models this file has never heard of, and
+ * `priceTextResponse` answers 0 for those — the silent zero documented in
+ * `tracking-costs-and-credits`. This is how a discovered rate gets used without
+ * growing the card into a mirror of three providers' catalogues.
+ *
+ * Price comes from three sources, in this order, and only the last two are
+ * here:
+ *
+ * 1. the cost the provider itself reported — OpenRouter returns `usage.cost` in
+ *    USD on every response. That figure is already final, has no rate behind it
+ *    to pass in, and so never reaches this function;
+ * 2. `rate`: discovered from the provider's catalogue and cached on the roster;
+ * 3. the static card, reached by passing `rate` as `null`.
+ *
+ * That is why this is a second function rather than a wider `priceTextResponse`:
+ * source 1 has nothing to hand it, so the callers are genuinely different.
+ *
+ * `priceWithRate(null, model, usage)` delegates, so it is identical to
+ * `priceTextResponse(model, usage)` by construction and not merely in practice.
+ */
+export function priceWithRate(
+  rate: ResolvedRate | null,
+  model: string,
+  usage: TextUsage,
+): number {
+  if (!rate) return priceTextResponse(model, usage);
+
+  // Same rule as priceTextResponse: input_tokens already counts the cached
+  // ones, so the cached share comes off before the full rate applies and is
+  // then billed at the cached rate. Charging both would bill it twice.
+  const cached = usage.input_tokens_details?.cached_tokens ?? 0;
+  const fresh = Math.max(0, (usage.input_tokens ?? 0) - cached);
+
+  return (
+    per1M(fresh, rate.input) +
+    per1M(cached, rate.cachedInput) +
+    per1M(usage.output_tokens ?? 0, rate.output)
+  );
+}
