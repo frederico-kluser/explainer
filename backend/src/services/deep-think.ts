@@ -3,8 +3,10 @@ import { v4 as uuidv4 } from "uuid";
 
 import { braveSearch } from "./brave.js";
 import { addCost } from "./costs.js";
-import { OpenAIError, TEXT_MODEL } from "./openai.js";
-import { priceTextResponse, ratesFor, type TextUsage } from "./pricing.js";
+import { TEXT_MODEL } from "./openai.js";
+import { priceTextResponse, ratesFor } from "./pricing.js";
+import { adapterFor } from "./providers/index.js";
+import type { ChatResponse, ToolCall, ToolSpec, Turn } from "./providers/types.js";
 import {
   MAX_THINKERS,
   type BraveResult,
@@ -74,10 +76,6 @@ function deepThinkModel(): string {
   return (
     process.env.OPENAI_DEEPTHINK_MODEL || process.env.OPENAI_TEXT_MODEL || TEXT_MODEL
   );
-}
-
-function openAIBase(): string {
-  return process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 }
 
 const MAX_SCENARIO_CHARS = 4_000;
@@ -415,12 +413,12 @@ async function plan(
     "esse angulo, em portugues do Brasil).";
 
   try {
-    const payload = await respond(
-      { model: deepThinkModel(), input: instructions, max_output_tokens: 1_200 },
-      { timeoutMs: PLANNER_TIMEOUT_MS, signal },
+    const response = await respond(
+      [{ role: "user", content: instructions }],
+      { maxOutputTokens: 1_200, timeoutMs: PLANNER_TIMEOUT_MS, signal },
     );
-    const usd = priceOf(payload);
-    const specs = parsePlan(messageText(payload), count);
+    const usd = priceOf(response);
+    const specs = parsePlan(response.text, count);
     return { specs: specs ?? fallbackSpecs(count), usd };
   } catch (err) {
     if (isAbort(err)) throw err;
@@ -480,8 +478,11 @@ function parsePlan(text: string, count: number): ThinkerSpec[] | null {
 /**
  * The only tool a thinker gets.
  *
- * `strict: true` demands every property be required, which is why the result
- * count is decided here instead of being another field the model can inflate.
+ * The schema makes every property required, which is why the result count is
+ * decided here instead of being another field the model can inflate. The
+ * Responses API's `strict` flag would enforce that, but the adapter contract
+ * (`ToolSpec` in `providers/types.ts`) does not model it, so the wire no
+ * longer carries it and `argOf` has to keep parsing defensively.
  */
 const SEARCH_TOOL = {
   type: "function",
@@ -569,7 +570,7 @@ async function runThinker(
   const seen: BraveResult[] = [];
   let webNote = "";
 
-  const input: unknown[] = [
+  const turns: Turn[] = [
     {
       role: "user",
       content:
@@ -591,21 +592,17 @@ async function runThinker(
   const maxTurns = budget + 2;
 
   for (let turn = 0; turn < maxTurns; turn++) {
-    const payload = await respond(
-      {
-        model: deepThinkModel(),
-        input,
-        tools: [SEARCH_TOOL],
-        tool_choice: "auto",
-        max_output_tokens: 1_400,
-      },
-      { timeoutMs: THINKER_TIMEOUT_MS, signal },
-    );
-    bill(round, tally, priceOf(payload));
+    const response = await respond(turns, {
+      tools: [SEARCH_TOOL],
+      maxOutputTokens: 1_400,
+      timeoutMs: THINKER_TIMEOUT_MS,
+      signal,
+    });
+    bill(round, tally, priceOf(response));
 
-    const calls = functionCalls(payload);
+    const calls = searchCalls(response.toolCalls);
     if (calls.length === 0) {
-      const thinking = messageText(payload).trim();
+      const thinking = response.text.trim();
       if (!thinking) {
         return {
           status: "error",
@@ -623,9 +620,15 @@ async function runThinker(
       };
     }
 
-    // Everything the model emitted is carried forward — dropping the reasoning
-    // or the call item itself is the documented way to break the next request.
-    input.push(...(payload.output ?? []));
+    // Everything the model emitted rides forward on `raw` — dropping the
+    // reasoning or the call item itself is the documented way to break the
+    // next request.
+    turns.push({
+      role: "assistant",
+      content: response.text,
+      toolCalls: response.toolCalls,
+      raw: response.raw,
+    });
 
     for (const call of calls) {
       let output: string;
@@ -653,7 +656,7 @@ async function runThinker(
           output = `A busca falhou (${reason}). Siga raciocinando sem a web e diga que ficou sem fonte.`;
         }
       }
-      input.push({ type: "function_call_output", call_id: call.call_id ?? "", output });
+      turns.push({ role: "tool", toolCallId: call.id, content: output });
     }
   }
 
@@ -781,13 +784,13 @@ async function synthesise(
     "- Portugues do Brasil, no maximo seis frases.";
 
   try {
-    const payload = await respond(
-      { model: deepThinkModel(), input: instructions, max_output_tokens: 1_000 },
-      { timeoutMs: SYNTHESIS_TIMEOUT_MS, signal },
+    const response = await respond(
+      [{ role: "user", content: instructions }],
+      { maxOutputTokens: 1_000, timeoutMs: SYNTHESIS_TIMEOUT_MS, signal },
     );
-    const text = forSpeech(messageText(payload)).slice(0, MAX_SYNTHESIS_CHARS);
-    if (!text) return { text: forSpeech(localSynthesis(usable)), usd: priceOf(payload) };
-    return { text, usd: priceOf(payload) };
+    const text = forSpeech(response.text).slice(0, MAX_SYNTHESIS_CHARS);
+    if (!text) return { text: forSpeech(localSynthesis(usable)), usd: priceOf(response) };
+    return { text, usd: priceOf(response) };
   } catch (err) {
     if (isAbort(err)) throw err;
     // The thinking is already paid for; losing it to a failed last call would be
@@ -911,106 +914,43 @@ function pruneJobs(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Responses API, with tools
+// Model calls, through the OpenAI adapter
 // ---------------------------------------------------------------------------
 //
-// `openai.ts` has no tool-calling helper and is out of scope to edit, so the
-// three-item protocol lives here: flat tool definitions, `function_call` items
-// coming back, `function_call_output` items going in, matched by `call_id`.
-
-interface ResponsesItem {
-  type?: string;
-  id?: string;
-  call_id?: string;
-  name?: string;
-  arguments?: string;
-  content?: Array<{ type?: string; text?: string }>;
-}
-
-interface ResponsesPayload {
-  model?: string;
-  usage?: TextUsage;
-  output?: ResponsesItem[];
-  output_text?: string;
-}
+// The wire protocol — flat tools, `function_call` items coming back,
+// `function_call_output` items going in, matched by `call_id` — lives in
+// `providers/openai-responses.ts`, which also resolves the key at call time and
+// owns the timeout and abort plumbing. What stays here is the carry-forward
+// rule that protocol enforces: everything the model emitted must be replayed on
+// the next request of the same exchange, so the round hands the adapter back
+// its own items, untouched, on `Turn.raw`.
 
 async function respond(
-  body: Record<string, unknown>,
-  { timeoutMs, signal }: { timeoutMs: number; signal: AbortSignal },
-): Promise<ResponsesPayload> {
-  if (signal.aborted) throw abortError();
+  turns: Turn[],
+  options: {
+    tools?: ToolSpec[];
+    maxOutputTokens: number;
+    timeoutMs: number;
+    signal: AbortSignal;
+  },
+): Promise<ChatResponse> {
+  return adapterFor("openai").chat({
+    model: deepThinkModel(),
+    turns,
+    ...(options.tools?.length ? { tools: options.tools } : {}),
+    maxOutputTokens: options.maxOutputTokens,
+    timeoutMs: options.timeoutMs,
+    signal: options.signal,
+  });
+}
 
-  const controller = new AbortController();
-  const relay = () => controller.abort();
-  signal.addEventListener("abort", relay, { once: true });
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+function searchCalls(calls: ToolCall[]): ToolCall[] {
+  return calls.filter((call) => call.name === SEARCH_TOOL.name);
+}
 
+function argOf(call: ToolCall, key: string): string {
   try {
-    const response = await fetch(`${openAIBase()}/responses`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    const text = await response.text();
-    if (!response.ok) {
-      let detail = text.slice(0, 500);
-      try {
-        const parsed = JSON.parse(text) as { error?: { message?: string } };
-        if (parsed.error?.message) detail = parsed.error.message;
-      } catch {
-        // keep the raw body
-      }
-      throw new OpenAIError(response.status, detail);
-    }
-
-    return JSON.parse(text) as ResponsesPayload;
-  } catch (err) {
-    if (err instanceof OpenAIError) throw err;
-    if (signal.aborted) throw abortError();
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new OpenAIError(504, `A chamada ao modelo passou de ${timeoutMs}ms.`);
-    }
-    throw new OpenAIError(502, errText(err));
-  } finally {
-    clearTimeout(timer);
-    signal.removeEventListener("abort", relay);
-  }
-}
-
-function apiKey(): string {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new OpenAIError(500, "OPENAI_API_KEY is not set on the server");
-  return key;
-}
-
-function messageText(payload: ResponsesPayload): string {
-  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
-    return payload.output_text;
-  }
-  const chunks: string[] = [];
-  for (const item of payload.output ?? []) {
-    if (item.type !== "message") continue;
-    for (const part of item.content ?? []) {
-      if (part.text) chunks.push(part.text);
-    }
-  }
-  return chunks.join("\n").trim();
-}
-
-function functionCalls(payload: ResponsesPayload): ResponsesItem[] {
-  return (payload.output ?? []).filter(
-    (item) => item.type === "function_call" && item.name === SEARCH_TOOL.name,
-  );
-}
-
-function argOf(call: ResponsesItem, key: string): string {
-  try {
-    const parsed = JSON.parse(call.arguments ?? "{}") as Record<string, unknown>;
+    const parsed = JSON.parse(call.arguments) as Record<string, unknown>;
     const value = parsed[key];
     return typeof value === "string" ? value : "";
   } catch {
@@ -1018,10 +958,10 @@ function argOf(call: ResponsesItem, key: string): string {
   }
 }
 
-function priceOf(payload: ResponsesPayload): number {
-  const model = payload.model ?? deepThinkModel();
+function priceOf(response: ChatResponse): number {
+  const model = response.model;
   warnIfUnpriced(model);
-  return priceTextResponse(model, payload.usage ?? {});
+  return priceTextResponse(model, response.usage);
 }
 
 /** One warning per model id; a round makes dozens of calls with the same one. */
@@ -1095,12 +1035,6 @@ function forSpeech(text: string): string {
       .replace(/\n{3,}/g, "\n\n")
       .trim()
   );
-}
-
-function abortError(): Error {
-  const err = new Error("A rodada foi interrompida.");
-  err.name = "AbortError";
-  return err;
 }
 
 function isAbort(err: unknown): boolean {

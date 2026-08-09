@@ -8,9 +8,10 @@ import { priceTextResponse, type TextUsage } from "../services/pricing.js";
 
 // The engine talks to exactly two things: the Responses API over `fetch`, and a
 // `SearchFn`. Both are replaced here, so nothing in this file touches the
-// network. `fetch` is stubbed rather than the module mocked, so the request
-// building, the tool loop, the `function_call` parsing and the cost arithmetic
-// all run for real against payloads shaped like the API's.
+// network. The provider adapter sits in the path, but `fetch` is stubbed rather
+// than the adapter mocked, so the request building, the carry-forward on
+// `Turn.raw`, the tool loop, the `function_call` parsing and the cost
+// arithmetic all run for real against payloads shaped like the API's.
 
 // sandbox.ts freezes homedir()-derived roots at module load and the cost ledger
 // writes through it, so HOME moves before the first import.
@@ -119,14 +120,22 @@ function searchCallPayload(query: string): Payload {
 
 function stageOf(body: Body): "planner" | "thinker" | "synthesis" {
   if (Array.isArray(body.tools)) return "thinker";
-  return String(body.input ?? "").includes("resposta consolidada")
+  return firstUserText(body).includes("resposta consolidada")
     ? "synthesis"
     : "planner";
 }
 
+/**
+ * The adapter always sends `input` as an item array — even a one-turn prompt —
+ * so a stage is told apart by the first user turn's wording, not by a string.
+ */
+function firstUserText(body: Body): string {
+  const input = body.input as Array<{ role?: string; content?: string }> | undefined;
+  return String(input?.find((item) => item.role === "user")?.content ?? "");
+}
+
 function thinkerPrompt(body: Body): string {
-  const input = body.input as Array<{ content?: string }> | undefined;
-  return String(input?.[0]?.content ?? "");
+  return firstUserText(body);
 }
 
 function angleOf(prompt: string): string {
@@ -297,7 +306,7 @@ describe("dispatchDeepThink", () => {
     // The synthesiser reads the full traces, not a vote.
     const synthesis = requests.filter((b) => stageOf(b) === "synthesis");
     expect(synthesis).toHaveLength(1);
-    const prompt = String(synthesis[0]?.input ?? "");
+    const prompt = firstUserText(synthesis[0]!);
     expect(prompt).toContain("Pensamento sobre evidencia");
     expect(prompt).toContain("Pensamento sobre risco");
     expect(prompt).toContain("devo reescrever o modulo de cobranca?");
