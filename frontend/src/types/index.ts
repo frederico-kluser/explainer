@@ -423,3 +423,140 @@ export interface ConversationSettings {
   speed: number;
   voices: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Thinker roster — mirrors backend/src/types/thinker-roster.ts
+// ---------------------------------------------------------------------------
+
+/**
+ * The three providers a roster row can point at.
+ *
+ * The same union as `ProviderName`; declared separately because the backend
+ * treats it as its own type (`backend/src/types/thinker-roster.ts`) and the
+ * wire contract is what this file mirrors.
+ */
+export type ThinkerProvider = ProviderName;
+
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+
+/**
+ * One roster row's model: the provider, the provider's own id, and everything
+ * discovery learned about the model so the budgeter never has to guess.
+ */
+export interface ModelChoice {
+  provider: ThinkerProvider;
+  model: string;
+  /** Goes out as `reasoning.effort` (Responses) or `reasoning_effort` (Chat). */
+  effort?: ReasoningEffort;
+  /** Context window in tokens; `null` = never discovered (budget at the floor). */
+  context_window: number | null;
+  supports_tools: boolean;
+  /** USD per 1M tokens, or `null` when no published price is known. */
+  rate: { input: number; cached_input: number; output: number } | null;
+  discovered_at?: string;
+}
+
+export interface ThinkerSlot {
+  /**
+   * 1..10, stable: it addresses the row in the UI, so it survives a slot being
+   * disabled and is never renumbered to close a gap.
+   */
+  index: number;
+  /** A disabled slot is skipped by the round but KEEPS its model. */
+  enabled: boolean;
+  model: ModelChoice;
+  /** A fixed angle overriding the planner for this slot alone. */
+  angle?: string;
+}
+
+export interface ThinkerRoster {
+  version: 1;
+  /** Reads every thinker's full trace and writes the answer. */
+  master: ModelChoice;
+  /** Plans the angles; deliberately does NOT follow the master. */
+  planner: ModelChoice;
+  /** Always ten items, in index order, including the disabled ones. */
+  slots: ThinkerSlot[];
+  updated_at: string;
+}
+
+export type RosterWarningCode = "provider_key_missing";
+
+/** Which row of the settings screen a warning is about. */
+export type RosterRole = "master" | "planner" | "thinker";
+
+/**
+ * Why a row cannot be called. The message is Brazilian Portuguese and reaches
+ * the screen verbatim.
+ */
+export interface RosterWarning {
+  code: RosterWarningCode;
+  role: RosterRole;
+  provider: ThinkerProvider;
+  /** 1..10. Present only when `role` is `"thinker"`. */
+  slot_index?: number;
+  message: string;
+}
+
+/**
+ * Everything `GET /api/thinkers` answers — and every later read or write of
+ * the roster, which all carry the same envelope because the UI cannot render
+ * a roster without the key statuses and warnings that describe it.
+ */
+export interface RosterEnvelope {
+  roster: ThinkerRoster;
+  providers: ProviderKeyStatus[];
+  warnings: RosterWarning[];
+}
+
+// ---------------------------------------------------------------------------
+// The model catalogue — mirrors backend/src/services/model-catalog.ts
+// ---------------------------------------------------------------------------
+
+/** One model in the catalogue, as `GET /api/models` hands it out. */
+export interface CatalogModel {
+  /** The id to send back as the request's `model`, verbatim. */
+  id: string;
+  /** Human-readable, for the roster UI. Falls back to `id`. */
+  label: string;
+  context_window: number | null;
+  max_output_tokens: number | null;
+  supports_tools: boolean;
+  rate: { input: number; cached_input: number; output: number } | null;
+  released_at: string | null;
+  /**
+   * The year of `released_at`, or `null` when the provider published no date.
+   * `null` is never rendered as, coerced to, or counted as the minimum year —
+   * an undated model is "sem data", not "2026".
+   */
+  year: number | null;
+  /**
+   * True only when this model is in the caller's `keep` list AND would have
+   * been filtered out without it — the "(selecionado)" badge.
+   */
+  kept_by_selection: boolean;
+}
+
+export type CatalogProviderState = "ok" | "skipped" | "error";
+
+/** What one provider answered, reported rather than absorbed. */
+export interface CatalogProviderStatus {
+  provider: ThinkerProvider;
+  /** `ok` — answered; `skipped` — its catalogue needs a key; `error` — it failed. */
+  status: CatalogProviderState;
+  /** Why, in Brazilian Portuguese for `skipped`; the provider's own words for `error`. */
+  note?: string;
+  /** Models this provider answered with, BEFORE any filter. Zero unless `ok`. */
+  count: number;
+}
+
+export interface CatalogResult {
+  models: CatalogModel[];
+  providers: CatalogProviderStatus[];
+  /** The minimum year actually applied, after defaults and clamping. */
+  min_year: number;
+  /** Models discovered before filtering. Always the sum of `providers[].count`. */
+  total: number;
+  /** Models that survived. Always `models.length`. */
+  filtered: number;
+}

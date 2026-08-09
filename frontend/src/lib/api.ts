@@ -15,6 +15,8 @@ import type {
   BrowseResult,
   MaterialsEnvelope,
   SourceSpec,
+  RosterEnvelope,
+  ThinkerRoster,
 } from "@/types";
 
 // ----- Helpers -----
@@ -601,4 +603,47 @@ export async function renameConversation(
     body: JSON.stringify({ title }),
   });
   return handleResponse<Conversation>(response);
+}
+
+// ----- Thinker roster -----
+
+/**
+ * The roster in force, plus the key statuses and warnings that render with it.
+ *
+ * One call, because the panel cannot render a roster without the other two:
+ * a roster pointing slot 3 at OpenRouter is fine right up until OpenRouter has
+ * no key.
+ */
+export async function getRoster(): Promise<RosterEnvelope> {
+  const response = await fetch("/api/thinkers");
+  return handleResponse<RosterEnvelope>(response);
+}
+
+/**
+ * Write the roster. Answers with the whole normalised envelope.
+ *
+ * A bare `fetch` and not `postJSON` — the route answers PUT, and the helper is
+ * POST-shaped by name (the same comment `setProviderKey` carries). The backend
+ * treats the body as a partial patch and normalises every field it reads, so
+ * the caller re-renders from the RESPONSE rather than trusting its own draft.
+ */
+export async function putRoster(roster: ThinkerRoster): Promise<RosterEnvelope> {
+  const response = await fetch("/api/thinkers", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(roster),
+  });
+  return handleResponse<RosterEnvelope>(response);
+}
+
+/**
+ * Back to the defaults — for whoever tied a knot.
+ *
+ * `POST` because that is the route; the reset writes the defaults into a file
+ * and answers with the envelope for what was written, so the caller renders
+ * that and never its own guess at the defaults.
+ */
+export async function resetRoster(): Promise<RosterEnvelope> {
+  const response = await fetch("/api/thinkers/reset", { method: "POST" });
+  return handleResponse<RosterEnvelope>(response);
 }

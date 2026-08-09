@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion } from "motion/react";
-import { Plus, RefreshCw, Send } from "lucide-react";
+import { Brain, Plus, RefreshCw, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMotionUITransition } from "@/components/motion-ui/ui-theme";
 import {
@@ -33,6 +33,8 @@ import { PanelsSheet } from "@/components/ui/PanelsSheet";
 import { SessionAlerts } from "@/components/ui/SessionAlerts";
 import { FirstRun } from "@/components/ui/FirstRun";
 import { ProviderKeysPrompt } from "@/components/ui/ProviderKeysPrompt";
+import { BottomSheet } from "@/components/ui/sheet";
+import { ThinkerRosterPanel } from "@/components/ui/ThinkerRosterPanel";
 import { shouldShowFirstRun } from "@/components/ui/mobile-shell";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import * as api from "@/lib/api";
@@ -116,6 +118,7 @@ export function App() {
   const compact = useCompactLayout();
   const [navOpen, setNavOpen] = useState(false);
   const [panelsOpen, setPanelsOpen] = useState(false);
+  const [thinkersOpen, setThinkersOpen] = useState(false);
   const [firstRunDismissed, setFirstRunDismissed] = useState(false);
   // Session-only, like the setup gate's own flag: a reload asks again while
   // the keys are still missing, which is the honest cost of no storage.
@@ -622,6 +625,29 @@ export function App() {
     />
   );
 
+  // The roster of thinkers is a drawer of its own, not a fifth panel: it is a
+  // settings screen the operator opens deliberately, while the four panels are
+  // readouts consulted in passing. The button sits with them on the rail, and
+  // under the conversation list in the ☰ drawer on a phone. Not a gate — the
+  // app runs on the defaults until this is opened.
+  const thinkersButton = (
+    <div className="border-t border-border px-3 py-2">
+      <button
+        type="button"
+        onClick={() => {
+          // On a phone the button lives inside the ☰ drawer; stepping out of
+          // it before opening the roster avoids stacking two modals.
+          setNavOpen(false);
+          setThinkersOpen(true);
+        }}
+        className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <Brain className="size-3.5" />
+        <span className="font-medium">Pensadores</span>
+      </button>
+    </div>
+  );
+
   // ── Render ────────────────────────────────────────────────────
   return (
     <div className="dark flex h-dvh overflow-hidden bg-background text-foreground">
@@ -662,6 +688,7 @@ export function App() {
           {voicePanel}
           {costsPanel}
           {memoryPanel}
+          {thinkersButton}
         </Sidebar>
       )}
 
@@ -926,7 +953,9 @@ export function App() {
               onDelete={handleDelete}
               onRename={handleRename}
               onOpenPalette={searchFromSheet}
-            />
+            >
+              {thinkersButton}
+            </Sidebar>
           </ConversationsSheet>
 
           <PanelsSheet
@@ -939,6 +968,16 @@ export function App() {
           />
         </>
       )}
+
+      {/* The roster of thinkers. The sheet mounts its panel only while open —
+          that is what makes every open re-read the server. */}
+      <BottomSheet
+        open={thinkersOpen}
+        onOpenChange={setThinkersOpen}
+        title="Pensadores"
+      >
+        <ThinkerRosterPanel />
+      </BottomSheet>
 
       {/* First contact. `othersPresent` is hard-coded false: presence lands with
           the shared-call work, and inventing it here would drop an onboarding
