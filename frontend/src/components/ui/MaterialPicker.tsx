@@ -24,9 +24,61 @@ export interface MaterialPickerProps {
   materials: Material[];
   busy: boolean;
   disabled?: boolean;
+  /**
+   * Which tab the form opens on. Optional; leaving it out keeps the default.
+   *
+   * The first-contact overlay asks the same question in bigger words — "Este
+   * computador", "Um repositório", "Um documento" — and until now its answer
+   * died with it, because the tab lived in a `useState` nobody outside could
+   * reach. Whoever asked already gets to say what was answered.
+   */
+  initialKind?: SourceKind;
   onAdd: (spec: SourceSpec) => void;
   onRemove: (materialId: string) => void;
 }
+
+/** The tab a picker opens on when the caller does not say. */
+export const DEFAULT_MATERIAL_KIND: SourceKind = "repo";
+
+/** Resolves `initialKind` against the default. Exported for the suite. */
+export function initialPickerKind(initialKind?: SourceKind): SourceKind {
+  return initialKind ?? DEFAULT_MATERIAL_KIND;
+}
+
+/**
+ * The boxes a finger has to hit, held as data so the suite can measure them.
+ *
+ * No jsdom here, so nothing rendered can be measured; the class list it is
+ * built from can. The unprefixed half of each string is the phone — floor 44px,
+ * the size of a fingertip — and the `md:` half is the desktop this picker
+ * already had. The two text fields carry `text-base md:text-sm` for a second
+ * reason: under 16px, iOS Safari zooms the page in when the field takes focus,
+ * and it never zooms back out.
+ */
+export const PICKER_TARGETS = {
+  /** Repositório / Markdown / Meu computador. */
+  tab: "relative flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-1.5 text-xs font-medium transition-colors md:min-h-0 md:px-2 md:py-1.5",
+  /** GitHub / Navegar na máquina. */
+  repoMode:
+    "inline-flex min-h-11 items-center gap-1 rounded-md border px-3 text-xs transition-colors md:min-h-0 md:px-2 md:py-1",
+  /** The X on a material chip: destructive, and the smallest thing here. */
+  chipRemove:
+    "inline-flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive md:size-auto md:p-0.5",
+  /** "adicionar material". */
+  addMaterial:
+    "inline-flex min-h-11 items-center gap-1 rounded-full border border-dashed border-border px-3 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground md:min-h-0 md:px-2.5 md:py-1",
+  /** "fechar". The negative margin keeps the hint beside it where it was. */
+  close:
+    "-mr-2 inline-flex min-h-11 shrink-0 items-center px-2 text-xs text-muted-foreground transition-colors hover:text-foreground md:m-0 md:min-h-0 md:p-0",
+  /** Every `Button` in here: the shared one ships 32px. */
+  submit: "h-11 md:h-8",
+  /** github.com/owner/repo. */
+  repoInput:
+    "min-h-11 min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus:border-primary md:min-h-0 md:text-sm",
+  /** The pasted document. */
+  markdownInput:
+    "w-full resize-y rounded-md border bg-background px-3 py-2 text-base outline-none placeholder:text-muted-foreground focus:border-primary md:text-sm",
+} as const;
 
 const TABS: Array<{
   kind: SourceKind;
@@ -54,6 +106,14 @@ const TABS: Array<{
   },
 ];
 
+/**
+ * The kinds that have a tab, in the order they are offered.
+ *
+ * Exported because `initialKind` is now a promise to the caller: whatever the
+ * overlay upstream can choose, this strip has to be able to show.
+ */
+export const MATERIAL_TAB_KINDS: readonly SourceKind[] = TABS.map((tab) => tab.kind);
+
 const KIND_ICON: Record<SourceKind, typeof FolderGit2> = {
   repo: FolderGit2,
   markdown: FileText,
@@ -71,11 +131,12 @@ export function MaterialPicker({
   materials,
   busy,
   disabled = false,
+  initialKind,
   onAdd,
   onRemove,
 }: MaterialPickerProps) {
   const [adding, setAdding] = useState(materials.length === 0);
-  const [kind, setKind] = useState<SourceKind>("repo");
+  const [kind, setKind] = useState<SourceKind>(() => initialPickerKind(initialKind));
   const [repoMode, setRepoMode] = useState<"url" | "browse">("url");
   const [ref, setRef] = useState("");
   const [markdown, setMarkdown] = useState("");
@@ -92,6 +153,15 @@ export function MaterialPicker({
     if (materials.length === 0) setAdding(true);
     previousCount.current = materials.length;
   }, [materials.length]);
+
+  // Watched rather than read once at mount. The picker is already mounted
+  // behind the first-contact overlay, so a value read at mount is always the
+  // default and the card the user tapped up there would be asked for again
+  // down here. Later taps on the tabs still win: the effect only fires when
+  // the caller changes its mind.
+  useEffect(() => {
+    if (initialKind) setKind(initialKind);
+  }, [initialKind]);
 
   const readFile = useCallback(
     (file: File) => {
@@ -142,7 +212,7 @@ export function MaterialPicker({
     >
       {/* What the conversation already has */}
       {materials.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-1.5">
+        <div className="mb-3 flex flex-wrap gap-2 md:gap-1.5">
           <AnimatePresence initial={false}>
             {materials.map((material) => {
               const Icon = KIND_ICON[material.kind];
@@ -154,7 +224,10 @@ export function MaterialPicker({
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
                   transition={transition}
-                  className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-background py-1 pl-2.5 pr-1.5 text-xs"
+                  // The chip is as tall as the X inside it, and the X is a
+                  // fingertip: removing the material a call is about is not a
+                  // thing to hit by accident on the way to the tab strip.
+                  className="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border border-border bg-background py-1 pl-3 pr-0 text-xs md:min-h-0 md:pl-2.5 md:pr-1.5"
                   title={material.origin ?? material.label}
                 >
                   <Icon className="size-3 shrink-0 text-muted-foreground" />
@@ -169,7 +242,7 @@ export function MaterialPicker({
                   <button
                     type="button"
                     onClick={() => onRemove(material.id)}
-                    className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    className={PICKER_TARGETS.chipRemove}
                     aria-label={`Remover ${material.label}`}
                     title="Remover material"
                   >
@@ -184,7 +257,7 @@ export function MaterialPicker({
             <button
               type="button"
               onClick={() => setAdding(true)}
-              className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+              className={PICKER_TARGETS.addMaterial}
             >
               <Plus className="size-3" />
               adicionar material
@@ -205,7 +278,7 @@ export function MaterialPicker({
                   type="button"
                   onClick={() => setKind(tab.kind)}
                   className={cn(
-                    "relative flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+                    PICKER_TARGETS.tab,
                     selected
                       ? "text-foreground"
                       : "text-muted-foreground hover:text-foreground",
@@ -218,8 +291,11 @@ export function MaterialPicker({
                       transition={transition}
                     />
                   )}
-                  <Icon className="relative size-3.5" />
-                  <span className="relative">{tab.label}</span>
+                  {/* `truncate` on the label needs `min-w-0` on the tab, which
+                      makes everything in it shrinkable — including the icon,
+                      which would otherwise be squeezed to a sliver at 360px. */}
+                  <Icon className="relative size-3.5 shrink-0" />
+                  <span className="relative truncate">{tab.label}</span>
                 </button>
               );
             })}
@@ -231,7 +307,7 @@ export function MaterialPicker({
               <button
                 type="button"
                 onClick={() => setAdding(false)}
-                className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                className={PICKER_TARGETS.close}
               >
                 fechar
               </button>
@@ -240,12 +316,12 @@ export function MaterialPicker({
 
           {kind === "repo" && (
             <div className="space-y-2">
-              <div className="flex gap-1 text-xs">
+              <div className="flex gap-2 text-xs md:gap-1">
                 <button
                   type="button"
                   onClick={() => setRepoMode("url")}
                   className={cn(
-                    "inline-flex items-center gap-1 rounded-md border px-2 py-1 transition-colors",
+                    PICKER_TARGETS.repoMode,
                     repoMode === "url"
                       ? "border-primary text-foreground"
                       : "border-border text-muted-foreground hover:text-foreground",
@@ -258,7 +334,7 @@ export function MaterialPicker({
                   type="button"
                   onClick={() => setRepoMode("browse")}
                   className={cn(
-                    "inline-flex items-center gap-1 rounded-md border px-2 py-1 transition-colors",
+                    PICKER_TARGETS.repoMode,
                     repoMode === "browse"
                       ? "border-primary text-foreground"
                       : "border-border text-muted-foreground hover:text-foreground",
@@ -279,9 +355,13 @@ export function MaterialPicker({
                       if (event.key === "Enter") submit();
                     }}
                     placeholder="github.com/owner/repo"
-                    className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-primary"
+                    className={PICKER_TARGETS.repoInput}
                   />
-                  <Button onClick={submit} disabled={busy || !ref.trim()}>
+                  <Button
+                    className={PICKER_TARGETS.submit}
+                    onClick={submit}
+                    disabled={busy || !ref.trim()}
+                  >
                     {busy ? <Loader className="size-4 animate-spin" /> : "Adicionar"}
                   </Button>
                 </div>
@@ -302,15 +382,23 @@ export function MaterialPicker({
                 rows={5}
                 placeholder="Cole o markdown aqui — ou arraste um arquivo .md para esta área."
                 className={cn(
-                  "w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-primary",
+                  PICKER_TARGETS.markdownInput,
                   dragging ? "border-primary" : "border-border",
                 )}
               />
-              <div className="flex gap-2">
-                <Button onClick={submit} disabled={busy || !markdown.trim()}>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  className={PICKER_TARGETS.submit}
+                  onClick={submit}
+                  disabled={busy || !markdown.trim()}
+                >
                   {busy ? <Loader className="size-4 animate-spin" /> : "Adicionar documento"}
                 </Button>
-                <Button variant="outline" onClick={() => fileRef.current?.click()}>
+                <Button
+                  className={PICKER_TARGETS.submit}
+                  variant="outline"
+                  onClick={() => fileRef.current?.click()}
+                >
                   <Upload className="mr-1.5 size-4" />
                   Escolher arquivo
                 </Button>
@@ -330,7 +418,7 @@ export function MaterialPicker({
           )}
 
           {kind === "machine" && (
-            <Button onClick={submit} disabled={busy}>
+            <Button className={PICKER_TARGETS.submit} onClick={submit} disabled={busy}>
               {busy ? (
                 <Loader className="size-4 animate-spin" />
               ) : (

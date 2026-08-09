@@ -26,13 +26,36 @@ export interface MicButtonProps {
   disabled?: boolean;
 }
 
-const labels: Record<MicButtonState, string> = {
+/**
+ * What each state is called.
+ *
+ * Below `md` the caption is not rendered, so these strings survive only as the
+ * button's `title` and `aria-label`: on a phone this map is the entire textual
+ * account of what the call is doing. A state missing from it would leave a
+ * screen reader announcing an unlabelled button.
+ */
+export const MIC_BUTTON_LABELS: Record<MicButtonState, string> = {
   idle: "Conectar e conversar",
   connecting: "Conectando...",
   listening: "Ao vivo — pode falar",
   hearing: "Ouvindo você",
   speaking: "Falando — pode interromper",
 };
+
+/** The call button's own box: 64px, well past the 44px a finger needs. */
+export const MIC_BUTTON_TARGET =
+  "relative inline-flex size-16 items-center justify-center rounded-full";
+
+/**
+ * The caption under the button.
+ *
+ * Stacked under a 64px circle it makes the bottom bar ~92px tall, and on a
+ * phone that is a fifth of the transcript spent restating what the two rings
+ * already show. Hidden below `md` rather than dropped: at `md` and up the
+ * caption is the only place the session state is written down, and the
+ * `aria-label` carries it either way.
+ */
+export const MIC_CAPTION_CLASS = "hidden text-xs text-muted-foreground md:block";
 
 export function MicButton({
   state,
@@ -47,12 +70,12 @@ export function MicButton({
     <div className="flex flex-col items-center gap-2">
       <motion.button
         type="button"
-        title={labels[state]}
-        aria-label={labels[state]}
+        title={MIC_BUTTON_LABELS[state]}
+        aria-label={MIC_BUTTON_LABELS[state]}
         disabled={disabled || state === "connecting"}
         onClick={() => (live ? onDisconnect() : onConnect())}
         className={cn(
-          "relative inline-flex size-16 items-center justify-center rounded-full",
+          MIC_BUTTON_TARGET,
           live
             ? "bg-destructive text-destructive-foreground"
             : "bg-primary text-primary-foreground",
@@ -117,7 +140,7 @@ export function MicButton({
         </AnimatePresence>
       </motion.button>
 
-      <span className="text-xs text-muted-foreground">{labels[state]}</span>
+      <span className={MIC_CAPTION_CLASS}>{MIC_BUTTON_LABELS[state]}</span>
     </div>
   );
 }
