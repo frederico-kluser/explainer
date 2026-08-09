@@ -33,6 +33,31 @@ export type SessionStatus = "idle" | "connecting" | "live" | "error";
 export interface RealtimeSessionState {
   status: SessionStatus;
   error: string | null;
+  /**
+   * Which microphone failure `error` is describing, when it is describing one.
+   *
+   * Lets the UI act on the reason instead of parsing the sentence: only
+   * `"insecure-context"` has a link worth offering, and only `"denied"` is
+   * worth a second attempt without changing anything first.
+   */
+  micFailure: MicrophoneFailure | null;
+  /**
+   * The browser will not start the model's voice until the user taps.
+   *
+   * iOS reaches this every time the unlock in the handshake did not take. The
+   * call is up and the model is talking; nothing is coming out of the speaker
+   * until `playAudio` runs inside a real gesture.
+   */
+  audioBlocked: boolean;
+  /** Start the voice from inside the user's tap. Only useful while `audioBlocked`. */
+  playAudio: () => void;
+  /**
+   * The call died while the tab was in the background, and was hung up.
+   *
+   * Reconnecting is left to the user on purpose: a new token pays the
+   * summariser and is billed, so a phone waking up in a pocket must not spend.
+   */
+  callDropped: boolean;
   transcript: TranscriptEntry[];
   userSpeaking: boolean;
   assistantSpeaking: boolean;
@@ -709,6 +734,180 @@ function handleDeepThinkEvent(
 }
 
 // ---------------------------------------------------------------------------
+// A microphone the browser will not hand over
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the certificate that makes a LAN address secure is served from.
+ *
+ * Exported so the UI can draw a link instead of a sentence with a path buried
+ * in it: on a phone, a path the user has to retype is a path nobody follows.
+ */
+export const CERTIFICATE_URL = "/rootCA.pem";
+
+/**
+ * Which way the microphone is unavailable.
+ *
+ * The UI branches on this, never on the message — the wording is copy and will
+ * be rewritten; the reason a tap can or cannot fix it will not.
+ */
+export type MicrophoneFailure =
+  | "insecure-context"
+  | "unsupported"
+  | "denied"
+  | "not-found"
+  | "busy"
+  | "aborted";
+
+export interface MicrophoneProblem {
+  failure: MicrophoneFailure;
+  /** What to do about it. Naming the exception tells the user nothing they can act on. */
+  message: string;
+}
+
+const MICROPHONE_MESSAGES: Record<MicrophoneFailure, string> = {
+  "insecure-context":
+    "Este endereço não é seguro, então o navegador não libera o microfone. " +
+    `Instale o certificado do Explainer, em ${CERTIFICATE_URL}, e abra a página de novo. ` +
+    "No iPhone, depois de instalar, ligue também o certificado em Ajustes > Geral > " +
+    "Sobre > Ajustes de Confiança do Certificado.",
+  unsupported:
+    "Este navegador não entrega o microfone para a página. No iPhone, abra o Explainer " +
+    "no Safari, e não pelo ícone da tela de início nem por um link dentro de outro " +
+    "aplicativo.",
+  denied:
+    "Preciso do microfone para conversar. Libere o microfone para este endereço nas " +
+    "configurações do navegador e toque em conectar de novo.",
+  "not-found":
+    "Não encontrei nenhum microfone neste aparelho. Conecte um e toque em conectar de novo.",
+  busy:
+    "O microfone está ocupado por outro aplicativo. Encerre a chamada ou a gravação que " +
+    "está usando ele e toque em conectar de novo.",
+  aborted:
+    "O navegador não conseguiu abrir o microfone. Toque em conectar de novo; se insistir, " +
+    "feche e abra o navegador.",
+};
+
+function microphoneProblem(failure: MicrophoneFailure): MicrophoneProblem {
+  return { failure, message: MICROPHONE_MESSAGES[failure] };
+}
+
+/**
+ * Whether this page can ask for a microphone at all — checked before it asks.
+ *
+ * `getUserMedia` is gated on a secure context, and a LAN address is not one:
+ * the potentially-trustworthy set is `https`, `localhost`, `127.0.0.0/8`, `::1`
+ * and `file`, so `http://192.168.1.20:5173` is on none of it. In an insecure
+ * context `navigator.mediaDevices` is not a method that refuses — it is
+ * `undefined`, so the handshake reached into it and threw
+ * `undefined is not an object`, which is what the phone showed the user: a raw
+ * TypeError, in English, about a property.
+ *
+ * The two answers are kept apart because the remedy is not the same. An
+ * insecure address needs the certificate. A *secure* page with no
+ * `mediaDevices` is WebKit withholding capture outside Safari proper — a
+ * home-screen web app or an in-app browser (WebKit #180551) — and sending that
+ * user to install a certificate points them at a problem they do not have.
+ */
+export function microphoneBlock(env: {
+  /** `window.isSecureContext`. */
+  secureContext: boolean;
+  /** `navigator.mediaDevices`. Typed loose because its being absent is the point. */
+  mediaDevices: unknown;
+}): MicrophoneProblem | null {
+  if (!env.secureContext) return microphoneProblem("insecure-context");
+  if (!env.mediaDevices) return microphoneProblem("unsupported");
+  return null;
+}
+
+/**
+ * The two globals `microphoneBlock` judges, read in one place.
+ *
+ * A seam, not a wrapper: without it the only code that touches
+ * `navigator.mediaDevices` sits inside a React hook this suite cannot render,
+ * so the half that decides would be tested and the half that looks would not —
+ * and looking in the wrong place is precisely how the crash shipped.
+ */
+export function currentMicrophoneEnvironment(): {
+  secureContext: boolean;
+  mediaDevices: unknown;
+} {
+  return {
+    secureContext: window.isSecureContext,
+    mediaDevices: navigator.mediaDevices,
+  };
+}
+
+/**
+ * The names `getUserMedia` rejects with, plus the aliases older engines kept.
+ *
+ * `SecurityError` sits with the denials: it means media capture is switched off
+ * for this document, which the user resolves in the same place as a refusal.
+ */
+const MICROPHONE_ERROR_NAMES: Record<string, MicrophoneFailure> = {
+  NotAllowedError: "denied",
+  PermissionDeniedError: "denied",
+  SecurityError: "denied",
+  NotFoundError: "not-found",
+  DevicesNotFoundError: "not-found",
+  NotReadableError: "busy",
+  TrackStartError: "busy",
+  AbortError: "aborted",
+};
+
+/**
+ * Turn whatever the handshake threw into something the user can act on.
+ *
+ * Answers `null` when the failure was not the microphone's — the mint and the
+ * SDP exchange reject through the same `catch`, and their messages already say
+ * what they are about.
+ *
+ * The match is on `err.name`, not on `err.message`. The message is written by
+ * the engine: Chrome says "Permission denied", other engines phrase the same
+ * refusal as a sentence containing neither that phrase nor the exception's
+ * name, so the message test this replaces recognised a denial in one browser
+ * and printed the raw English of the others.
+ */
+export function classifyMicrophoneError(err: unknown): MicrophoneProblem | null {
+  // The only `TypeError` reachable here is `navigator.mediaDevices` being
+  // absent: the constraints are a constant with `audio` set, so the "every
+  // constraint is false" TypeError that `getUserMedia` also defines cannot
+  // happen. Without this branch that crash arrived on screen verbatim.
+  if (err instanceof TypeError) return microphoneProblem("unsupported");
+
+  const name = err instanceof Error ? err.name : "";
+  const known = MICROPHONE_ERROR_NAMES[name];
+  if (known) return microphoneProblem(known);
+
+  const message = err instanceof Error ? err.message : String(err);
+  return /permission denied/i.test(message) ? microphoneProblem("denied") : null;
+}
+
+/**
+ * Whether the call the tab just came back to is still there.
+ *
+ * `openRealtimeSession` only reacts to `failed` and `closed`. A peer connection
+ * the OS froze while the phone slept comes back as `disconnected`, which
+ * nothing was watching — so the hook still said "live" and the button still
+ * said connected over a call with no other end.
+ *
+ * Anything short of `connected` counts as gone, `connecting` included: after a
+ * nap that is ICE trying to rebuild a session whose ephemeral token has most
+ * likely already expired. A live status with no peer connection counts as gone
+ * for the same reason — from the user's side it is the same silence.
+ *
+ * Reconnecting is deliberately not this function's business, nor the caller's:
+ * a fresh token runs the summariser and is billed, and a phone coming out of a
+ * pocket asked for neither.
+ */
+export function callDroppedWhileHidden(
+  status: SessionStatus,
+  connectionState: RTCPeerConnectionState | null,
+): boolean {
+  return status === "live" && connectionState !== "connected";
+}
+
+// ---------------------------------------------------------------------------
 // Bringing a session up
 // ---------------------------------------------------------------------------
 
@@ -789,6 +988,14 @@ export interface OpenSessionDeps {
   onServerEvent: (event: RealtimeServerEvent) => void;
   onChannelOpen: () => void;
   onConnectionLost: () => void;
+  /**
+   * The browser would not start the model's voice, and only a tap will.
+   *
+   * Optional because it is the UI's problem, not the handshake's: a caller that
+   * has nowhere to put a "tocar áudio" button is better off silent than
+   * throwing.
+   */
+  onAudioBlocked?: () => void;
   browser?: Partial<BrowserBridge>;
 }
 
@@ -807,6 +1014,60 @@ export async function openRealtimeSession(
   deps: OpenSessionDeps,
 ): Promise<RealtimeHandles | null> {
   const bridge: BrowserBridge = { ...BROWSER, ...deps.browser };
+
+  // Built and started here, ahead of every await, so it is still inside the
+  // click that asked for the call: this function is invoked — not awaited —
+  // straight out of the button handler, so everything down to the mint runs in
+  // the gesture's own task. WebKit only honours a `play()` made there; Apple's
+  // own guidance names the delay of an async step ahead of `play()` as exactly
+  // why the element stops recognising the gesture. The mint can sit for its
+  // full timeout while a conversation with memory is summarised, so an element
+  // created after it is an element iOS will never let speak, and the model
+  // connects, talks, and is heard by nobody.
+  //
+  // There is no source on it yet, so this first `play()` rejects. It is called
+  // for the permission the call carries, not for the playback.
+  const audio = bridge.createAudioSink();
+  if (audio) void audio.play().catch(() => {});
+
+  /**
+   * Take the element back out of the page.
+   *
+   * Owned out here rather than inside the handshake because it is now created
+   * before the handshake's first await, so every exit that is not a live
+   * session has to undo it — including a mint or an SDP exchange that *throws*,
+   * which no `giveBack` inside runs for. One hidden `<audio>` per failed press
+   * otherwise accumulates for the life of the tab.
+   */
+  const releaseAudio = (): void => {
+    if (!audio) return;
+    audio.srcObject = null;
+    audio.remove();
+  };
+
+  try {
+    const handles = await handshake(deps, bridge, audio);
+    if (!handles) releaseAudio();
+    return handles;
+  } catch (err) {
+    releaseAudio();
+    throw err;
+  }
+}
+
+/**
+ * Everything after the audio element: token, peer connection, microphone, SDP.
+ *
+ * Split out only so the element above it can outlive each of these steps' ways
+ * of ending. `signal.aborted || currentConversation() !== conversationId` is
+ * re-read after every await here, and each `null` it returns has already handed
+ * back what it took by then.
+ */
+async function handshake(
+  deps: OpenSessionDeps,
+  bridge: BrowserBridge,
+  audio: HTMLAudioElement | null,
+): Promise<RealtimeHandles | null> {
   const abandoned = (): boolean =>
     deps.signal.aborted || deps.currentConversation() !== deps.conversationId;
 
@@ -814,10 +1075,15 @@ export async function openRealtimeSession(
   if (abandoned()) return null;
 
   const pc = bridge.createPeerConnection();
-  const audio = bridge.createAudioSink();
   if (audio) {
     pc.ontrack = (event) => {
       audio.srcObject = event.streams[0] ?? null;
+      // `autoplay` does not restart an element that already ran its load
+      // algorithm against nothing, so the track needs an explicit `play()`. And
+      // if the unlock above did not take, this rejection is the only notice the
+      // page gets that the model is speaking into a muted phone — the UI turns
+      // it into a button, because at this point only a tap can help.
+      void audio.play().catch(() => deps.onAudioBlocked?.());
     };
   }
 
@@ -825,10 +1091,6 @@ export async function openRealtimeSession(
   const giveBack = (stream: MediaStream | null): null => {
     stream?.getTracks().forEach((track) => track.stop());
     pc.close();
-    if (audio) {
-      audio.srcObject = null;
-      audio.remove();
-    }
     return null;
   };
 
@@ -883,6 +1145,9 @@ export function useRealtimeSession(
 ): RealtimeSessionState {
   const [status, setStatus] = useState<SessionStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [micFailure, setMicFailure] = useState<MicrophoneFailure | null>(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const [callDropped, setCallDropped] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [assistantSpeaking, setAssistantSpeaking] = useState(false);
@@ -1233,7 +1498,48 @@ export function useRealtimeSession(
     setUserSpeaking(false);
     setAssistantSpeaking(false);
     setActiveTool(null);
+    // Both describe a call that no longer exists. The caller that hangs up
+    // because the call already died sets `callDropped` again straight after.
+    setAudioBlocked(false);
+    setCallDropped(false);
   }, []);
+
+  /**
+   * Start the model's voice from inside the user's tap.
+   *
+   * The element is still holding the model's track — nothing was torn down, the
+   * browser only refused to begin. So this is the same `play()` the handshake
+   * already tried, made somewhere WebKit accepts it.
+   */
+  const playAudio = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    void audio.play().then(
+      () => setAudioBlocked(false),
+      () => {
+        /* still refused: the button stays, because it is all the user has */
+      },
+    );
+  }, []);
+
+  /**
+   * Notice a call that died while the phone was asleep.
+   *
+   * Re-registered on every status change rather than reading a ref: there is no
+   * `react-hooks` lint here, and a handler installed once would compare against
+   * whatever `status` was when the session opened.
+   */
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      const state = pcRef.current?.connectionState ?? null;
+      if (!callDroppedWhileHidden(status, state)) return;
+      disconnect();
+      setCallDropped(true);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [disconnect, status]);
 
   /**
    * Change how fast the model speaks, mid-call.
@@ -1256,6 +1562,21 @@ export function useRealtimeSession(
   const connect = useCallback(async () => {
     const id = convRef.current;
     if (!id) return;
+
+    // Asked before anything is torn down or minted, because in an insecure
+    // context there is no `navigator.mediaDevices` for the handshake to fail
+    // against — it reached into `undefined` and the phone showed a TypeError.
+    // Reporting it here also keeps `status` off "connecting": nothing is
+    // connecting, and a button spinning for a session that was never going to
+    // start is the same lie in a different shape.
+    const blocked = microphoneBlock(currentMicrophoneEnvironment());
+    if (blocked) {
+      setError(blocked.message);
+      setMicFailure(blocked.failure);
+      setStatus("error");
+      return;
+    }
+
     // `pcRef` is only filled once the handshake is through, so a second press
     // during the mint is caught by the attempt, not by the peer connection.
     if (pcRef.current || connectAbortRef.current) disconnect();
@@ -1264,6 +1585,9 @@ export function useRealtimeSession(
     connectAbortRef.current = attempt;
 
     setError(null);
+    setMicFailure(null);
+    setAudioBlocked(false);
+    setCallDropped(false);
     setStatus("connecting");
 
     try {
@@ -1275,6 +1599,7 @@ export function useRealtimeSession(
         onChannelOpen: () => setStatus("live"),
         onConnectionLost: () =>
           setStatus((current) => (current === "live" ? "idle" : current)),
+        onAudioBlocked: () => setAudioBlocked(true),
       });
 
       // Abandoned mid-handshake. Everything it took is already given back and
@@ -1298,12 +1623,15 @@ export function useRealtimeSession(
       // the user leaving, and `disconnect` already put the UI back to idle.
       if (attempt.signal.aborted) return;
 
-      const message =
-        err instanceof Error ? err.message : "Nao foi possivel iniciar a sessao.";
+      // A microphone failure gets a sentence about what to do next; anything
+      // else — the mint, the SDP exchange — already says what it is about.
+      const problem = classifyMicrophoneError(err);
+      setMicFailure(problem?.failure ?? null);
       setError(
-        /Permission denied|NotAllowedError/i.test(message)
-          ? "Preciso do microfone para conversar. Libere o acesso e tente de novo."
-          : message,
+        problem?.message ??
+          (err instanceof Error
+            ? err.message
+            : "Não foi possível iniciar a sessão."),
       );
       setStatus("error");
       disconnect();
@@ -1374,6 +1702,10 @@ export function useRealtimeSession(
   return {
     status,
     error,
+    micFailure,
+    audioBlocked,
+    playAudio,
+    callDropped,
     transcript,
     userSpeaking,
     assistantSpeaking,

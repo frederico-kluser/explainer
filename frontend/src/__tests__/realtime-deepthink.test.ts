@@ -1,19 +1,25 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
 import {
+  CERTIFICATE_URL,
   MAX_DEEP_THINK_JOBS,
   MAX_DIAGRAMS,
   appendDiagram,
   applyAgentJobEvent,
   applyDeepThinkEvent,
+  callDroppedWhileHidden,
+  classifyMicrophoneError,
+  currentMicrophoneEnvironment,
   diagramFromMeta,
   executeToolCalls,
   isDeepThinkEvent,
   isReplay,
   mergeConversationItems,
+  microphoneBlock,
   openRealtimeSession,
   seedDiagrams,
   sessionStreamHandler,
+  type MicrophoneFailure,
   type SessionStreamDeps,
 } from "@/hooks/useRealtimeSession";
 import type {
@@ -742,6 +748,35 @@ function fakeMic() {
   return { track, asStream: stream as unknown as MediaStream };
 }
 
+/**
+ * Enough of an `<audio>` to see when it was built, started and thrown away.
+ *
+ * Every call appends to a shared log, because the thing being asserted about
+ * this element is almost always *when* it happened relative to the handshake.
+ */
+function fakeAudio(order: string[], play: () => Promise<void> = () => Promise.resolve()) {
+  const audio = {
+    autoplay: false,
+    style: { display: "" },
+    srcObject: null as MediaStream | null,
+    play: vi.fn(() => {
+      order.push("play");
+      return play();
+    }),
+    remove: vi.fn(() => {
+      order.push("remove");
+    }),
+  };
+  return { audio, asAudio: audio as unknown as HTMLAudioElement };
+}
+
+/** A DOMException as the browser hands it over: recognised by `name`, not text. */
+function rejection(name: string, message = ""): Error {
+  const err = new Error(message);
+  err.name = name;
+  return err;
+}
+
 /** Let every pending microtask run, so the handshake reaches its next await. */
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -892,6 +927,344 @@ describe("openRealtimeSession", () => {
     expect(peer.setRemoteDescription).not.toHaveBeenCalled();
     expect(track.stop).toHaveBeenCalledTimes(1);
     expect(peer.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The microphone the browser will not hand over
+//
+// `getUserMedia` needs a secure context, and the phone on the LAN reaches this
+// app over `http://192.168.x.x`, which is not one. What the user got there was
+// not a refusal — it was `undefined is not an object`, in English, because
+// `navigator.mediaDevices` does not exist in an insecure context at all.
+// ---------------------------------------------------------------------------
+
+describe("microphoneBlock", () => {
+  it("answers an insecure address with the certificate, not a TypeError", () => {
+    const blocked = microphoneBlock({ secureContext: false, mediaDevices: undefined });
+
+    expect(blocked?.failure).toBe("insecure-context");
+    expect(blocked?.message).toContain(CERTIFICATE_URL);
+    expect(blocked?.message).toContain("não é seguro");
+    // The iPhone half: installing the profile is not enough, it has to be
+    // trusted afterwards, and nothing on screen says so.
+    expect(blocked?.message).toContain("Ajustes de Confiança do Certificado");
+    // What this replaced, verbatim, is the assertion that matters.
+    expect(blocked?.message).not.toMatch(/TypeError|undefined|is not an object/i);
+  });
+
+  it("does not blame the certificate when the page is already secure", () => {
+    // A secure page with no `mediaDevices` is WebKit withholding capture
+    // outside Safari proper. Sending that user to install a certificate points
+    // them at a problem they do not have.
+    const blocked = microphoneBlock({ secureContext: true, mediaDevices: undefined });
+
+    expect(blocked?.failure).toBe("unsupported");
+    expect(blocked?.message).not.toContain(CERTIFICATE_URL);
+    expect(blocked?.message).toContain("Safari");
+  });
+
+  it("lets a secure page that has a mediaDevices through", () => {
+    expect(microphoneBlock({ secureContext: true, mediaDevices: {} })).toBeNull();
+  });
+
+  it("reads the phone's actual situation and answers in Portuguese", () => {
+    // The whole failure, reproduced: the phone opens `http://192.168.1.20:5173`,
+    // so the context is not secure and `navigator.mediaDevices` does not exist.
+    // Before the guard, `connect` walked straight into it and the screen showed
+    // `TypeError: undefined is not an object`.
+    vi.stubGlobal("window", { isSecureContext: false });
+    vi.stubGlobal("navigator", { mediaDevices: undefined });
+
+    const blocked = microphoneBlock(currentMicrophoneEnvironment());
+
+    expect(blocked?.failure).toBe("insecure-context");
+    expect(blocked?.message).toContain("o navegador não libera o microfone");
+    expect(blocked?.message).toContain(CERTIFICATE_URL);
+  });
+
+  it("finds nothing to complain about over https with a microphone API", () => {
+    vi.stubGlobal("window", { isSecureContext: true });
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: () => {} } });
+
+    expect(microphoneBlock(currentMicrophoneEnvironment())).toBeNull();
+  });
+});
+
+describe("classifyMicrophoneError", () => {
+  const cases: Array<[string, MicrophoneFailure]> = [
+    ["NotAllowedError", "denied"],
+    ["PermissionDeniedError", "denied"],
+    ["SecurityError", "denied"],
+    ["NotFoundError", "not-found"],
+    ["DevicesNotFoundError", "not-found"],
+    ["NotReadableError", "busy"],
+    ["TrackStartError", "busy"],
+    ["AbortError", "aborted"],
+  ];
+
+  it.each(cases)("reads %s as %s", (name, failure) => {
+    expect(classifyMicrophoneError(rejection(name))?.failure).toBe(failure);
+  });
+
+  it("recognises a refusal whose message says none of the words the old gate matched", () => {
+    // The gate this replaces tested `err.message` against
+    // /Permission denied|NotAllowedError/i. Only Chrome writes "Permission
+    // denied"; the same refusal elsewhere is a sentence containing neither, so
+    // the user got the engine's raw English instead of an instruction.
+    const err = rejection(
+      "NotAllowedError",
+      "The request is not allowed by the user agent or the platform in the current context.",
+    );
+
+    expect(/Permission denied|NotAllowedError/i.test(err.message)).toBe(false);
+    expect(classifyMicrophoneError(err)?.failure).toBe("denied");
+  });
+
+  it("still recognises the legacy wording when the name is missing", () => {
+    expect(classifyMicrophoneError(new Error("Permission denied"))?.failure).toBe("denied");
+  });
+
+  it("turns the insecure-context crash into words instead of letting it through", () => {
+    const crash = new TypeError(
+      "undefined is not an object (evaluating 'navigator.mediaDevices.getUserMedia')",
+    );
+    const problem = classifyMicrophoneError(crash);
+
+    expect(problem?.failure).toBe("unsupported");
+    expect(problem?.message).not.toContain("navigator.mediaDevices");
+  });
+
+  it("leaves a failure that is not the microphone's alone", () => {
+    // The mint and the SDP exchange reject through the same catch, and their
+    // messages already say what they are about; overwriting them with a
+    // sentence about microphones would send the user to the wrong setting.
+    const refusal = new Error("A OpenAI recusou a conexao (401): invalid api key");
+    expect(classifyMicrophoneError(refusal)).toBeNull();
+  });
+
+  it("says something different, and in Portuguese, for each way it can fail", () => {
+    const spoken = cases.map(([name]) => classifyMicrophoneError(rejection(name))!.message);
+
+    expect(new Set(spoken).size).toBe(4);
+    for (const message of spoken) {
+      expect(message).not.toMatch(/Error|denied|microphone/);
+      expect(message).toMatch(/microfone|navegador/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The model's voice on iOS
+// ---------------------------------------------------------------------------
+
+describe("the audio element is born inside the gesture", () => {
+  it("builds and starts it before the first await", async () => {
+    const order: string[] = [];
+    const { asPeer } = fakePeer();
+    const { asStream } = fakeMic();
+    const { asAudio } = fakeAudio(order);
+
+    const pending = openRealtimeSession({
+      conversationId: CONV,
+      signal: new AbortController().signal,
+      currentConversation: () => CONV,
+      onServerEvent: () => {},
+      onChannelOpen: () => {},
+      onConnectionLost: () => {},
+      browser: {
+        mint: () => {
+          order.push("mint");
+          return Promise.resolve(TOKEN);
+        },
+        createPeerConnection: () => asPeer,
+        createAudioSink: () => {
+          order.push("create");
+          return asAudio;
+        },
+        getMicrophone: () => Promise.resolve(asStream),
+        exchangeSdp: () => Promise.resolve("v=0 answer"),
+      },
+    });
+
+    // Read here, before a single microtask has run: `connect` invokes this
+    // function straight out of the click handler without awaiting anything
+    // first, so everything logged at this point still happened inside the
+    // gesture — the only place WebKit honours `play()`. An element built after
+    // the mint, which can wait its full timeout while a conversation is
+    // summarised, is an element iOS never lets speak.
+    expect(order).toEqual(["create", "play", "mint"]);
+
+    await pending;
+  });
+
+  it("plays the model's track the moment it arrives", async () => {
+    const order: string[] = [];
+    const { asPeer } = fakePeer();
+    const { asStream } = fakeMic();
+    const { audio, asAudio } = fakeAudio(order);
+    const remote = { id: "remote" } as unknown as MediaStream;
+
+    const session = await openRealtimeSession({
+      conversationId: CONV,
+      signal: new AbortController().signal,
+      currentConversation: () => CONV,
+      onServerEvent: () => {},
+      onChannelOpen: () => {},
+      onConnectionLost: () => {},
+      browser: {
+        mint: () => Promise.resolve(TOKEN),
+        createPeerConnection: () => asPeer,
+        createAudioSink: () => asAudio,
+        getMicrophone: () => Promise.resolve(asStream),
+        exchangeSdp: () => Promise.resolve("v=0 answer"),
+      },
+    });
+
+    asPeer.ontrack?.call(asPeer, { streams: [remote] } as unknown as RTCTrackEvent);
+    await settle();
+
+    expect(session?.audio).toBe(asAudio);
+    expect(audio.srcObject).toBe(remote);
+    // Once for the unlock before the mint, once for the track: `autoplay` does
+    // not restart an element that already ran its load algorithm against
+    // nothing.
+    expect(audio.play).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks the UI for a tap when the browser still refuses", async () => {
+    const order: string[] = [];
+    const { asPeer } = fakePeer();
+    const { asStream } = fakeMic();
+    const { asAudio } = fakeAudio(order, () =>
+      Promise.reject(rejection("NotAllowedError")),
+    );
+    let blocked = 0;
+
+    await openRealtimeSession({
+      conversationId: CONV,
+      signal: new AbortController().signal,
+      currentConversation: () => CONV,
+      onServerEvent: () => {},
+      onChannelOpen: () => {},
+      onConnectionLost: () => {},
+      onAudioBlocked: () => {
+        blocked += 1;
+      },
+      browser: {
+        mint: () => Promise.resolve(TOKEN),
+        createPeerConnection: () => asPeer,
+        createAudioSink: () => asAudio,
+        getMicrophone: () => Promise.resolve(asStream),
+        exchangeSdp: () => Promise.resolve("v=0 answer"),
+      },
+    });
+
+    asPeer.ontrack?.call(asPeer, { streams: [] } as unknown as RTCTrackEvent);
+    await settle();
+
+    // The unlock before the mint rejects too — it has nothing to play — and
+    // that one is not worth a button. Only the refusal with a track behind it
+    // means the model is talking into a muted phone.
+    expect(blocked).toBe(1);
+  });
+
+  it("takes the element back out of the page when the mint is abandoned", async () => {
+    const order: string[] = [];
+    const { peer, asPeer } = fakePeer();
+    const { asStream } = fakeMic();
+    const { audio, asAudio } = fakeAudio(order);
+    let releaseMint!: (token: RealtimeSessionToken) => void;
+    let current: string | null = CONV;
+
+    const pending = openRealtimeSession({
+      conversationId: CONV,
+      signal: new AbortController().signal,
+      currentConversation: () => current,
+      onServerEvent: () => {},
+      onChannelOpen: () => {},
+      onConnectionLost: () => {},
+      browser: {
+        mint: () =>
+          new Promise<RealtimeSessionToken>((resolve) => {
+            releaseMint = resolve;
+          }),
+        createPeerConnection: () => asPeer,
+        createAudioSink: () => asAudio,
+        getMicrophone: () => Promise.resolve(asStream),
+        exchangeSdp: () => Promise.resolve("v=0 answer"),
+      },
+    });
+
+    current = OTHER_CONV;
+    releaseMint(TOKEN);
+
+    await expect(pending).resolves.toBeNull();
+    // Moving the element above the mint moved it ahead of the first
+    // abandonment check too: one hidden `<audio>` per cancelled press, left in
+    // the body, accumulates for the life of the tab.
+    expect(audio.remove).toHaveBeenCalledTimes(1);
+    expect(audio.srcObject).toBeNull();
+    expect(peer.createDataChannel).not.toHaveBeenCalled();
+  });
+
+  it("takes it back out when the handshake throws, where no giveBack runs", async () => {
+    const order: string[] = [];
+    const { asPeer } = fakePeer();
+    const { audio, asAudio } = fakeAudio(order);
+
+    // A microphone the user refuses: the rejection leaves through the throw
+    // path, which has no abandonment check to clean up after it. Before the
+    // element moved above the mint this leaked nothing; now it would leak one
+    // hidden `<audio>` per refused press.
+    const pending = openRealtimeSession({
+      conversationId: CONV,
+      signal: new AbortController().signal,
+      currentConversation: () => CONV,
+      onServerEvent: () => {},
+      onChannelOpen: () => {},
+      onConnectionLost: () => {},
+      browser: {
+        mint: () => Promise.resolve(TOKEN),
+        createPeerConnection: () => asPeer,
+        createAudioSink: () => asAudio,
+        getMicrophone: () => Promise.reject(rejection("NotAllowedError")),
+        exchangeSdp: () => Promise.resolve("v=0 answer"),
+      },
+    });
+
+    // The rejection still reaches `connect`, which is what turns it into a
+    // sentence; the cleanup must not swallow it.
+    await expect(pending).rejects.toThrow();
+    expect(audio.remove).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The phone that went to sleep
+// ---------------------------------------------------------------------------
+
+describe("callDroppedWhileHidden", () => {
+  it("treats anything but a connected peer under a live session as gone", () => {
+    // `openRealtimeSession` only listens for `failed` and `closed`. A frozen
+    // connection comes back as `disconnected`, which nothing was watching.
+    expect(callDroppedWhileHidden("live", "disconnected")).toBe(true);
+    expect(callDroppedWhileHidden("live", "failed")).toBe(true);
+    expect(callDroppedWhileHidden("live", "closed")).toBe(true);
+    // After a nap this is ICE rebuilding a session whose ephemeral token has
+    // most likely already expired.
+    expect(callDroppedWhileHidden("live", "connecting")).toBe(true);
+    expect(callDroppedWhileHidden("live", null)).toBe(true);
+  });
+
+  it("leaves a call that survived alone", () => {
+    expect(callDroppedWhileHidden("live", "connected")).toBe(false);
+  });
+
+  it("says nothing about a session that was not live to begin with", () => {
+    expect(callDroppedWhileHidden("connecting", "connecting")).toBe(false);
+    expect(callDroppedWhileHidden("idle", null)).toBe(false);
+    expect(callDroppedWhileHidden("error", "failed")).toBe(false);
   });
 });
 
