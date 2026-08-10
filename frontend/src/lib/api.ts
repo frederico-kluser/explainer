@@ -493,6 +493,38 @@ export async function clearMemory(conversationId: string): Promise<void> {
   await handleEmpty(response);
 }
 
+
+// ----- Document -----
+
+/** The conversation's collaborative document, or null when none exists yet. */
+export async function getDocument(conversationId: string): Promise<string | null> {
+  const response = await fetch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/document`,
+  );
+  return handleMissingAsNull<{ content: string }>(response).then(
+    (body) => body?.content ?? null,
+  );
+}
+
+/**
+ * Replace the whole document and answer with the stored (server-normalised)
+ * content, so the panel can adopt the truncated truth.
+ */
+export async function updateDocument(
+  conversationId: string,
+  content: string,
+): Promise<string> {
+  const response = await fetch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/document`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  );
+  return (await handleResponse<{ content: string }>(response)).content;
+}
+
 // ----- Costs and credits -----
 
 /**

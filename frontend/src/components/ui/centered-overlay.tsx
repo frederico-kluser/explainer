@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { useCallback, useRef, type ReactNode } from "react";
 
 import {
   Backdrop,
@@ -41,10 +41,23 @@ export function CenteredOverlay({
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useScrollLock(open);
+
+  // The focus trap registers a document-level Escape handler that calls
+  // `onEscape` immediately. When a Base UI combobox popup is open (it renders a
+  // portaled `[role="listbox"]`), the first Escape should close the popup, not
+  // the modal — otherwise typing a search and pressing Escape loses the whole
+  // panel. Intercepting here rather than inside useFocusTrap keeps the layering
+  // concern in the overlay and avoids teaching the generic trap about comboboxes.
+  const handleEscape = useCallback(() => {
+    const openPopup = document.querySelector('[role="listbox"]');
+    if (openPopup) return; // let the combobox dismiss its own popup first
+    onClose();
+  }, [onClose]);
+
   useFocusTrap({
     active: open,
     container: containerRef,
-    onEscape: onClose,
+    onEscape: handleEscape,
     initialFocus: closeRef,
     restoreFocus: true,
   });
@@ -56,17 +69,20 @@ export function CenteredOverlay({
       <Backdrop
         onClick={onClose}
         label="Fechar"
-        className="fixed inset-0 z-50"
+        className="fixed inset-0 z-50 bg-black/50"
       />
 
+      {/* The outer container spans the whole viewport and centres the card.
+          pointer-events-none lets clicks on the empty area fall through to the
+          backdrop; pointer-events-auto on the card itself restores interaction. */}
       <div
         ref={containerRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4"
       >
-        <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
+        <div className="pointer-events-auto relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
           {/* Header */}
           <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold text-foreground">{title}</h2>

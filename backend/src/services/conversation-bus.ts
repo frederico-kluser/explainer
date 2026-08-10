@@ -77,7 +77,9 @@ export type LiveEvent =
   /** The microphone changed hands, was taken or was let go. */
   | { type: "floor.changed"; holder: string | null; name: string | null }
   /** A viewer asked the holder for the microphone. */
-  | { type: "floor.requested"; client_id: string; name: string };
+  | { type: "floor.requested"; client_id: string; name: string }
+  /** The collaborative document was written, by either the user or the model. */
+  | { type: "document.changed"; content: string; source: "user" | "assistant" };
 
 /** A published event, with the sequence number its `id:` line carries. */
 export interface BufferedEvent {
@@ -220,6 +222,18 @@ export function noteMemoryChanged(conversationId: string): void {
   // the server on shutdown, and not the test runner between files.
   timer.unref();
   memoryTimers.set(conversationId, timer);
+}
+
+/**
+ * Broadcast a document change immediately — never pooled, because writes are
+ * already debounced client-side and are rare from the model.
+ */
+export function noteDocumentChanged(
+  conversationId: string,
+  content: string,
+  source: "user" | "assistant",
+): void {
+  publish(conversationId, { type: "document.changed", content, source });
 }
 
 async function flushMemoryChanged(conversationId: string): Promise<void> {

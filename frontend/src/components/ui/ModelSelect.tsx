@@ -258,7 +258,7 @@ export function ModelSelect({
       </Combobox.InputGroup>
 
       <Combobox.Portal>
-        <Combobox.Positioner sideOffset={4} align="start">
+        <Combobox.Positioner sideOffset={4} align="start" className="z-[100]">
           <Combobox.Popup className="z-[100] w-[min(22rem,var(--available-width))] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
             {/* The two controls every list read shares: which provider's
                 catalogue is on screen, and whether undated models survive. */}
