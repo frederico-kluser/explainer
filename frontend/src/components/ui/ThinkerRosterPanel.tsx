@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ModelSelect } from "@/components/ui/ModelSelect";
 import * as api from "@/lib/api";
 import type {
+  ConfigTestEnvelope,
   ModelChoice,
   RosterEnvelope,
   RosterRole,
@@ -33,6 +34,32 @@ function rosterModelIds(roster: ThinkerRoster): string[] {
   return [...ids];
 }
 
+/** The wire key the test endpoint reports each config's verdict under. */
+function testConfigKey(choice: ModelChoice): string {
+  return `${choice.provider}::${choice.model}::${choice.effort ?? "default"}`;
+}
+
+/**
+ * The configs worth pinging, deduplicated under the same key the backend
+ * reports verdicts with — identical rows are ONE provider call, billed once.
+ */
+function uniqueConfigs(roster: ThinkerRoster): ModelChoice[] {
+  const seen = new Set<string>();
+  const unique: ModelChoice[] = [];
+  const choices = [
+    roster.master,
+    roster.planner,
+    ...roster.slots.map((slot) => slot.model),
+  ];
+  for (const choice of choices) {
+    const key = testConfigKey(choice);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(choice);
+  }
+  return unique;
+}
+
 /**
  * The roster of thinkers, editable.
  *
@@ -53,6 +80,9 @@ export function ThinkerRosterPanel() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState<ConfigTestEnvelope | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,7 +102,8 @@ export function ThinkerRosterPanel() {
   }, []);
 
   // A mount IS an open: the sheet that hosts this panel renders it only while
-  // open, so every open of the drawer fetches the roster afresh.
+  // open, so every open of the drawer fetches the roster afresh — and the
+  // connectivity-test state below starts null again with it.
   useEffect(() => {
     void load();
   }, [load]);
@@ -189,10 +220,29 @@ export function ThinkerRosterPanel() {
   );
 
   const handleSave = async () => {
-    if (!draft || saving) return;
-    setSaving(true);
+    if (!draft || saving || testing) return;
+
+    // The test is a diagnostic, not a gate: only a 400 — a config the server
+    // refuses to even try — stops the save. A broken network still saves,
+    // because the roster may be right and the test infra wrong.
+    setTesting(true);
+    setTestResults(null);
+    setTestError(null);
     setSaveError(null);
     setFeedback(null);
+    try {
+      setTestResults(await api.testConfigs(uniqueConfigs(draft)));
+    } catch (err) {
+      if (err instanceof api.ApiError && err.status === 400) {
+        setTestError(`Não foi possível testar: ${err.message}`);
+        setTesting(false);
+        return;
+      }
+      setTestError("Não foi possível testar a conectividade.");
+    }
+    setTesting(false);
+
+    setSaving(true);
     try {
       const next = await api.putRoster(draft);
       setEnvelope(next);
@@ -211,7 +261,7 @@ export function ThinkerRosterPanel() {
   };
 
   const handleReset = async () => {
-    if (saving) return;
+    if (saving || testing) return;
     setSaving(true);
     setSaveError(null);
     setFeedback(null);
@@ -253,99 +303,150 @@ export function ThinkerRosterPanel() {
     );
   }
 
-  return (
-    <div className="space-y-4 px-1 pb-2">
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        Quais modelos pensam, planejam os ângulos e escrevem a resposta. O
-        roster vale para todas as conversas.
+  const footer = (
+    <div className="space-y-2">
+      {testing && (
+        <p className="text-xs text-muted-foreground">Testando conectividade…</p>
+      )}
+      {testError && <p className="text-xs text-amber-500">{testError}</p>}
+      {testResults && (
+        <TestResultsReport results={testResults} configs={uniqueConfigs(draft)} />
+      )}
+      {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+      {feedback && !saveError && (
+        <p className="text-xs text-muted-foreground">{feedback}</p>
+      )}
+
+      <div className="flex items-center gap-2">
+        <Button
+          onClick={() => void handleSave()}
+          disabled={!dirty || saving || testing}
+          className="flex-1"
+        >
+          <Save className="mr-1.5 size-3.5" aria-hidden="true" />
+          {testing ? "Testando…" : saving ? "Salvando…" : "Salvar"}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (confirmReset) void handleReset();
+            else setConfirmReset(true);
+          }}
+          disabled={saving || testing}
+          className={cn(confirmReset && "border-destructive text-destructive")}
+          title={
+            confirmReset
+              ? "Clique de novo para confirmar"
+              : "Voltar para o roster padrão"
+          }
+        >
+          <RotateCcw className="mr-1.5 size-3.5" aria-hidden="true" />
+          {confirmReset ? "Confirmar" : "Padrão"}
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Avisos e modelos refletem o que está salvo no servidor — os avisos
+        são recalculados a cada salvamento.
       </p>
+    </div>
+  );
 
-      <RoleCard
-        label="Master"
-        hint="Lê o traço de todos os pensadores e escreve a resposta final."
-        choice={draft.master}
-        keep={keep}
-        warnings={warningsFor("master")}
-        onChoiceChange={(choice) => patchChoice("master", choice)}
-        onProviderChange={(provider) => patchProvider("master", provider)}
-      />
-
-      <RoleCard
-        label="Planner"
-        hint="Planeja os ângulos de cada rodada — um modelo pequeno basta."
-        choice={draft.planner}
-        keep={keep}
-        warnings={warningsFor("planner")}
-        onChoiceChange={(choice) => patchChoice("planner", choice)}
-        onProviderChange={(provider) => patchProvider("planner", provider)}
-      />
-
-      <div className="space-y-2">
-        <div>
-          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Pensadores
-          </p>
-          <p className="text-[11px] text-muted-foreground">
-            Desligar um pensador pula o turno dele — o modelo escolhido fica
-            guardado.
-          </p>
-        </div>
-
-        {draft.slots.map((slot) => (
-          <SlotCard
-            key={slot.index}
-            slot={slot}
-            keep={keep}
-            warnings={warningsFor("thinker", slot.index)}
-            onChoiceChange={(choice) => patchChoice(slot.index, choice)}
-            onProviderChange={(provider) =>
-              patchProvider(slot.index, provider)
-            }
-            onToggle={(enabled) => patchSlot(slot.index, { enabled })}
-            onAngleChange={(angle) => patchSlot(slot.index, { angle })}
-            onEffortChange={(effort) => patchSlotEffort(slot.index, effort)}
-          />
-        ))}
-      </div>
-
-      <div className="space-y-2 border-t border-border pt-3">
-        {saveError && <p className="text-xs text-destructive">{saveError}</p>}
-        {feedback && !saveError && (
-          <p className="text-xs text-muted-foreground">{feedback}</p>
-        )}
-
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={() => void handleSave()}
-            disabled={!dirty || saving}
-            className="flex-1"
-          >
-            <Save className="mr-1.5 size-3.5" aria-hidden="true" />
-            {saving ? "Salvando…" : "Salvar"}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              if (confirmReset) void handleReset();
-              else setConfirmReset(true);
-            }}
-            disabled={saving}
-            className={cn(confirmReset && "border-destructive text-destructive")}
-            title={
-              confirmReset
-                ? "Clique de novo para confirmar"
-                : "Voltar para o roster padrão"
-            }
-          >
-            <RotateCcw className="mr-1.5 size-3.5" aria-hidden="true" />
-            {confirmReset ? "Confirmar" : "Padrão"}
-          </Button>
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          Avisos e modelos refletem o que está salvo no servidor — os avisos
-          são recalculados a cada salvamento.
+  return (
+    <>
+      <div className="space-y-4 px-1 pb-2">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Quais modelos pensam, planejam os ângulos e escrevem a resposta. O
+          roster vale para todas as conversas.
         </p>
+
+        <RoleCard
+          label="Master"
+          hint="Lê o traço de todos os pensadores e escreve a resposta final."
+          choice={draft.master}
+          keep={keep}
+          warnings={warningsFor("master")}
+          onChoiceChange={(choice) => patchChoice("master", choice)}
+          onProviderChange={(provider) => patchProvider("master", provider)}
+        />
+
+        <RoleCard
+          label="Planner"
+          hint="Planeja os ângulos de cada rodada — um modelo pequeno basta."
+          choice={draft.planner}
+          keep={keep}
+          warnings={warningsFor("planner")}
+          onChoiceChange={(choice) => patchChoice("planner", choice)}
+          onProviderChange={(provider) => patchProvider("planner", provider)}
+        />
+
+        <div className="space-y-2">
+          <div>
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Pensadores
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              Desligar um pensador pula o turno dele — o modelo escolhido fica
+              guardado.
+            </p>
+          </div>
+
+          {draft.slots.map((slot) => (
+            <SlotCard
+              key={slot.index}
+              slot={slot}
+              keep={keep}
+              warnings={warningsFor("thinker", slot.index)}
+              onChoiceChange={(choice) => patchChoice(slot.index, choice)}
+              onProviderChange={(provider) =>
+                patchProvider(slot.index, provider)
+              }
+              onToggle={(enabled) => patchSlot(slot.index, { enabled })}
+              onAngleChange={(angle) => patchSlot(slot.index, { angle })}
+              onEffortChange={(effort) => patchSlotEffort(slot.index, effort)}
+            />
+          ))}
+        </div>
+
       </div>
+
+      {/* The footer is rendered by the panel itself — it is a CHILD of the
+          overlay, so no prop can reach the overlay's own footer slot from
+          here. Sticky to the scrollport bottom, it stays visible while the
+          body scrolls behind it. */}
+      <div className="sticky bottom-0 border-t border-border bg-background px-1 pt-3">
+        {footer}
+      </div>
+    </>
+  );
+}
+
+interface TestResultsReportProps {
+  results: ConfigTestEnvelope;
+  /** The unique configs this test was asked about, in send order. */
+  configs: ModelChoice[];
+}
+
+/** The verdicts of the connectivity test: one line per config, plus totals. */
+function TestResultsReport({ results, configs }: TestResultsReportProps) {
+  const counts = { ok: 0, error: 0, skipped: 0 };
+  for (const verdict of Object.values(results.results)) counts[verdict] += 1;
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-foreground">
+        {`✅ ${counts.ok} ok, ⚠️ ${counts.skipped} sem chave, ❌ ${counts.error} ${counts.error === 1 ? "erro" : "erros"}`}
+      </p>
+      {configs.map((config) => {
+        const key = testConfigKey(config);
+        const verdict = results.results[key];
+        if (!verdict) return null;
+        return (
+          <p key={key} className="text-[11px] leading-snug text-muted-foreground">
+            {verdict === "ok" ? "✅" : verdict === "skipped" ? "⚠️" : "❌"}{" "}
+            {config.provider} · {config.model}
+            {results.errors[key] ? ` — ${results.errors[key]}` : ""}
+          </p>
+        );
+      })}
     </div>
   );
 }

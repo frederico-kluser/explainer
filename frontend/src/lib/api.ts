@@ -17,6 +17,8 @@ import type {
   SourceSpec,
   RosterEnvelope,
   ThinkerRoster,
+  ConfigTestEnvelope,
+  ModelChoice,
 } from "@/types";
 
 // ----- Helpers -----
@@ -646,4 +648,21 @@ export async function putRoster(roster: ThinkerRoster): Promise<RosterEnvelope> 
 export async function resetRoster(): Promise<RosterEnvelope> {
   const response = await fetch("/api/thinkers/reset", { method: "POST" });
   return handleResponse<RosterEnvelope>(response);
+}
+
+/**
+ * Ping every unique config of the draft before it is saved, and report which
+ * answered.
+ *
+ * The backend dedupes under the same `${provider}::${model}::${effort}` key
+ * the UI keys rows with, so identical choices — master and slot 3 pointed at
+ * the same model — cost one provider call. A 400 names a config the server
+ * refuses to even try; the caller aborts the save on that, and treats every
+ * other failure as a diagnostic that does not block saving.
+ */
+export async function testConfigs(
+  configs: ModelChoice[],
+): Promise<ConfigTestEnvelope> {
+  const response = await postJSON("/api/thinkers/test", { configs });
+  return handleResponse<ConfigTestEnvelope>(response);
 }

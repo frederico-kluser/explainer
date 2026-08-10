@@ -509,6 +509,19 @@ export interface RosterEnvelope {
   warnings: RosterWarning[];
 }
 
+/**
+ * One verdict per unique config after `POST /api/thinkers/test`, keyed by
+ * `${provider}::${model}::${effort ?? "default"}` — the same string the UI
+ * dedupes with. `skipped` means the provider has no key, so there is nothing
+ * to try; `errors` carries the adapter's own message for `error` verdicts.
+ *
+ * Mirrors `ConfigTestEnvelope` in backend/src/routes/thinkers.ts.
+ */
+export interface ConfigTestEnvelope {
+  results: Record<string, "ok" | "error" | "skipped">;
+  errors: Record<string, string>;
+}
+
 // ---------------------------------------------------------------------------
 // The model catalogue — mirrors backend/src/services/model-catalog.ts
 // ---------------------------------------------------------------------------

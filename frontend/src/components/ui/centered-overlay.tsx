@@ -14,6 +14,11 @@ export interface CenteredOverlayProps {
   /** The heading, which is also the dialog's accessible name. */
   title: string;
   children?: ReactNode;
+  /**
+   * Rendered below the scrollable body, pinned to the bottom of the card —
+   * the one part of the modal that never scrolls away.
+   */
+  footer?: ReactNode;
 }
 
 /**
@@ -30,6 +35,7 @@ export function CenteredOverlay({
   onClose,
   title,
   children,
+  footer,
 }: CenteredOverlayProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -88,10 +94,18 @@ export function CenteredOverlay({
             </button>
           </div>
 
-          {/* Scrollable body */}
-          <div className="overflow-y-auto overscroll-contain px-4 py-4">
+          {/* Scrollable body — grows to fill the card, so the footer below it
+              stays pinned while the body scrolls. */}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
             {children}
           </div>
+
+          {/* Footer — outside the scroll container, always visible. */}
+          {footer && (
+            <div className="shrink-0 border-t border-border px-4 py-3">
+              {footer}
+            </div>
+          )}
         </div>
       </div>
     </>

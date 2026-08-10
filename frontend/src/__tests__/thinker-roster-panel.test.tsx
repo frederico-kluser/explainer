@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ThinkerRosterPanel } from "@/components/ui/ThinkerRosterPanel";
 import type {
+  ConfigTestEnvelope,
   ModelChoice,
   ProviderKeyStatus,
   RosterEnvelope,
@@ -70,6 +71,23 @@ function inputByAriaLabel(label: string): HTMLInputElement {
   );
   if (!found) throw new Error(`no input with aria-label "${label}"`);
   return found;
+}
+
+/** Marks the draft dirty without touching any model id, so the configs the
+ *  test endpoint receives are the stored roster's own. */
+async function editAngle(): Promise<void> {
+  const angle = container?.querySelector<HTMLInputElement>(
+    'input[placeholder="Ângulo próprio (opcional)"]',
+  );
+  if (!angle) throw new Error("no angle input");
+  const setter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value",
+  )!.set!;
+  await act(async () => {
+    setter.call(angle, "riscos");
+    angle.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 /** Sets a React-controlled select's value the way a user would. */
@@ -231,6 +249,16 @@ function installBackend(state: BackendState): ReturnType<typeof vi.fn> {
       current.roster = structuredClone(RESET_ROSTER);
       current.warnings = [];
       return jsonResponse(envelope(current.roster));
+    }
+    if (url.endsWith("/api/thinkers/test") && method === "POST") {
+      const body = JSON.parse(String(init?.body)) as { configs: ModelChoice[] };
+      const results: ConfigTestEnvelope["results"] = {};
+      const errors: ConfigTestEnvelope["errors"] = {};
+      for (const config of body.configs) {
+        const key = `${config.provider}::${config.model}::${config.effort ?? "default"}`;
+        results[key] = "ok";
+      }
+      return jsonResponse({ results, errors });
     }
     return new Response("", { status: 404 });
   });
@@ -453,5 +481,158 @@ describe("ThinkerRosterPanel", () => {
     // The draft survives: the operator can fix the problem and save again.
     expect(providerSelect("Provedor do master").value).toBe("deepseek");
     expect(buttonLabelled("Salvar").disabled).toBe(false);
+  });
+
+  it("pings every unique config before saving, deduplicated, then PUTs", async () => {
+    const fetchMock = installBackend({ roster: STORED_ROSTER, warnings: [] });
+    await mount(<ThinkerRosterPanel />);
+    await settle();
+
+    await editAngle();
+    await click(buttonLabelled("Salvar"));
+    await settle();
+
+    const testCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).endsWith("/api/thinkers/test") && init?.method === "POST",
+    );
+    if (!testCall) throw new Error("no test call");
+    const body = JSON.parse(String(testCall[1]?.body)) as {
+      configs: ModelChoice[];
+    };
+    // master (gpt-5.2) and planner+slots (gpt-5.2-mini): the roster's two
+    // distinct configs — the four identical slots are sent once, not four
+    // times.
+    expect(
+      body.configs.map(
+        (config) => `${config.provider}::${config.model}::${config.effort ?? "default"}`,
+      ),
+    ).toEqual(["openai::gpt-5.2::default", "openai::gpt-5.2-mini::default"]);
+
+    // The verdicts are on screen, and the save landed after the test.
+    expect(text()).toContain("✅ 2 ok");
+    expect(text()).toContain("Salvo.");
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "PUT"),
+    ).toBe(true);
+  });
+
+  it("shows 'Testando…' and keeps the save disabled while the test is pending", async () => {
+    let releaseTest!: (response: Response) => void;
+    const fetchMock = installBackend({ roster: STORED_ROSTER, warnings: [] });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/thinkers/test") && method === "POST") {
+        return new Promise<Response>((resolve) => {
+          releaseTest = resolve;
+        });
+      }
+      return original(input, init);
+    });
+
+    await mount(<ThinkerRosterPanel />);
+    await settle();
+    await editAngle();
+
+    await click(buttonLabelled("Salvar"));
+
+    expect(buttonLabelled("Testando…").disabled).toBe(true);
+    expect(text()).toContain("Testando conectividade…");
+
+    await act(async () => {
+      releaseTest(jsonResponse({ results: {}, errors: {} }));
+    });
+    await settle();
+
+    expect(text()).toContain("Salvo.");
+  });
+
+  it("shows the verdict per config and the totals after the test", async () => {
+    const fetchMock = installBackend({ roster: STORED_ROSTER, warnings: [] });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/thinkers/test") && method === "POST") {
+        return jsonResponse({
+          results: {
+            "openai::gpt-5.2::default": "ok",
+            "openai::gpt-5.2-mini::default": "skipped",
+          },
+          errors: { "openai::gpt-5.2-mini::default": "Sem chave configurada" },
+        });
+      }
+      return original(input, init);
+    });
+
+    await mount(<ThinkerRosterPanel />);
+    await settle();
+    await editAngle();
+    await click(buttonLabelled("Salvar"));
+    await settle();
+
+    expect(text()).toContain("✅ 1 ok, ⚠️ 1 sem chave, ❌ 0 erros");
+    expect(text()).toContain("✅ openai · gpt-5.2");
+    expect(text()).toContain("⚠️ openai · gpt-5.2-mini — Sem chave configurada");
+    // skipped is not an error: the save still lands.
+    expect(text()).toContain("Salvo.");
+  });
+
+  it("keeps the draft when the test refuses a config with 400", async () => {
+    const fetchMock = installBackend({ roster: STORED_ROSTER, warnings: [] });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/thinkers/test") && method === "POST") {
+        return jsonResponse(
+          { error: "configs[0].model must be a non-empty string." },
+          400,
+        );
+      }
+      return original(input, init);
+    });
+
+    await mount(<ThinkerRosterPanel />);
+    await settle();
+    await editAngle();
+    await click(buttonLabelled("Salvar"));
+    await settle();
+
+    expect(text()).toContain(
+      "Não foi possível testar: configs[0].model must be a non-empty string.",
+    );
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "PUT"),
+    ).toBe(false);
+    // The draft survives, so the operator can fix it and try again.
+    expect(buttonLabelled("Salvar").disabled).toBe(false);
+  });
+
+  it("warns but still saves when the test fails at the network level", async () => {
+    const fetchMock = installBackend({ roster: STORED_ROSTER, warnings: [] });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/api/thinkers/test") && method === "POST") {
+        throw new TypeError("Failed to fetch");
+      }
+      return original(input, init);
+    });
+
+    await mount(<ThinkerRosterPanel />);
+    await settle();
+    await editAngle();
+    await click(buttonLabelled("Salvar"));
+    await settle();
+
+    expect(text()).toContain("Não foi possível testar a conectividade.");
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "PUT"),
+    ).toBe(true);
+    expect(text()).toContain("Salvo.");
   });
 });
