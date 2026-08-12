@@ -24,6 +24,60 @@ um agente de código no repositório, avisa você em voz alta que mandou, **cont
 conversando**, e narra o resultado quando ele chega — normalmente um minuto
 depois, sem nunca ter travado a conversa.
 
+## Modos de conversa
+
+Uma conversa tem um **modo**, escolhido no momento em que ela é criada e fixo
+depois disso. O modo decide para que a conversa serve: qual é o papel do
+assistente, como ele conduz a conversa, quais ferramentas ele ganha, se precisa
+ou não de um material, e qual documento markdown fica aberto ao lado.
+
+| Modo | Para que serve | Precisa de material? | O documento na direita |
+|---|---|---|---|
+| **Conversa** | O comportamento de sempre: tirar dúvidas sobre um material | sim | **Anotações** — o assistente registra decisões, conclusões e pendências sozinho, enquanto vocês falam |
+| **Criar apresentação** | Montar o roteiro de uma apresentação, slide a slide | não | **Roteiro** — a ideia única, a estrutura, e cada slide com o que vai na tela, a animação, o que você fala e quanto tempo leva |
+
+O modo de apresentação não é um gerador de slides: é um parceiro de roteiro que
+**discorda de você**. Ele carrega o método (público antes de ideia, ideia antes
+de estrutura, estrutura antes de slide), as regras de slide que têm evidência
+atrás — uma afirmação por slide, nada de ler bullet em voz alta, animação só
+quando revela, mostra mudança ou dirige o olhar — a conta de quanto conteúdo
+cabe em 5, 10, 18, 30, 45 ou 60 minutos, e a lista de mitos que ele não repete
+(7x7, Mehrabian, estilos de aprendizagem). Quando você insiste depois de ouvir o
+motivo, ele registra que foi sua escolha e segue.
+
+O documento é **colaborativo de verdade**: o modelo escreve nele por ferramentas
+(`read_document`, `write_document`, `append_document`, `edit_document_section`),
+você escreve por cima na mesma tela, e toda escrita é transmitida por SSE — duas
+abas na mesma conversa veem a mesma coisa. A coluna arrasta pela borda esquerda,
+lembra a largura, e nunca passa de 60% da janela.
+
+### Um modo novo
+
+Modo é dado, não código espalhado. Um modo é **um arquivo em
+`backend/src/modes/` e uma linha em `modes/registry.ts`** — e mais nada:
+
+```ts
+export const REVISAO_MODE: ModeDefinition = {
+  id: "revisao",
+  label: "Revisão de texto",
+  description: "…",
+  icon: "FileText",          // lucide, resolvido contra uma allowlist na UI
+  requiresMaterial: true,
+  document: { title: "Marcações", placeholder: "…", template: "…", openByDefault: true },
+  toolNames: ["read_document", "edit_document_section"],
+  role: "# Role & Objective\n…",
+  flow: "# Conversation Flow\n…",
+  sections: (ctx) => [...],
+  greeting: () => null,
+};
+```
+
+O frontend não é tocado: o seletor, o título da coluna e a regra de "precisa de
+material" saem todos de `GET /api/modes`. O que um modo **não** pode mexer é no
+que faz o app ser ele mesmo — formato de fala, idioma, a regra de áudio
+inaudível e o preâmbulo de ferramentas ficam em `prompts.ts` e são iguais em
+todos os modos.
+
 ## Quickstart
 
 ```bash
@@ -220,9 +274,11 @@ O backend lê `.env` de `backend/` ou da raiz do repositório.
 | `GET` | `/api/costs/:convId` | — | Quanto a conversa custou, por origem |
 | `GET` | `/api/credits` | — | Saldo em OpenAI, OpenRouter e DeepSeek |
 | `GET`/`PATCH` | `/api/conversations/:id/settings` | `{ voice?, speed? }` | Voz e velocidade da conversa |
-| `GET`/`POST` | `/api/conversations` | — / `{ title }` | Lista / cria |
+| `GET` | `/api/modes` | — | Os modos que este servidor oferece, e qual é o padrão |
+| `GET`/`POST` | `/api/conversations` | — / `{ title, mode? }` | Lista / cria (o modo é gravado aqui e não muda depois) |
 | `GET`/`PATCH`/`DELETE` | `/api/conversations/:id` | — | Uma conversa |
 | `POST` | `/api/conversations/:id/messages` | `{ messages: [...] }` | Persiste turnos da transcrição |
+| `GET`/`PUT`/`DELETE` | `/api/conversations/:id/document` | `{ content }` | O markdown colaborativo da conversa |
 
 ## Arquitetura
 

@@ -25,7 +25,7 @@ down instead of left to be rediscovered.
 the Chat Completions shape, where everything but `type` nests under `function`.
 Sending the nested shape is accepted and gives the model **zero tools** — no
 error, just an assistant that can never search anything —
-`backend/src/tools/index.ts:8@cdb48364`.
+`backend/src/tools/index.ts:10@cdb48364`.
 
 ### Never ask for a response while one is running
 
@@ -33,13 +33,13 @@ error, just an assistant that can never search anything —
 *"Conversation already has an active response"* and the turn is lost. The hook
 tracks `activeResponseRef` and defers the request into `wantResponseRef`, which
 is drained on the next `response.done` —
-`frontend/src/hooks/useRealtimeSession.ts:1345@491de366`.
+`frontend/src/hooks/useRealtimeSession.ts:1362@491de366`.
 
 ### The tool-output loop stays synchronous
 
 Register each `call_id` in `pendingAcks` **before** sending its
 `functionOutputEvent`, and emit every output in one synchronous pass —
-`frontend/src/hooks/useRealtimeSession.ts:1443@42b3788c`. Insert an `await`
+`frontend/src/hooks/useRealtimeSession.ts:1460@42b3788c`. Insert an `await`
 inside that loop and the first acknowledgement drains the pending set to zero
 while later outputs are still unsent, so `flushAcks()` requests a response the
 model cannot yet answer. Run the tools in parallel first, then emit.
@@ -68,7 +68,7 @@ handler is installed once and a state read there would be a stale closure.
 
 - Model, voice, instructions and the tool list are fixed server-side at mint
   time, so a tampered browser can waste its own session and nothing more —
-  `backend/src/routes/realtime.ts:210@5926f442`.
+  `backend/src/routes/realtime.ts:216@5926f442`.
 - The ephemeral token lives ~10 minutes; the session itself is capped at 60.
 - The voice freezes once the session has emitted audio, so changing it needs a
   reconnect. `speed` can move mid-call via `session.update`.

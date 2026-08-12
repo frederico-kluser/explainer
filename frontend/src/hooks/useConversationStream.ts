@@ -42,6 +42,8 @@ export interface ConversationStreamHandlers {
   onMessages: (messages: LiveMessage[]) => void;
   onToolFinished: (event: LiveToolFinished) => void;
   onMemoryChanged: (eventCount: number) => void;
+  /** The conversation's markdown was written, here or on another screen. */
+  onDocumentChanged: (content: string, source: "user" | "assistant") => void;
   /** The transcript on screen may be missing turns. Fetch the conversation again. */
   onReset: () => void;
 }
@@ -98,6 +100,8 @@ export function useConversationStream(
       onMessages: (messages) => handlersRef.current.onMessages(messages),
       onToolFinished: (event) => handlersRef.current.onToolFinished(event),
       onMemoryChanged: (count) => handlersRef.current.onMemoryChanged(count),
+      onDocumentChanged: (content, source) =>
+        handlersRef.current.onDocumentChanged(content, source),
       onPresence: (event) => {
         const at = new Date().toISOString();
         setPresence((current) => applyPresenceEvent(current, event, at));

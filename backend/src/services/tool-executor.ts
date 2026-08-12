@@ -12,7 +12,15 @@ import {
   runDeepThink,
   runGenerateDiagram,
 } from "../tools/deliberation-tools.js";
+import {
+  DocumentValidationError,
+  runAppendDocument,
+  runEditDocumentSection,
+  runReadDocument,
+  runWriteDocument,
+} from "../tools/document-tools.js";
 import { toolsForSources } from "../tools/index.js";
+import { getConversationMode } from "./conversation-mode.js";
 import type { ResolvedSource, ToolName } from "../types/index.js";
 
 export interface ToolOutcome {
@@ -102,6 +110,14 @@ const MATERIAL_FREE_TOOLS = new Set<string>([
   "deep_think",
   "check_deep_think",
   "generate_diagram",
+  // The document belongs to the conversation, not to any material. A mode that
+  // opens the microphone with nothing attached — `presentation` is the first —
+  // would otherwise be told to add a repository in order to write its own
+  // notes, out loud, on its first turn.
+  "read_document",
+  "write_document",
+  "append_document",
+  "edit_document_section",
 ] satisfies ToolName[]);
 
 /**
@@ -146,11 +162,16 @@ export async function executeTool(
   conversationId: string,
 ): Promise<ToolOutcome> {
   const args = parseToolArguments(rawArguments);
-  const sources = await listSources(conversationId);
+  const [sources, mode] = await Promise.all([
+    listSources(conversationId),
+    getConversationMode(conversationId),
+  ]);
 
   if (sources.length === 0 && !MATERIAL_FREE_TOOLS.has(name)) return noMaterial();
 
-  const allowed = new Set(toolsForSources(sources).map((t) => t.name));
+  // The same call the mint made, with the same mode, so the allow-list here can
+  // never be narrower than the list the model was actually handed.
+  const allowed = new Set(toolsForSources(sources, mode).map((t) => t.name));
   if (!allowed.has(name as ToolName)) {
     return {
       output:
@@ -256,6 +277,30 @@ export async function executeTool(
 
     case "generate_diagram":
       return runGenerateDiagram(args, conversationId);
+
+    // The document runners validate their own arguments and throw
+    // `DocumentValidationError` rather than `ToolValidationError`, so the throw
+    // is turned into tool output here. A malformed edit has to reach the model
+    // as a sentence it can correct, not as an exception that ends the turn.
+    case "read_document":
+    case "write_document":
+    case "append_document":
+    case "edit_document_section":
+      try {
+        switch (name as ToolName) {
+          case "read_document":
+            return await runReadDocument(args, conversationId);
+          case "write_document":
+            return await runWriteDocument(args, conversationId);
+          case "append_document":
+            return await runAppendDocument(args, conversationId);
+          default:
+            return await runEditDocumentSection(args, conversationId);
+        }
+      } catch (err) {
+        if (err instanceof DocumentValidationError) return { output: err.message };
+        throw err;
+      }
 
     default: {
       const unknown: string = name;

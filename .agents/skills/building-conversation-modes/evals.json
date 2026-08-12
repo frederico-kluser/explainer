@@ -1,0 +1,58 @@
+{
+  "skill": "building-conversation-modes",
+  "verification_signal": "npm --prefix backend test -- src/__tests__/{modes,mode-routes,document-store,document-tools}.test.ts",
+  "cases": [
+    {
+      "id": "mode-suites-pass",
+      "type": "command",
+      "run": "npm --prefix backend test -- src/__tests__/modes.test.ts src/__tests__/mode-routes.test.ts src/__tests__/document-store.test.ts src/__tests__/document-tools.test.ts",
+      "expect_exit": 0
+    },
+    {
+      "id": "registry-is-the-only-list",
+      "type": "file_matches",
+      "file": "backend/src/modes/registry.ts",
+      "pattern": "export type ModeId = keyof typeof MODES",
+      "why": "the claim that adding a mode is one file plus one line rests on the id being derived from the map, not declared beside it"
+    },
+    {
+      "id": "frontend-enumerates-nothing",
+      "type": "file_matches",
+      "file": "frontend/src/components/ui/ModePicker.tsx",
+      "pattern": "listModes\\(\\)",
+      "why": "the modularity claim is false the moment the browser carries a list of its own"
+    },
+    {
+      "id": "frontend-holds-no-mode-id",
+      "type": "file_absent_match",
+      "file": "frontend/src/components/ui/ModePicker.tsx",
+      "pattern": "\"presentation\"",
+      "why": "the same claim from the other side: a literal id here is the copy that drifts when the third mode is added"
+    },
+    {
+      "id": "lock-wraps-the-unlocked-core",
+      "type": "file_matches",
+      "file": "backend/src/services/document-store.ts",
+      "pattern": "withDocumentLock\\(conversationId, \\(\\) => writeLocked",
+      "why": "the deadlock regression: a locked entry point that calls another locked entry point never answers"
+    },
+    {
+      "id": "partial-edits-go-through-one-lock",
+      "type": "file_matches",
+      "file": "backend/src/services/document-store.ts",
+      "pattern": "export async function updateDocument",
+      "why": "read-modify-write outside the lock silently loses whichever of the three writers landed in between"
+    },
+    {
+      "id": "mode-is-stripped-from-patch",
+      "type": "file_matches",
+      "file": "backend/src/routes/conversations.ts",
+      "pattern": "delete meta.mode",
+      "why": "the mode is frozen into the session token; a PATCH that changed it would leave the screen and the model disagreeing"
+    },
+    {
+      "id": "citations-fresh",
+      "type": "citations_fresh"
+    }
+  ]
+}

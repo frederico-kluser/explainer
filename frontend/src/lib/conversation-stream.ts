@@ -235,6 +235,17 @@ export function parseLiveEvent(raw: string): LiveEvent | null {
         ? { type: "floor.requested", client_id: request.client_id, name: request.name }
         : null;
     }
+    case "document.changed":
+      // An empty document is a real state — the user cleared it, or the model
+      // deleted it — so `content` is only rejected when it is not a string at
+      // all. `asText` answers null on an empty string, which would turn a clear
+      // into a frame the panel silently ignores.
+      if (typeof event.content !== "string") return null;
+      return {
+        type: "document.changed",
+        content: event.content,
+        source: event.source === "assistant" ? "assistant" : "user",
+      };
     case "history.reset":
       return { type: "history.reset", since: asCount(event.since) };
     default:
@@ -433,6 +444,12 @@ export interface LiveStreamDeps {
   onMessages: (messages: LiveMessage[]) => void;
   onToolFinished: (event: LiveToolFinished) => void;
   onMemoryChanged: (eventCount: number) => void;
+  /**
+   * The document changed somewhere. Carries who wrote it so the panel can leave
+   * the user's own keystrokes alone: the echo of a save this browser just made
+   * arrives here too.
+   */
+  onDocumentChanged: (content: string, source: "user" | "assistant") => void;
   onPresence: (event: LivePresenceEvent) => void;
   /**
    * The gap is not reconstructible and the transcript on screen may be missing
@@ -455,6 +472,9 @@ export function liveStreamHandler(deps: LiveStreamDeps): (raw: string) => void {
         return;
       case "memory.changed":
         deps.onMemoryChanged(event.event_count);
+        return;
+      case "document.changed":
+        deps.onDocumentChanged(event.content, event.source);
         return;
       case "presence.changed":
       case "floor.changed":

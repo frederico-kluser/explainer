@@ -1,5 +1,7 @@
 import { MERMAID_KINDS } from "../services/mermaid.js";
 import { MAX_THINKERS } from "../types/deep-tools.js";
+import { getMode } from "../modes/registry.js";
+import type { ModeDefinition } from "../modes/types.js";
 import type { ResolvedSource, ToolName } from "../types/index.js";
 
 /**
@@ -276,6 +278,121 @@ const GENERATE_DIAGRAM: RealtimeTool = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// The conversation's own document
+// ---------------------------------------------------------------------------
+//
+// Four tools over one markdown file per conversation. They are handed out by
+// the mode, not by the materials, and the descriptions carry the division of
+// labour between them because getting it wrong is expensive in both directions:
+// a model that reaches for `write_document` to change one line erases whatever
+// the user typed, and a model that never reaches for `edit_document_section`
+// pays for the whole document on every small change.
+
+const READ_DOCUMENT: RealtimeTool = {
+  type: "function",
+  name: "read_document",
+  description:
+    "Le o documento desta conversa, inteiro ou uma secao dele. Use antes de " +
+    "reescrever qualquer trecho que voce nao acabou de escrever — o usuario " +
+    "edita o mesmo documento e pode ter mudado alguma coisa.",
+  parameters: {
+    type: "object",
+    properties: {
+      section: {
+        type: "string",
+        description:
+          "Opcional: o titulo exato de uma secao, sem os #. Omita para ler tudo.",
+      },
+    },
+  },
+};
+
+const WRITE_DOCUMENT: RealtimeTool = {
+  type: "function",
+  name: "write_document",
+  description:
+    "SUBSTITUI o documento inteiro pelo conteudo enviado. Use apenas ao criar o " +
+    "documento do zero ou ao reorganizar tudo de proposito; para mudar um " +
+    "pedaco, use edit_document_section, que nao apaga o resto.",
+  parameters: {
+    type: "object",
+    properties: {
+      content: {
+        type: "string",
+        description: "O documento completo, em markdown.",
+      },
+    },
+    required: ["content"],
+  },
+};
+
+const APPEND_DOCUMENT: RealtimeTool = {
+  type: "function",
+  name: "append_document",
+  description:
+    "Acrescenta um trecho no fim do documento, sem tocar no que ja esta la. Use " +
+    "para adicionar um item novo — mais um slide, mais uma decisao, mais uma " +
+    "pendencia.",
+  parameters: {
+    type: "object",
+    properties: {
+      content: {
+        type: "string",
+        description: "O trecho a acrescentar, em markdown.",
+      },
+    },
+    required: ["content"],
+  },
+};
+
+const EDIT_DOCUMENT_SECTION: RealtimeTool = {
+  type: "function",
+  name: "edit_document_section",
+  description:
+    "Troca UMA secao do documento pelo conteudo novo, mantendo todo o resto " +
+    "intacto. E a forma normal de mexer no documento. Se a secao nao existir, " +
+    "ela e criada no fim.",
+  parameters: {
+    type: "object",
+    properties: {
+      section: {
+        type: "string",
+        description:
+          "O titulo exato da secao a trocar, sem os # (por exemplo: Slide 3 — a demo).",
+      },
+      content: {
+        type: "string",
+        description:
+          "O conteudo novo da secao, JA INCLUINDO a linha de titulo com os # " +
+          "no nivel certo.",
+      },
+    },
+    required: ["section", "content"],
+  },
+};
+
+const DOCUMENT_TOOLS: Record<string, RealtimeTool> = {
+  read_document: READ_DOCUMENT,
+  write_document: WRITE_DOCUMENT,
+  append_document: APPEND_DOCUMENT,
+  edit_document_section: EDIT_DOCUMENT_SECTION,
+};
+
+/**
+ * The tools a mode adds on top of what the materials grant.
+ *
+ * Resolved from names so `modes/` never carries a schema of its own — there is
+ * one registry of tool shapes, and the flat-schema trap has one place to be got
+ * right. A name with no definition here is dropped rather than thrown on: the
+ * cost of a typo should be one missing tool, not a session that will not mint.
+ */
+function modeTools(mode: ModeDefinition): RealtimeTool[] {
+  return mode.toolNames
+    .map((name) => DOCUMENT_TOOLS[name])
+    .filter((tool): tool is RealtimeTool => tool !== undefined);
+}
+
 /**
  * The tools that need no material at all.
  *
@@ -321,8 +438,18 @@ function deliberationTools(): RealtimeTool[] {
  * spec gets the repository toolkit, and the model is told which material each
  * tool can reach.
  */
-export function toolsForSources(sources: ResolvedSource[]): RealtimeTool[] {
-  if (sources.length === 0) return [WEB_SEARCH, ...deliberationTools()];
+export function toolsForSources(
+  sources: ResolvedSource[],
+  mode: ModeDefinition = getMode(undefined),
+): RealtimeTool[] {
+  // Appended last, and always in the mode's own declaration order: the session
+  // config is cached upstream by content, so the same conversation has to
+  // produce the same bytes on every reconnect.
+  const fromMode = modeTools(mode);
+
+  if (sources.length === 0) {
+    return [WEB_SEARCH, ...deliberationTools(), ...fromMode];
+  }
 
   const hasFiles = sources.some((source) => Boolean(source.root));
   const tools: RealtimeTool[] = [READ_SOURCE_DOC];
@@ -337,7 +464,7 @@ export function toolsForSources(sources: ResolvedSource[]): RealtimeTool[] {
     );
   }
 
-  tools.push(WEB_SEARCH, ...deliberationTools());
+  tools.push(WEB_SEARCH, ...deliberationTools(), ...fromMode);
 
   // Naming a material only makes sense when there is more than one to name.
   if (sources.length > 1) tools.unshift(LIST_MATERIALS);
@@ -357,4 +484,8 @@ export const ALL_TOOLS: RealtimeTool[] = [
   DEEP_THINK,
   CHECK_DEEP_THINK,
   GENERATE_DIAGRAM,
+  READ_DOCUMENT,
+  WRITE_DOCUMENT,
+  APPEND_DOCUMENT,
+  EDIT_DOCUMENT_SECTION,
 ];

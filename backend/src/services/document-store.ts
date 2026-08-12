@@ -95,6 +95,45 @@ export async function readDocument(
 }
 
 /**
+ * The write itself, with the lock ALREADY held.
+ *
+ * This exists because `withDocumentLock` is not reentrant, and cannot be: it
+ * chains each operation onto the previous one's completion, so a holder that
+ * calls a second locked function is waiting on a promise that only resolves
+ * when the holder returns. That is a deadlock with no timeout and no error —
+ * the request simply never answers — and it is exactly what `appendDocument`
+ * did by calling `writeDocument` from inside its own critical section.
+ *
+ * Every locked entry point below is therefore one `withDocumentLock` around
+ * calls to this, and never around another entry point.
+ */
+async function writeLocked(
+  conversationId: string,
+  content: string,
+): Promise<string> {
+  const dir = documentDir();
+  await ensureDir(dir);
+
+  const path = documentPath(conversationId);
+
+  let stored = content;
+  if (stored.length > DOCUMENT_MAX_CHARS) {
+    const cut = stored.length - DOCUMENT_MAX_CHARS;
+    stored = stored.slice(0, DOCUMENT_MAX_CHARS) + truncationMarker(cut);
+  }
+
+  // Avoid the write when nothing changed.
+  const current = await readDocument(conversationId);
+  if (current === stored) return stored;
+
+  const tmp = join(dir, `.tmp-${randomUUID()}.md`);
+  await writeFile(tmp, stored, "utf-8");
+  await rename(tmp, path);
+
+  return stored;
+}
+
+/**
  * Replace the whole document.
  *
  * Truncates at DOCUMENT_MAX_CHARS with a pt-BR marker. Skips the write when the
@@ -107,35 +146,33 @@ export async function writeDocument(
   conversationId: string,
   content: string,
 ): Promise<string> {
+  return withDocumentLock(conversationId, () => writeLocked(conversationId, content));
+}
+
+/**
+ * Read the document, transform it, and write the result — all inside one lock.
+ *
+ * The read-modify-write that every partial edit needs. Doing it as a
+ * `readDocument` followed by a `writeDocument` looks equivalent and is not:
+ * three writers reach this file — the model, this browser and any other screen
+ * on the same conversation — so between an unlocked read and its write another
+ * one lands and is silently overwritten.
+ *
+ * `transform` receives null when there is no document yet, so a caller can tell
+ * "empty" from "absent" and decide whether it is creating or editing.
+ */
+export async function updateDocument(
+  conversationId: string,
+  transform: (current: string | null) => string,
+): Promise<string> {
   return withDocumentLock(conversationId, async () => {
-    const dir = documentDir();
-    await ensureDir(dir);
-
-    const path = documentPath(conversationId);
-
-    let stored = content;
-    if (stored.length > DOCUMENT_MAX_CHARS) {
-      const cut = stored.length - DOCUMENT_MAX_CHARS;
-      stored = stored.slice(0, DOCUMENT_MAX_CHARS) + truncationMarker(cut);
-    }
-
-    // Avoid the write when nothing changed.
     const current = await readDocument(conversationId);
-    if (current === stored) return stored;
-
-    const tmp = join(dir, `.tmp-${randomUUID()}.md`);
-    await writeFile(tmp, stored, "utf-8");
-    await rename(tmp, path);
-
-    return stored;
+    return writeLocked(conversationId, transform(current));
   });
 }
 
 /**
  * Append content to the end of the document.
- *
- * Reads the current document (or starts from empty), concatenates with a
- * paragraph break, truncates, and writes back atomically.
  *
  * Returns the full stored text after the append.
  */
@@ -143,10 +180,9 @@ export async function appendDocument(
   conversationId: string,
   content: string,
 ): Promise<string> {
-  return withDocumentLock(conversationId, async () => {
-    const prev = (await readDocument(conversationId)) ?? "";
-    const separator = prev.length > 0 ? "\n\n" : "";
-    return writeDocument(conversationId, prev + separator + content);
+  return updateDocument(conversationId, (current) => {
+    const prev = current ?? "";
+    return prev.length > 0 ? `${prev}\n\n${content}` : content;
   });
 }
 

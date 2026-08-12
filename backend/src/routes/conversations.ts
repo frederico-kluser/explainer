@@ -9,7 +9,9 @@ import {
   appendMessages,
 } from "../services/storage.js";
 import { getSettings, setSettings, VOICES } from "../services/settings.js";
+import { initConversationMode } from "../services/conversation-mode.js";
 import { clearMemory } from "../services/memory.js";
+import { deleteDocument } from "../services/document-store.js";
 import { recordTurn } from "../services/memory-recorder.js";
 import {
   forgetConversation,
@@ -78,6 +80,13 @@ function pickPatchableFields(body: unknown): Partial<Conversation> {
     // Strip internally managed keys even when nested inside metadata.
     delete meta.summary;
     delete meta.summarized_count;
+    // The mode is chosen once, at creation, and frozen into the session token
+    // alongside the instructions and the tool list. A PATCH that changed it
+    // would leave a live call whose model believes it is doing one job while
+    // the screen says another, so the field is dropped rather than refused —
+    // an existing client that echoes the whole conversation back on a rename
+    // must not start failing.
+    delete meta.mode;
     patch.metadata = meta;
   }
 
@@ -104,7 +113,15 @@ router.post("/", async (req, res, next) => {
       throw err;
     }
     const conversation = await createConversation(title);
-    res.status(201).json(conversation);
+    // The one moment a mode may be set. `initConversationMode` also lays down
+    // the mode's document, so the sidebar has something to show before the
+    // first word is spoken. An unknown id falls back to the default rather than
+    // failing the create: a conversation is worth more than a typo.
+    const updated = await initConversationMode(conversation.id, req.body?.mode);
+    res.status(201).json({
+      ...conversation,
+      metadata: { ...conversation.metadata, mode: updated.id },
+    });
   } catch (err) {
     next(err);
   }
@@ -264,6 +281,10 @@ router.delete("/:id", async (req, res, next) => {
     // without this the trace of a deleted conversation — turns, tool arguments,
     // reflections — outlives it on disk forever. Absent memory is not an error.
     await clearMemory(req.params.id!);
+    // The collaborative document lives in its own directory too, so the same
+    // reasoning applies: without this, the notes and the presentation script of
+    // a deleted conversation outlive it on disk with nothing pointing at them.
+    await deleteDocument(req.params.id!);
     // Nobody is left to broadcast to, and holding a ring buffer plus a floor for
     // a conversation that no longer exists is a leak with no reader.
     forgetConversation(req.params.id!);

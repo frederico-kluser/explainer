@@ -32,7 +32,7 @@ A conversation holds at most six materials —
 `backend/src/services/source-store.ts:16@c3ba297c`. Re-adding one with the same
 origin replaces it, which is how a refresh is expressed. `list_materials` is
 only offered to the model when more than one material exists —
-`backend/src/tools/index.ts:343@81835297` — so a single-material conversation
+`backend/src/tools/index.ts:470@81835297` — so a single-material conversation
 never sees a tool it cannot use meaningfully.
 
 ### Path containment is the security boundary
@@ -66,7 +66,7 @@ because the model can ask for a tool that was never offered.
 
 A material's anchor document is truncated to 24 000 chars at resolve time, then
 the whole set shares a 40 000-char budget split evenly when the instructions are
-built — `backend/src/prompts.ts:134@46c0f3ba`. That budget lives in the session
+built — `backend/src/prompts.ts:132@46c0f3ba`. That budget lives in the session
 instructions, so it is re-billed on **every** response, not once. Raising it
 raises the price of the entire call.
 

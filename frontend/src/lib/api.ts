@@ -14,6 +14,7 @@ import type {
   RealtimeSessionToken,
   BrowseResult,
   MaterialsEnvelope,
+  ModesEnvelope,
   SourceSpec,
   RosterEnvelope,
   ThinkerRoster,
@@ -386,9 +387,36 @@ export async function listConversations(): Promise<Conversation[]> {
   return handleResponse<Conversation[]>(response);
 }
 
-export async function createConversation(title: string): Promise<Conversation> {
-  const response = await postJSON("/api/conversations", { title });
+/**
+ * Create a conversation in a mode.
+ *
+ * The mode is only ever sent here: it is frozen into the session token at mint
+ * time along with the instructions and the tool list, so there is no second
+ * call that changes it. An id the server does not know falls back to the
+ * default rather than failing the create.
+ */
+export async function createConversation(
+  title: string,
+  mode?: string,
+): Promise<Conversation> {
+  const response = await postJSON("/api/conversations", {
+    title,
+    ...(mode ? { mode } : {}),
+  });
   return handleResponse<Conversation>(response);
+}
+
+// ----- Modes -----
+
+/**
+ * The kinds of conversation this server offers.
+ *
+ * Fetched rather than hard-coded so a mode added in `backend/src/modes/` shows
+ * up on the picker without a change here.
+ */
+export async function listModes(): Promise<ModesEnvelope> {
+  const response = await fetch("/api/modes");
+  return handleResponse<ModesEnvelope>(response);
 }
 
 export async function getConversation(id: string): Promise<Conversation> {

@@ -87,6 +87,15 @@ export interface RealtimeSessionState {
    * `meta`, never in `output`, because anything in `output` is read out loud.
    */
   diagrams: MermaidDiagram[];
+  /**
+   * The conversation's collaborative markdown, or null while it is still being
+   * read. Kept here rather than in the panel because three writers reach it —
+   * this browser, the model, and anybody else with the conversation open — and
+   * the `/live` stream that carries the other two is owned by this hook.
+   */
+  documentContent: string | null;
+  /** Adopt the text the server stored, after this browser saved it. */
+  setDocumentContent: (content: string) => void;
   /** This session picked a previous conversation back up. */
   resumed: boolean;
   /** How many recorded events that resume was built from. */
@@ -1276,6 +1285,14 @@ export function useRealtimeSession(
   const [jobs, setJobs] = useState<AgentJob[]>([]);
   const [deepThinkJobs, setDeepThinkJobs] = useState<DeepThinkJob[]>([]);
   const [diagrams, setDiagrams] = useState<MermaidDiagram[]>([]);
+  /**
+   * The conversation's markdown, as the server last knew it.
+   *
+   * `null` means "not read yet" and `""` means "read, and empty" — the panel
+   * shows its empty state for both, but only the second one is safe to save
+   * over, so the two are not collapsed.
+   */
+  const [documentContent, setDocumentContent] = useState<string | null>(null);
   const [resumed, setResumed] = useState(false);
   const [memoryEvents, setMemoryEvents] = useState(0);
   const [sessionUsd, setSessionUsd] = useState(0);
@@ -1762,6 +1779,10 @@ export function useRealtimeSession(
     if (diagram) setDiagrams((previous) => appendDiagram(previous, diagram));
   }, []);
 
+  const applyLiveDocument = useCallback((content: string) => {
+    setDocumentContent(content);
+  }, []);
+
   const reloadHistory = useCallback(() => setHistoryToken((token) => token + 1), []);
 
   const { viewers, floor, floorRequest, noteFloor } = useConversationStream(
@@ -1775,6 +1796,11 @@ export function useRealtimeSession(
       // line report the present. What a change means here is that the file the
       // gallery is seeded from moved, so the gallery re-reads it.
       onMemoryChanged: reloadMemory,
+      // Adopted from every source, this browser's own save included. The panel
+      // is what decides whether to overwrite the textarea — it will not, while
+      // the caret is in it — so dropping the echo here would only make a second
+      // screen's edits arrive and this one's not.
+      onDocumentChanged: applyLiveDocument,
       onReset: reloadHistory,
     },
   );
@@ -1967,11 +1993,37 @@ export function useRealtimeSession(
     setJobs([]);
     setDeepThinkJobs([]);
     setDiagrams([]);
+    setDocumentContent(null);
     setResumed(false);
     setMemoryEvents(0);
     setSessionUsd(0);
     return () => disconnect();
   }, [conversationId, disconnect]);
+
+  // The document, read once per conversation. The stream keeps it current after
+  // that; this is the only thing that puts the existing one on screen, and it is
+  // the same reason the archived transcript is fetched — a first connection to
+  // `/live` replays nothing.
+  useEffect(() => {
+    if (!conversationId) return;
+
+    let cancelled = false;
+    void api
+      .getDocument(conversationId)
+      .then((content) => {
+        if (cancelled || convRef.current !== conversationId) return;
+        setDocumentContent(content ?? "");
+      })
+      .catch(() => {
+        // A conversation with no document answers null, not an error. Anything
+        // else leaves the panel on its empty state, which is recoverable by
+        // typing — and by the next `document.changed` frame.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
 
   /**
    * Put the conversation's archived turns on screen.
@@ -2053,6 +2105,8 @@ export function useRealtimeSession(
     jobs,
     deepThinkJobs,
     diagrams,
+    documentContent,
+    setDocumentContent,
     resumed,
     memoryEvents,
     sessionUsd,

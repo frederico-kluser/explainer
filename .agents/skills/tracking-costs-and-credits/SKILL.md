@@ -50,7 +50,7 @@ Hosted web search bills a flat fee per call on top of the model's own tokens.
 - DeepSeek reports a balance.
 - OpenAI reports nothing at all to a project key: `/v1/organization/costs` needs
   an **admin** key with `api.usage.read`, and `sk-proj-…` gets a 401 naming the
-  missing scope — `backend/src/services/credits.ts:118@09d25aa7`. The panel says
+  missing scope — `backend/src/services/credits.ts:135@09d25aa7`. The panel says
   so in words rather than showing a fabricated number, which is the honest
   behaviour and should stay.
 

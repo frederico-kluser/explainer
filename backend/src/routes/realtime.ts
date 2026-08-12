@@ -7,6 +7,7 @@ import {
   type RealtimeSessionConfig,
 } from "../services/openai.js";
 import { getSettings } from "../services/settings.js";
+import { getConversationMode } from "../services/conversation-mode.js";
 import { listSources } from "../services/source-store.js";
 import { executeTool, ToolValidationError } from "../services/tool-executor.js";
 import { toolsForSources } from "../tools/index.js";
@@ -207,8 +208,13 @@ router.post("/session", async (req: Request, res: Response) => {
     if (clientId && claim?.ok && !claim.alreadyMine) releaseFloor(conversation_id, clientId);
   };
 
+  // The mode is read before the material gate because it is the gate: a
+  // presentation is built out of the conversation itself, so refusing to mint
+  // until something is attached would make that mode impossible to start.
+  const mode = await getConversationMode(conversation_id);
+
   const sources = await listSources(conversation_id);
-  if (sources.length === 0) {
+  if (sources.length === 0 && mode.requiresMaterial) {
     // Nothing to talk about, so nothing to hold the microphone for. Leaving it
     // claimed would lock everyone else out of a conversation this caller was
     // just told it cannot connect to either.
@@ -230,13 +236,13 @@ router.post("/session", async (req: Request, res: Response) => {
   // session actually holds — `deep_think` and `check_deep_think` come and go
   // with `BRAVE_API_KEY` — and a Tools section written from anything but this
   // list would teach the model behaviour for a tool it was never given.
-  const tools = toolsForSources(sources);
+  const tools = toolsForSources(sources, mode);
   const toolNames = tools.map((tool) => tool.name);
 
   const session: RealtimeSessionConfig = {
     type: "realtime",
     model: REALTIME_MODEL,
-    instructions: buildInstructions(sources, resume, toolNames),
+    instructions: buildInstructions(sources, resume, toolNames, mode),
     output_modalities: ["audio"],
     audio: {
       input: {

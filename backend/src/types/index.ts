@@ -67,7 +67,15 @@ export type ToolName =
   | "check_pi_agent"
   | "deep_think"
   | "check_deep_think"
-  | "generate_diagram";
+  | "generate_diagram"
+  // The conversation's own markdown document. Granted by the mode rather than
+  // by the materials — these four read and write a file this conversation owns,
+  // so they are the first tools whose availability has nothing to do with what
+  // the conversation is pointed at.
+  | "read_document"
+  | "write_document"
+  | "append_document"
+  | "edit_document_section";
 
 export interface ToolCall {
   id: string;

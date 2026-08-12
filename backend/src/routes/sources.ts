@@ -8,6 +8,7 @@ import {
   removeSource,
 } from "../services/source-store.js";
 import { getConversation, updateConversation } from "../services/storage.js";
+import { getConversationMode } from "../services/conversation-mode.js";
 import { toolsForSources } from "../tools/index.js";
 import { greetingFor } from "../prompts.js";
 import { isUUID } from "../middleware/sandbox.js";
@@ -33,11 +34,20 @@ function summarize(source: ResolvedSource) {
   };
 }
 
-function envelope(sources: ResolvedSource[]) {
+/**
+ * The materials of a conversation, plus what they unlock.
+ *
+ * Reads the mode because both halves depend on it: the tool list a mode adds to
+ * is what the browser shows as available, and a mode may own the greeting
+ * outright. Asynchronous for that one read — the alternative was for each
+ * caller to pass a mode it would have had to fetch anyway.
+ */
+async function envelope(conversationId: string, sources: ResolvedSource[]) {
+  const mode = await getConversationMode(conversationId);
   return {
     materials: sources.map(summarize),
-    tools: toolsForSources(sources).map((tool) => tool.name),
-    greeting: greetingFor(sources),
+    tools: toolsForSources(sources, mode).map((tool) => tool.name),
+    greeting: greetingFor(sources, mode),
   };
 }
 
@@ -73,7 +83,10 @@ router.post("/", async (req, res, next) => {
       await updateConversation(conversation_id, { title: resolved.label });
     }
 
-    res.status(201).json({ ...envelope(sources), added: summarize(resolved) });
+    res.status(201).json({
+      ...(await envelope(conversation_id, sources)),
+      added: summarize(resolved),
+    });
   } catch (err) {
     if (err instanceof SourceError || err instanceof MaterialLimitError) {
       res.status(err.status).json({ error: err.message });
@@ -95,7 +108,7 @@ router.get("/:convId", async (req, res) => {
     res.status(400).json({ error: "Invalid conversation_id" });
     return;
   }
-  res.json(envelope(await listSources(convId)));
+  res.json(await envelope(convId, await listSources(convId)));
 });
 
 // DELETE /api/sources/:convId/:sourceId — drop one material
@@ -114,7 +127,7 @@ router.delete("/:convId/:sourceId", async (req, res) => {
     return;
   }
 
-  res.json(envelope(sources));
+  res.json(await envelope(convId, sources));
 });
 
 export default router;

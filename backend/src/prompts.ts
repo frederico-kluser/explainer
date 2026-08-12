@@ -1,3 +1,5 @@
+import { getMode } from "./modes/registry.js";
+import type { ModeDefinition } from "./modes/types.js";
 import type { ResolvedSource } from "./types/index.js";
 import type { MemoryResume } from "./types/deep-tools.js";
 
@@ -13,10 +15,12 @@ import type { MemoryResume } from "./types/deep-tools.js";
 //   - tool preambles, because a spoken line at the moment of the call is what
 //     hides the latency of the call.
 
-const ROLE_AND_OBJECTIVE = `# Role & Objective
-- Voce e o Explainer, um assistente de voz que conversa com uma pessoa para tirar TODAS as duvidas dela sobre um material especifico.
-- Sucesso NAO e dar uma resposta e encerrar. Sucesso e a pessoa entender de verdade.
-- Voce e curioso sobre o que ela ja sabe: quando a duvida estiver vaga, pergunte de volta antes de responder.`;
+// The Role and the Conversation Flow moved out of this file: they are the two
+// sections a mode replaces wholesale, and they now live next to the mode that
+// owns them in `modes/`. Everything still in here is shared by every mode on
+// purpose — the speech format, the language rule, the unclear-audio rule and
+// the tool preamble are what make this application itself rather than a prompt
+// template, and a mode that could rewrite them would be a second application.
 
 const PERSONALITY_AND_TONE = `# Personality & Tone
 ## Personality
@@ -119,12 +123,6 @@ const RULES = `# Instructions / Rules
 
 ## Honestidade
 - Se voce nao sabe e nenhuma ferramenta responde, diga que nao sabe. NAO INVENTE.`;
-
-const CONVERSATION_FLOW = `# Conversation Flow
-1. Abertura: uma frase se apresentando, dizendo qual material voce tem em maos, e uma pergunta sobre o que a pessoa quer entender.
-2. Duvida vaga: pergunte de volta para estreitar antes de gastar uma ferramenta.
-3. Duvida especifica: consulte a ferramenta, responda em duas ou tres frases, ofereca aprofundar.
-4. Fechamento de topico: confirme se ficou claro e pergunte qual a proxima duvida.`;
 
 // ---------------------------------------------------------------------------
 // Materials
@@ -318,28 +316,42 @@ export function buildInstructions(
   sources: ResolvedSource[],
   resume?: MemoryResume | null,
   toolNames: readonly string[] = [],
+  mode: ModeDefinition = getMode(undefined),
 ): string {
   const memory = resume ? [memorySection(resume)] : [];
+  const modeSections = mode.sections({ sources, toolNames });
 
   if (sources.length === 0) {
+    // Two different silences. A mode that needs a material and does not have
+    // one is broken until it gets one, and saying so is the only useful thing
+    // left. A mode that never needed one — a presentation is built out of the
+    // conversation itself — must not be told to go and find a repository.
+    const context = mode.requiresMaterial
+      ? "# Context\n- Nenhum material foi adicionado ainda. Peca ao usuario para adicionar um repositorio, colar um markdown ou incluir a documentacao do computador."
+      : "# Context\n- Esta conversa nao tem material anexado, e nao precisa ter. Trabalhe com o que a pessoa contar e pesquise na internet quando precisar de um fato que voce nao tem.\n- Se um material for adicionado no meio, ele passa a ser a fonte preferida para qualquer numero ou detalhe.";
+
     return [
-      ROLE_AND_OBJECTIVE,
+      mode.role,
       PERSONALITY_AND_TONE,
       SPEECH_FORMAT,
-      "# Context\n- Nenhum material foi adicionado ainda. Peca ao usuario para adicionar um repositorio, colar um markdown ou incluir a documentacao do computador.",
+      context,
+      toolsSection(toolNames),
       RULES,
+      mode.flow,
+      ...modeSections,
       ...memory,
     ].join("\n\n");
   }
 
   return [
-    ROLE_AND_OBJECTIVE,
+    mode.role,
     PERSONALITY_AND_TONE,
     SPEECH_FORMAT,
     materialsSection(sources),
     toolsSection(toolNames),
     RULES,
-    CONVERSATION_FLOW,
+    mode.flow,
+    ...modeSections,
     // After the flow on purpose: the memory section cancels its step 1, and the
     // later instruction is the one that wins.
     ...memory,
@@ -348,7 +360,15 @@ export function buildInstructions(
 }
 
 /** Shown in the UI before the session opens. */
-export function greetingFor(sources: ResolvedSource[]): string {
+export function greetingFor(
+  sources: ResolvedSource[],
+  mode: ModeDefinition = getMode(undefined),
+): string {
+  // A mode may own the line entirely — a presentation conversation opens on
+  // "quem é a plateia", not on a material it does not have.
+  const fromMode = mode.greeting(sources);
+  if (fromMode) return fromMode;
+
   if (sources.length === 0) return "Adicione um material para comecar.";
   if (sources.length === 1) {
     const only = sources[0]!;

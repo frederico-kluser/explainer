@@ -1,16 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileText } from "lucide-react";
+import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
 
 export interface DocumentPanelProps {
   conversationId: string | null;
   /** Server truth — the latest content known to the session hook. */
   content: string;
+  /**
+   * What to say while the document is empty. Comes from the mode, so a
+   * presentation conversation explains a script and a normal one explains
+   * notes, without this component knowing either exists.
+   */
+  placeholder?: string;
   /** Called when the user's edit was saved so the App can adopt the stored text. */
   onContentChange: (content: string) => void;
 }
+
+const DEFAULT_PLACEHOLDER =
+  "Nenhum documento ainda. Peça ao assistente para começar, ou escreva você — o primeiro texto salvo cria o documento.";
 
 // ---------------------------------------------------------------------------
 // Tiny markdown → HTML renderer (no dependency)
@@ -73,18 +82,26 @@ function renderMarkdown(text: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * A split-pane markdown editor + preview.
+ * The markdown, read or edited, one at a time.
  *
- * The user types on the left; a debounced PUT saves to the server. The right
- * side renders a simple markdown preview. When the model edits the document
- * (content changes from the outside), the textarea syncs — unless the user is
- * currently focused in it, in which case the update is deferred until blur.
+ * Reading and editing are two views rather than two halves of a split, and that
+ * is a consequence of where this lives: a sidebar is 300 to 700 pixels wide,
+ * and a split at that width gives each side less than a paragraph. Reading is
+ * the default because it is what the person does most — the assistant is the
+ * one writing.
+ *
+ * A debounced PUT saves the draft. When the document changes from the outside —
+ * the model wrote, or somebody on another screen did — the textarea adopts it,
+ * unless the caret is currently in it, in which case the update waits for blur
+ * rather than eating a sentence mid-word.
  */
 export function DocumentPanel({
   conversationId,
   content,
+  placeholder,
   onContentChange,
 }: DocumentPanelProps) {
+  const [view, setView] = useState<"read" | "edit">("read");
   const [draft, setDraft] = useState(content);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -158,32 +175,54 @@ export function DocumentPanel({
 
   const previewHtml = renderMarkdown(draft);
 
+  const empty = draft.trim().length === 0;
+
   return (
     <div className="flex h-full flex-col">
       {/* Status bar */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5">
-        <FileText className="size-3.5 text-muted-foreground" />
-        <span className="text-xs text-muted-foreground">
-          {draft.length.toLocaleString("pt-BR")} caracteres
+        <div
+          className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5"
+          role="tablist"
+          aria-label="Ver ou editar"
+        >
+          {(["read", "edit"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={view === value}
+              onClick={() => setView(value)}
+              className={cn(
+                "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+                view === value
+                  ? "bg-background text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {value === "read" ? "Ler" : "Editar"}
+            </button>
+          ))}
+        </div>
+
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {draft.length.toLocaleString("pt-BR")}
         </span>
+
         <span className="flex-1" />
+
         {saving && (
-          <span className="text-xs text-muted-foreground">Salvando...</span>
+          <span className="text-[11px] text-muted-foreground">Salvando…</span>
         )}
         {savedLabel && (
-          <span className="text-xs text-emerald-400">{savedLabel}</span>
+          <span className="text-[11px] text-emerald-400">{savedLabel}</span>
         )}
         {saveError && (
-          <span className="text-xs text-destructive">{saveError}</span>
+          <span className="text-[11px] text-destructive">{saveError}</span>
         )}
-        <span className="text-[10px] text-muted-foreground">
-          Markdown — o assistente edita junto com voce
-        </span>
       </div>
 
-      {/* Editor + Preview */}
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {/* Editor */}
+      {view === "edit" ? (
         <textarea
           value={draft}
           onChange={(e) => onChange(e.target.value)}
@@ -192,20 +231,25 @@ export function DocumentPanel({
           }}
           onBlur={onBlur}
           spellCheck={false}
-          placeholder={
-            content
-              ? undefined
-              : "Nenhum documento ainda. Peça ao assistente para criar um plano, ou comece a escrever — o primeiro texto salvo cria o documento."
-          }
-          className="min-h-0 flex-1 resize-none border-r border-border bg-transparent p-4 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground"
+          placeholder={placeholder ?? DEFAULT_PLACEHOLDER}
+          // 16px on a phone: iOS Safari zooms the page in when a field under
+          // 16px takes focus, and it never zooms back out.
+          className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-base text-foreground outline-none placeholder:text-muted-foreground md:text-sm"
         />
-
-        {/* Preview */}
+      ) : empty ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <p className="max-w-xs text-center text-sm text-muted-foreground">
+            {placeholder ?? DEFAULT_PLACEHOLDER}
+          </p>
+        </div>
+      ) : (
         <div
           className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-foreground"
+          // `renderMarkdown` escapes the document before it builds any tag, so
+          // nothing the model or the user writes can reach the DOM as markup.
           dangerouslySetInnerHTML={{ __html: previewHtml }}
         />
-      </div>
+      )}
     </div>
   );
 }

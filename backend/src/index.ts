@@ -10,6 +10,8 @@ import { accessKeyGate, loopbackOnly } from "./middleware/access-key.js";
 
 import conversationsRouter from "./routes/conversations.js";
 import memoryRouter from "./routes/memory.js";
+import documentRouter from "./routes/document.js";
+import modesRouter from "./routes/modes.js";
 import liveRouter from "./routes/live.js";
 import realtimeRouter from "./routes/realtime.js";
 import sourcesRouter from "./routes/sources.js";
@@ -114,7 +116,13 @@ app.use("/api/conversations", memoryRouter);
 // should be open, and `EventSource` sends the cookie on its own in same-origin,
 // so nothing has to repeat the key in a query string where logs would keep it.
 app.use("/api/conversations", liveRouter);
+// Third time, same prefix and same reason: the collaborative markdown is
+// addressed by the conversation that owns it.
+app.use("/api/conversations", documentRouter);
 app.use("/api/realtime", realtimeRouter);
+// What kinds of conversation exist. Served rather than compiled into the
+// browser so a mode added in `modes/registry.ts` reaches the picker on its own.
+app.use("/api/modes", modesRouter);
 app.use("/api/sources", sourcesRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/costs", costsRouter);

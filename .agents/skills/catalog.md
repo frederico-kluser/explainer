@@ -22,6 +22,7 @@ triggers below match; finish with `verifying-explainer-changes`.
 | `managing-conversation-materials` | material kinds, `pickSource` never failing, sandbox containment, tool gating, doc budget; persistence invariants in `references/` | `sources`, `source-store`, `sandbox`, `browse`, `storage`; a 403; the wrong repo answered | `npm --prefix backend test -- src/__tests__/{sandbox,sources,source-store}.test.ts` |
 | `dispatching-pi-agents` | read-only allowlist, `--no-approve`, one job per conversation, 180 s timeout, the `replay: true` rule | `agent-jobs`, `routes/agents.ts`, SSE, `dispatch_pi_agent`; a hung job; an answer spoken twice | `npm --prefix backend test -- src/__tests__/agent-jobs.test.ts` |
 | `tracking-costs-and-credits` | rate card, cached-token subtraction, silent `usd: 0` on an unknown model, three provider balance shapes | `pricing`, `costs`, `credits`, or any model id anywhere | `npm --prefix backend test -- src/__tests__/pricing.test.ts` |
+| `building-conversation-modes` | what a mode owns and what stays shared, the mode frozen at creation, `requiresMaterial` and the three places it reaches, the non-reentrant document lock, the prompt-section tool gate, the instruction budget | `backend/src/modes/**`, `document-store`, the markdown sidebar; a conversation behaving as the wrong kind; a document write that never answers | `npm --prefix backend test -- src/__tests__/{modes,mode-routes,document-store,document-tools}.test.ts` |
 
 ## Task
 

@@ -30,6 +30,8 @@ import { Button } from "@/components/ui/button";
 import { MobileTopBar } from "@/components/ui/MobileTopBar";
 import { ConversationsSheet } from "@/components/ui/ConversationsSheet";
 import { PanelsSheet } from "@/components/ui/PanelsSheet";
+import { DocumentSidebar } from "@/components/ui/DocumentSidebar";
+import { ModePicker } from "@/components/ui/ModePicker";
 import { SessionAlerts } from "@/components/ui/SessionAlerts";
 import { FirstRun } from "@/components/ui/FirstRun";
 import { ProviderKeysPrompt } from "@/components/ui/ProviderKeysPrompt";
@@ -47,6 +49,7 @@ import type {
   ConversationSettings,
   CostSummary,
   Material,
+  ModeSummary,
   ProviderCredit,
   SourceSpec,
 } from "@/types";
@@ -65,6 +68,14 @@ export function App() {
   const [greeting, setGreeting] = useState<string | null>(null);
   const [sourceBusy, setSourceBusy] = useState(false);
   const [settings, setSettings] = useState<ConversationSettings | null>(null);
+  /**
+   * The kinds of conversation this server offers, straight from `/api/modes`.
+   *
+   * Never a constant in this package: the picker, the sidebar's title and the
+   * "does this need a material" rule all read it, so a mode added on the server
+   * reaches all three without a line changing here.
+   */
+  const [modes, setModes] = useState<ModeSummary[]>([]);
   const [costs, setCosts] = useState<CostSummary | null>(null);
   const [credits, setCredits] = useState<ProviderCredit[]>([]);
   const [creditsLoading, setCreditsLoading] = useState(false);
@@ -96,6 +107,8 @@ export function App() {
     jobs,
     deepThinkJobs,
     diagrams,
+    documentContent,
+    setDocumentContent,
     resumed,
     memoryEvents,
     sessionUsd,
@@ -118,11 +131,37 @@ export function App() {
   const compact = useCompactLayout();
   const [navOpen, setNavOpen] = useState(false);
   const [panelsOpen, setPanelsOpen] = useState(false);
+  const [docOpen, setDocOpen] = useState(false);
+  const [modePickerOpen, setModePickerOpen] = useState(false);
   const [thinkersOpen, setThinkersOpen] = useState(false);
   const [firstRunDismissed, setFirstRunDismissed] = useState(false);
   // Session-only, like the setup gate's own flag: a reload asks again while
   // the keys are still missing, which is the honest cost of no storage.
   const [providerKeysDismissed, setProviderKeysDismissed] = useState(false);
+
+  // A conversation created before modes existed has no `metadata.mode`, and the
+  // server answers those with the first mode in its registry. Falling back to
+  // `modes[0]` here is that same rule, and it is why this never has to know
+  // which id the default carries.
+  const activeConversation =
+    conversations.find((c) => c.id === activeConvId) ?? null;
+  const storedModeId = activeConversation?.metadata?.mode;
+  const activeMode =
+    modes.find(
+      (mode) => typeof storedModeId === "string" && mode.id === storedModeId,
+    ) ??
+    modes[0] ??
+    null;
+
+  const modeDocument = activeMode?.document ?? null;
+  const needsMaterial = activeMode?.requires_material ?? true;
+
+  // Opening state belongs to the conversation, not to the session: switching to
+  // a presentation should show its script, and switching back to a normal
+  // conversation should not leave a notes pane the user never opened.
+  useEffect(() => {
+    setDocOpen(modeDocument?.open_by_default ?? false);
+  }, [activeConvId, modeDocument?.open_by_default]);
 
   const micState: MicButtonState =
     status === "connecting"
@@ -214,10 +253,13 @@ export function App() {
       if (ctx.cancelled) return;
 
       if (convs.length === 0) {
-        const newConv = await api.createConversation("Nova conversa");
-        if (ctx.cancelled) return;
-        setConversations([newConv]);
-        setActiveConvId(newConv.id);
+        // Nothing to open, so the first thing the app asks is the one question
+        // that cannot be changed later. Closing the picker without choosing
+        // creates the default conversation — see `closeModePicker`, which is
+        // what keeps an empty install from opening to a dead screen.
+        setConversations([]);
+        setActiveConvId(null);
+        setModePickerOpen(true);
       } else {
         setConversations(convs);
         if (convs[0]) setActiveConvId(convs[0].id);
@@ -254,6 +296,22 @@ export function App() {
   useEffect(() => {
     void refreshCredits();
   }, [refreshCredits]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listModes()
+      .then((envelope) => {
+        if (!cancelled) setModes(envelope.modes);
+      })
+      .catch(() => {
+        // An empty list is the safe failure: no sidebar and no picker, and the
+        // app behaves exactly as it did before modes existed.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Reloading a conversation has to bring back its source, its settings and its
   // ledger — otherwise the connect button refuses with no visible reason.
@@ -312,19 +370,46 @@ export function App() {
   const creatingRef = useRef(false);
 
   // ── Conversation CRUD ─────────────────────────────────────────
-  const handleCreate = useCallback(async () => {
-    if (creatingRef.current) return;
-    creatingRef.current = true;
-    try {
-      const newConv = await api.createConversation("Nova conversa");
-      setConversations((prev) => [newConv, ...prev]);
-      setActiveConvId(newConv.id);
-    } catch {
-      showError("Erro ao criar conversa.");
-    } finally {
-      creatingRef.current = false;
-    }
-  }, [showError]);
+  const createInMode = useCallback(
+    async (modeId?: string) => {
+      if (creatingRef.current) return;
+      creatingRef.current = true;
+      try {
+        const newConv = await api.createConversation("Nova conversa", modeId);
+        setConversations((prev) => [newConv, ...prev]);
+        setActiveConvId(newConv.id);
+      } catch {
+        showError("Erro ao criar conversa.");
+      } finally {
+        creatingRef.current = false;
+      }
+    },
+    [showError],
+  );
+
+  /**
+   * Creating a conversation is choosing a mode, so the button opens the picker
+   * rather than creating anything. The mode is frozen into the session token at
+   * mint time, which is why this is the only moment it can be decided.
+   */
+  const handleCreate = useCallback(() => {
+    setModePickerOpen(true);
+  }, []);
+
+  const chooseMode = useCallback(
+    (modeId: string) => {
+      setModePickerOpen(false);
+      void createInMode(modeId);
+    },
+    [createInMode],
+  );
+
+  const closeModePicker = useCallback(() => {
+    setModePickerOpen(false);
+    // Dismissing with nothing on screen would leave the app with no
+    // conversation and no obvious way back into one.
+    if (conversations.length === 0) void createInMode();
+  }, [conversations.length, createInMode]);
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -710,6 +795,12 @@ export function App() {
             runningJobs={runningJobs.length}
             onOpenConversations={() => setNavOpen(true)}
             onOpenPanels={() => setPanelsOpen(true)}
+            {...(modeDocument
+              ? {
+                  documentTitle: modeDocument.title,
+                  onOpenDocument: () => setDocOpen(true),
+                }
+              : {})}
           />
         )}
 
@@ -850,7 +941,7 @@ export function App() {
                   {greeting ?? "Adicione um material"}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  {materials.length > 0
+                  {materials.length > 0 || !needsMaterial
                     ? "Clique no botão abaixo e comece a falar. Eu escuto, respondo em voz e uso ferramentas quando preciso."
                     : "Aponte para um repositório do GitHub ou uma pasta desta máquina, cole um markdown, ou inclua a documentação do computador. Pode somar quantos quiser."}
                 </p>
@@ -885,7 +976,10 @@ export function App() {
                 state={micState}
                 onConnect={() => void connect()}
                 onDisconnect={disconnect}
-                disabled={materials.length === 0}
+                // A presentation is built out of the conversation itself, so a
+                // mode that declared it needs no material must not be held
+                // behind one the server would not ask for either.
+                disabled={materials.length === 0 && needsMaterial}
               />
             </div>
 
@@ -936,6 +1030,29 @@ export function App() {
           )}
         </div>
       </main>
+
+      {/* The mode's document, when it keeps one. A flex sibling of `main` on a
+          desktop — which is what lets it take width from the transcript instead
+          of covering it — and a full overlay on a phone, where there is no
+          width to share. */}
+      {modeDocument && (
+        <DocumentSidebar
+          conversationId={activeConvId}
+          title={modeDocument.title}
+          placeholder={modeDocument.placeholder}
+          content={documentContent ?? ""}
+          onContentChange={setDocumentContent}
+          open={docOpen}
+          onOpenChange={setDocOpen}
+          compact={compact}
+        />
+      )}
+
+      <ModePicker
+        open={modePickerOpen}
+        onClose={closeModePicker}
+        onChoose={chooseMode}
+      />
 
       {/* ── The two drawers ─────────────────────────────────────── */}
       {compact && (

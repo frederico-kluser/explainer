@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, MoreHorizontal } from "lucide-react";
+import { FileText, Menu, MoreHorizontal } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,13 @@ export interface MobileTopBarProps {
   runningJobs: number;
   onOpenConversations: () => void;
   onOpenPanels: () => void;
+  /**
+   * The mode's document, when it keeps one. Absent — a mode with no document —
+   * the button is not rendered rather than rendered and disabled: a phone has
+   * three tap targets across the top and one of them cannot be dead weight.
+   */
+  documentTitle?: string;
+  onOpenDocument?: () => void;
 }
 
 /** 44px, the smallest target a thumb hits reliably. */
@@ -37,6 +44,8 @@ export function MobileTopBar({
   runningJobs,
   onOpenConversations,
   onOpenPanels,
+  documentTitle,
+  onOpenDocument,
 }: MobileTopBarProps) {
   return (
     <header
@@ -80,6 +89,17 @@ export function MobileTopBar({
             "conectando"
           )}
         </span>
+      )}
+
+      {documentTitle && onOpenDocument && (
+        <button
+          type="button"
+          onClick={onOpenDocument}
+          className={TAP_TARGET}
+          aria-label={documentTitle}
+        >
+          <FileText className="size-5" />
+        </button>
       )}
 
       <button

@@ -212,6 +212,13 @@ export type LiveEvent =
   | { type: "floor.changed"; holder: string | null; name: string | null }
   /** A viewer asked the holder for the microphone. */
   | { type: "floor.requested"; client_id: string; name: string }
+  /**
+   * The conversation's markdown document was written, by the model or by
+   * somebody on another screen. Carries the whole document rather than a patch:
+   * it is capped at 100k characters server-side, and a diff protocol between
+   * three writers is a bug surface this feature does not need.
+   */
+  | { type: "document.changed"; content: string; source: "user" | "assistant" }
   /** The replay gap fell out of the ring buffer: refetch the conversation. */
   | { type: "history.reset"; since: number };
 
@@ -321,6 +328,37 @@ export interface Conversation {
   updated_at: string;
   messages?: Message[];
   metadata?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Conversation modes — mirrors backend/src/modes/types.ts
+// ---------------------------------------------------------------------------
+
+/**
+ * One kind of conversation, as `GET /api/modes` describes it.
+ *
+ * Nothing in this package enumerates modes. The picker renders whatever the
+ * server sends and the sidebar takes its title and its empty state from
+ * `document`, so a mode added in `backend/src/modes/registry.ts` appears here
+ * without a line changing.
+ */
+export interface ModeSummary {
+  id: string;
+  label: string;
+  description: string;
+  /** A `lucide-react` icon name, resolved against an allowlist in the picker. */
+  icon: string;
+  requires_material: boolean;
+  document: {
+    title: string;
+    placeholder: string;
+    open_by_default: boolean;
+  } | null;
+}
+
+export interface ModesEnvelope {
+  modes: ModeSummary[];
+  default: string;
 }
 
 export interface RealtimeSessionToken {

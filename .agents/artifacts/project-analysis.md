@@ -175,9 +175,9 @@ Ranked by how expensive a mistake in each area is, and by how badly the
 knowledge is inferable from the code alone.
 
 1. **Realtime protocol contract** — flat tool schema (nesting silently yields
-   zero tools, no error — `backend/src/tools/index.ts:8@cdb48364`); never
+   zero tools, no error — `backend/src/tools/index.ts:10@cdb48364`); never
    `response.create` while one is active
-   (`frontend/src/hooks/useRealtimeSession.ts:1345@491de366`); the ack-gate loop
+   (`frontend/src/hooks/useRealtimeSession.ts:1362@491de366`); the ack-gate loop
    must stay synchronous with `pendingAcks.add` before the send; both
    `conversation.item.added` and `.created` must be accepted
    (`frontend/src/lib/realtime.ts:95@2623ae7a`); the Realtime API has no hosted

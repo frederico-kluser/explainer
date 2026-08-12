@@ -47,6 +47,7 @@ function liveDeps(): {
   messages: LiveMessage[][];
   tools: unknown[];
   memory: number[];
+  documents: Array<{ content: string; source: string }>;
   presence: unknown[];
   resets: number[];
   send: ReturnType<typeof vi.fn>;
@@ -55,6 +56,7 @@ function liveDeps(): {
   const messages: LiveMessage[][] = [];
   const tools: unknown[] = [];
   const memory: number[] = [];
+  const documents: Array<{ content: string; source: string }> = [];
   const presence: unknown[] = [];
   const resets: number[] = [];
   const send = vi.fn();
@@ -64,13 +66,25 @@ function liveDeps(): {
     onMessages: (batch: LiveMessage[]) => messages.push(batch),
     onToolFinished: (event: unknown) => tools.push(event),
     onMemoryChanged: (count: number) => memory.push(count),
+    onDocumentChanged: (content: string, source: string) =>
+      documents.push({ content, source }),
     onPresence: (event: unknown) => presence.push(event),
     onReset: (since: number) => resets.push(since),
     send,
     requestResponse,
   } as unknown as LiveStreamDeps;
 
-  return { deps, messages, tools, memory, presence, resets, send, requestResponse };
+  return {
+    deps,
+    messages,
+    tools,
+    memory,
+    documents,
+    presence,
+    resets,
+    send,
+    requestResponse,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +284,7 @@ describe("the live stream never feeds the model", () => {
         meta: { diagram: { id: "d1", kind: "flowchart", source: "flowchart TD", caption: "" } },
       },
       { type: "memory.changed", event_count: 12 },
+      { type: "document.changed", content: "# Roteiro\n", source: "assistant" },
       {
         type: "presence.changed",
         viewers: 2,
@@ -293,6 +308,9 @@ describe("the live stream never feeds the model", () => {
     expect(harness.messages).toHaveLength(1);
     expect(harness.tools).toHaveLength(1);
     expect(harness.memory).toEqual([12]);
+    expect(harness.documents).toEqual([
+      { content: "# Roteiro\n", source: "assistant" },
+    ]);
     expect(harness.presence).toHaveLength(3);
     expect(harness.resets).toEqual([41]);
   });

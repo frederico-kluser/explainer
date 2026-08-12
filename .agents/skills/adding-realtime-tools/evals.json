@@ -19,8 +19,22 @@
       "id": "executor-gates-by-source",
       "type": "file_matches",
       "file": "backend/src/services/tool-executor.ts",
-      "pattern": "toolsForSources\\(sources\\)",
-      "why": "step 3 claims the executor re-checks the gate; the model can ask for a tool it was never offered"
+      "pattern": "toolsForSources\\(sources, mode\\)",
+      "why": "step 3 claims the executor re-checks the gate; the model can ask for a tool it was never offered. The second argument is the point: the gate has two axes since modes exist, and re-checking with only the sources would refuse every tool a mode granted"
+    },
+    {
+      "id": "executor-resolves-the-mode",
+      "type": "file_matches",
+      "file": "backend/src/services/tool-executor.ts",
+      "pattern": "getConversationMode",
+      "why": "entailment for the mode axis in step 2 — the executor has to read the same mode the mint used, or its allow-list is narrower than the list the model was handed"
+    },
+    {
+      "id": "modes-name-tools-they-do-not-define",
+      "type": "file_matches",
+      "file": "backend/src/modes/types.ts",
+      "pattern": "toolNames",
+      "why": "step 1 says tools/index.ts is the single registry of schemas; a mode that shipped its own would be a second place to get the flat shape wrong"
     },
     {
       "id": "arguments-normalised-not-trusted",
