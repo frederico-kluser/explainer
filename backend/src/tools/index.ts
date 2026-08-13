@@ -161,7 +161,10 @@ const DISPATCH_PI_AGENT: RealtimeTool = {
       material: MATERIAL_PARAM,
       context: {
         type: "string",
-        description: "Opcional: o que ja se sabe, para o agente nao repetir trabalho.",
+        description:
+          "Opcional: nuances que NAO estao na conversa. O servidor anexa " +
+          "automaticamente os ultimos momentos da conversa e os materiais; use " +
+          "este campo so para o que voce julgar que nao aparece la.",
       },
     },
     required: ["question"],

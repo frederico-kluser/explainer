@@ -173,6 +173,12 @@ function spoken(candidate: string, fallback: string, where: string): string {
 export async function runDeepThink(
   args: Record<string, unknown>,
   conversationId: string,
+  /**
+   * The conversation block from `research-context.ts`, built once by
+   * tool-executor for every research tool call. The model never sees it, so no
+   * tool description promises it.
+   */
+  context?: string,
 ): Promise<ToolOutcome> {
   const scenario = textArg(args, "scenario");
   if (!scenario) {
@@ -191,6 +197,7 @@ export async function runDeepThink(
     const job = await dispatchDeepThink({
       conversationId,
       scenario,
+      ...(context ? { context } : {}),
       ...(reflection ? { reflection } : {}),
       ...(thinkerCount !== undefined ? { thinkerCount } : {}),
     });

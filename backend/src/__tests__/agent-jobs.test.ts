@@ -64,9 +64,69 @@ emit({
   mod = await import("../services/agent-jobs.js");
 });
 
+// The caps the prompt is built against, pinned by their exported names where
+// they exist and by value otherwise — see the why-comments in agent-jobs.ts.
+const MAX_PROMPT_CHARS = 8_000;
+
 afterAll(() => {
   delete process.env.PI_BIN;
   rmSync(workdir, { recursive: true, force: true });
+});
+
+describe("buildPrompt", () => {
+  it("caps the context section at MAX_CONTEXT_CHARS without touching the question", async () => {
+    const done = waitFor((e) => e.type === "done");
+
+    const job = mod.dispatchAgentJob({
+      conversationId: CONV,
+      prompt: "P".repeat(5_000),
+      cwd: workdir,
+      context: "C".repeat(20_000),
+    });
+    await done;
+
+    const prompt = mod.getJob(job.id)?.prompt ?? "";
+    const contextPart = prompt.slice(
+      prompt.indexOf("Contexto: ") + "Contexto: ".length,
+      prompt.indexOf("\n\nPergunta: "),
+    );
+    expect(contextPart.length).toBeLessThanOrEqual(mod.MAX_CONTEXT_CHARS);
+    // The question is the model's own phrasing, so it survives in full: the
+    // context must not crowd it out of the budget.
+    expect(prompt).toContain(`Pergunta: ${"P".repeat(5_000)}`);
+  });
+
+  it("caps the question itself at MAX_PROMPT_CHARS", async () => {
+    const done = waitFor((e) => e.type === "done");
+
+    const job = mod.dispatchAgentJob({
+      conversationId: CONV,
+      prompt: "P".repeat(20_000),
+      cwd: workdir,
+    });
+    await done;
+
+    const prompt = mod.getJob(job.id)?.prompt ?? "";
+    expect(prompt).toContain(`Pergunta: ${"P".repeat(MAX_PROMPT_CHARS)}`);
+    expect(prompt).not.toContain("P".repeat(MAX_PROMPT_CHARS + 1));
+  });
+
+  it("puts the context before the question", async () => {
+    const done = waitFor((e) => e.type === "done");
+
+    const job = mod.dispatchAgentJob({
+      conversationId: CONV,
+      prompt: "qual o bug?",
+      cwd: workdir,
+      context: "o modulo de cobranca",
+    });
+    await done;
+
+    const prompt = mod.getJob(job.id)?.prompt ?? "";
+    expect(prompt.indexOf("Contexto: o modulo de cobranca")).toBeLessThan(
+      prompt.indexOf("Pergunta: qual o bug?"),
+    );
+  });
 });
 
 describe("dispatchAgentJob", () => {

@@ -861,6 +861,71 @@ describe("dispatchDeepThink", () => {
     expect(done.synthesis).toContain("Resumo do que ficou");
   });
 
+  it("hands the conversation context to the planner, the thinkers and the synthesiser", async () => {
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload(
+            '[{"angle":"evidencia","prompt":"p"},{"angle":"risco","prompt":"p"}]',
+          );
+        case "thinker":
+          return textPayload(`Pensamento sobre ${angleOf(thinkerPrompt(body))}.`);
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "devo migrar o banco?",
+      context: "O usuario acabou de dizer que o prazo e curto.",
+      thinkerCount: 2,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    // Planner + both thinkers + the synthesiser — every stage that re-words the
+    // scenario also carries the conversation block.
+    const carrying = requests.filter((b) =>
+      firstUserText(b).includes("Contexto da conversa:"),
+    );
+    expect(carrying).toHaveLength(4);
+    for (const body of carrying) {
+      expect(firstUserText(body)).toContain("O usuario acabou de dizer que o prazo e curto.");
+    }
+    // The scenario and reflection still ride along, in every stage.
+    expect(firstUserText(carrying[0]!)).toContain("Cenario: devo migrar o banco?");
+  });
+
+  it("caps the attached conversation context at its own budget", async () => {
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload('[{"angle":"evidencia","prompt":"p"}]');
+        case "thinker":
+          return textPayload("Pensamento curto.");
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "cenario curto",
+      // The cap is MAX_CONTEXT_CHARS in deep-think.ts; the round must not paste
+      // a raw caller string into every stage's prompt.
+      context: "c".repeat(10_000),
+      thinkerCount: 1,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    for (const body of requests) {
+      const match = /Contexto da conversa: (c+)/.exec(firstUserText(body));
+      if (match) expect(match[1]!.length).toBeLessThanOrEqual(4_000);
+    }
+  });
+
   it("rejects an empty scenario", async () => {
     await expect(
       mod.dispatchDeepThink({ conversationId: randomUUID(), scenario: "   ", searchFn }),

@@ -26,7 +26,19 @@ function piBin(): string {
 }
 const READ_ONLY_TOOLS = "read,glob,grep,find,ls";
 const DEFAULT_TIMEOUT_MS = Number(process.env.PI_TIMEOUT_MS) || 180_000;
-const MAX_PROMPT_CHARS = 4_000;
+// The question is the model's own phrasing and the whole point of the run, so
+// it must not be the casualty when the context section grows; 8 000 characters
+// is a ceiling, not a target — a spoken question is a few hundred.
+const MAX_PROMPT_CHARS = 8_000;
+/**
+ * How much of the context section may carry, in characters.
+ *
+ * The server now attaches the conversation block automatically; 6 000 leaves
+ * the model's own `context` argument room on top of the ~3 000-character block
+ * without letting the prompt grow without bound. Billed once per run, not per
+ * response, so generosity here is cheap.
+ */
+export const MAX_CONTEXT_CHARS = 6_000;
 const MAX_RESULT_CHARS = 12_000;
 const MAX_JOBS_RETAINED = 100;
 
@@ -138,8 +150,13 @@ function buildPrompt({ prompt, context }: DispatchOptions): string {
     "Brasil, em texto corrido, sem markdown, no maximo dois paragrafos curtos. " +
     "Cite caminhos de arquivo quando ajudar.";
 
-  return context
-    ? `${preamble}\n\nContexto: ${context}\n\nPergunta: ${question}`
+  // The conversation block and the model's own context share the same cap: the
+  // block arrives already bounded, but the model's `context` argument is its
+  // own words and can be long.
+  const contextText = context?.trim().slice(0, MAX_CONTEXT_CHARS);
+
+  return contextText
+    ? `${preamble}\n\nContexto: ${contextText}\n\nPergunta: ${question}`
     : `${preamble}\n\nPergunta: ${question}`;
 }
 

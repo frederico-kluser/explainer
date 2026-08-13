@@ -81,6 +81,14 @@ function roundTimeoutMs(): number {
 
 const MAX_SCENARIO_CHARS = 4_000;
 const MAX_REFLECTION_CHARS = 4_000;
+// The conversation block rides every stage of the round — planner, each thinker
+// and the synthesiser — so each character is billed once per stage, not once.
+// The caps above stay put for the same reason: a spoken scenario rarely reaches
+// a thousand characters, so the headroom would be paid for on every call.
+// 4 000 is a backstop for callers that pass a raw string; the block from
+// research-context.ts is already capped below it, so its marker-based
+// truncation always survives untouched.
+const MAX_CONTEXT_CHARS = 4_000;
 /** How much of one thinker's trace reaches the synthesiser's prompt. */
 const MAX_TRACE_CHARS = 3_000;
 const MAX_SYNTHESIS_CHARS = 12_000;
@@ -173,6 +181,11 @@ export interface DeepThinkOptions {
   scenario: string;
   /** What the user has already concluded, so the thinkers argue with it. */
   reflection?: string;
+  /**
+   * The conversation block from `research-context.ts`, so the thinkers know
+   * what was just said instead of reasoning from the scenario alone.
+   */
+  context?: string;
   /** Clamped into 1..MAX_THINKERS; omitted, DEEP_THINK_THINKERS decides. */
   thinkerCount?: number;
   /** Injected so a round can be exercised without the network. */
@@ -282,11 +295,12 @@ async function runRound(
   warnUnkeyedProviders(roster, enabledSlots);
 
   const reflection = (options.reflection ?? "").trim().slice(0, MAX_REFLECTION_CHARS);
+  const context = (options.context ?? "").trim().slice(0, MAX_CONTEXT_CHARS);
   const search = options.searchFn ?? braveSearch;
   const signal = controller.signal;
 
   try {
-    const planned = await plan(roster.planner, job.scenario, reflection, count, signal);
+    const planned = await plan(roster.planner, job.scenario, reflection, count, signal, context);
     round.spent.usd += planned.usd;
     if (job.status !== "running") return;
 
@@ -309,7 +323,7 @@ async function runRound(
     }));
     setActivity(job, `pensando em ${specs.length} frentes`);
 
-    const context: ThinkerContext = { job, round, reflection, search, signal };
+    const thinkerContext: ThinkerContext = { job, round, reflection, context, search, signal };
 
     await mapWithConcurrency(specs, thinkerConcurrency(), async (spec, index) => {
       const slot = job.thinkers[index];
@@ -320,7 +334,7 @@ async function runRound(
 
       let outcome: Awaited<ReturnType<typeof think>>;
       try {
-        outcome = await think(spec, context, enabledSlots[index]!.model);
+        outcome = await think(spec, thinkerContext, enabledSlots[index]!.model);
       } catch {
         // Only an abort escapes `think`; the round is already finishing, and
         // whatever this thinker paid for is on `round.spent` regardless.
@@ -346,7 +360,7 @@ async function runRound(
     }
 
     setActivity(job, "sintetizando as conclusoes");
-    const synthesised = await synthesise(roster.master, job, reflection, signal);
+    const synthesised = await synthesise(roster.master, job, reflection, context, signal);
     round.spent.usd += synthesised.usd;
     if (job.status !== "running") return;
 
@@ -428,6 +442,7 @@ async function plan(
   reflection: string,
   count: number,
   signal: AbortSignal,
+  context: string,
 ): Promise<{ specs: ThinkerSpec[]; usd: number }> {
   const instructions =
     `Voce esta organizando uma rodada de pensamento profundo com ${count} pensadores independentes.\n` +
@@ -435,6 +450,7 @@ async function plan(
     "parecidos desperdicam a rodada inteira, entao facam-nos deliberadamente distintos entre si: " +
     "evidencia, risco, custo, contraposicao, premissa, consequencia, prazo, medicao.\n\n" +
     `Cenario: ${scenario}\n` +
+    (context ? `Contexto da conversa: ${context}\n` : "") +
     (reflection ? `Reflexao de quem perguntou: ${reflection}\n` : "") +
     `\nResponda APENAS com um array JSON de ${count} objetos, sem texto em volta e sem markdown. ` +
     'Cada objeto tem exatamente duas chaves: "angle" (rotulo curto em portugues, no maximo tres ' +
@@ -539,6 +555,7 @@ interface ThinkerContext {
   job: DeepThinkJob;
   round: Round;
   reflection: string;
+  context: string;
   search: SearchFn;
   signal: AbortSignal;
 }
@@ -594,7 +611,7 @@ async function runThinker(
   choice: ModelChoice,
   tally: ThinkerTally,
 ): Promise<Partial<ThinkerResult>> {
-  const { job, round, reflection, search, signal } = context;
+  const { job, round, reflection, context: conversationContext, search, signal } = context;
   const scenario = job.scenario;
   const budget = searchBudget();
   // What the searches returned. Which of these the thinker actually leaned on is
@@ -609,6 +626,7 @@ async function runThinker(
         `Voce e um dos varios pensadores olhando o MESMO cenario, cada um por um angulo diferente. ` +
         `O seu angulo e: ${spec.angle}.\n\n` +
         `Cenario: ${scenario}\n` +
+        (conversationContext ? `Contexto da conversa: ${conversationContext}\n` : "") +
         (reflection ? `Reflexao de quem perguntou: ${reflection}\n` : "") +
         `\nSua tarefa sob esse angulo: ${spec.prompt}\n\n` +
         `Voce pode usar a ferramenta brave_search no maximo ${budget} vezes; use quando um fato, ` +
@@ -796,6 +814,7 @@ async function synthesise(
   choice: ModelChoice,
   job: DeepThinkJob,
   reflection: string,
+  context: string,
   signal: AbortSignal,
 ): Promise<{ text: string; usd: number }> {
   const usable = job.thinkers.filter((t) => t.status === "done" && t.thinking);
@@ -808,6 +827,7 @@ async function synthesise(
     "Voce recebeu o raciocinio completo de varios pensadores que olharam o mesmo cenario por " +
     "angulos diferentes. Produza UMA resposta consolidada.\n\n" +
     `Cenario: ${job.scenario}\n` +
+    (context ? `Contexto da conversa: ${context}\n` : "") +
     (reflection ? `Reflexao de quem perguntou: ${reflection}\n` : "") +
     (missing.length
       ? `\nAviso: ${missing.length} de ${job.thinkers.length} pensadores falharam; trabalhe com os que sobraram.\n`

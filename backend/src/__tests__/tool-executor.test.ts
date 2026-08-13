@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { ResolvedSource } from "../types/index.js";
+import type { DispatchOptions } from "../services/agent-jobs.js";
+import type { Conversation, ResolvedSource } from "../types/index.js";
 
 // The store reads and writes conversation JSON on disk; the executor's job is
 // routing, so the source is injected instead of persisted.
 const currentSource = { value: null as ResolvedSource | null };
+// Same for the conversation: research-context reads it through storage, and a
+// fixture keeps the routing tests off the real data directory.
+const currentConversation = { value: null as Conversation | null };
 
 vi.mock("../services/source-store.js", async () => {
   // pickSource is pure resolution logic worth exercising for real; only the
@@ -18,6 +22,40 @@ vi.mock("../services/source-store.js", async () => {
     addSource: async () => [],
     removeSource: async () => [],
     forgetSources: () => {},
+  };
+});
+
+// The conversation file is read by research-context.ts whenever a research tool
+// fires; the fixture controls what the block carries.
+vi.mock("../services/storage.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/storage.js")>(
+    "../services/storage.js",
+  );
+  return {
+    ...actual,
+    getConversation: async () => currentConversation.value,
+  };
+});
+
+// dispatch_pi_agent would spawn a real `pi` process; the job factory is a spy
+// so the wiring under test is the context assembly, not the spawn.
+vi.mock("../services/agent-jobs.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/agent-jobs.js")>(
+    "../services/agent-jobs.js",
+  );
+  return {
+    ...actual,
+    dispatchAgentJob: vi.fn(
+      (options: { conversationId: string; prompt: string; cwd: string }) => ({
+        id: "job-1",
+        conversation_id: options.conversationId,
+        prompt: options.prompt,
+        cwd: options.cwd,
+        status: "running",
+        activity: "iniciando o agente",
+        started_at: new Date().toISOString(),
+      }),
+    ),
   };
 });
 
@@ -43,6 +81,8 @@ const { parseToolArguments, executeTool, ToolValidationError } = await import(
   "../services/tool-executor.js"
 );
 const { ALL_TOOLS, toolsForSources } = await import("../tools/index.js");
+const { MAX_CONTEXT_CHARS } = await import("../services/agent-jobs.js");
+const agentJobs = await import("../services/agent-jobs.js");
 const { MERMAID_KINDS } = await import("../services/mermaid.js");
 const { MAX_THINKERS } = await import("../types/deep-tools.js");
 const deliberation = await import("../tools/deliberation-tools.js");
@@ -63,6 +103,17 @@ function repoSource(): ResolvedSource {
   return { ...markdownSource(), id: "mat-2", kind: "repo", label: "Um repo", root: "/tmp" };
 }
 
+function conversationWith(messages: Conversation["messages"]): Conversation {
+  return {
+    id: CONV,
+    title: "Uma conversa",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    messages,
+    attachments: [],
+  };
+}
+
 function names(tools: { name: string }[]): string[] {
   return tools.map((tool) => tool.name);
 }
@@ -73,6 +124,7 @@ const REAL_BRAVE_KEY = process.env.BRAVE_API_KEY;
 
 beforeEach(() => {
   currentSource.value = null;
+  currentConversation.value = null;
   vi.clearAllMocks();
   process.env.BRAVE_API_KEY = "test-key";
 });
@@ -157,9 +209,78 @@ describe("the deliberation tools reach their handlers", () => {
     expect(deliberation.runDeepThink).toHaveBeenCalledWith(
       { scenario: "migrar o banco" },
       CONV,
+      expect.stringContaining("# Contexto da conversa"),
     );
     expect(deliberation.checkDeepThink).not.toHaveBeenCalled();
     expect(deliberation.runGenerateDiagram).not.toHaveBeenCalled();
+  });
+
+  it("hands the research handler the conversation block, materials included", async () => {
+    currentSource.value = repoSource();
+    currentConversation.value = conversationWith([
+      {
+        id: "m1",
+        role: "user",
+        content: "Preciso decidir sobre a migracao do banco.",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    await executeTool("deep_think", '{"scenario":"migrar o banco"}', CONV);
+
+    const block = vi.mocked(deliberation.runDeepThink).mock.calls[0]?.[2] ?? "";
+    expect(block).toContain("1. Um repo (repo)");
+    expect(block).toContain("Preciso decidir sobre a migracao do banco.");
+    expect(block).toContain("usuario: Preciso decidir");
+  });
+
+  it("sends the conversation block and the model's own context to the pi agent", async () => {
+    currentSource.value = repoSource();
+    currentConversation.value = conversationWith([
+      {
+        id: "m1",
+        role: "user",
+        content: "O modulo de cobranca esta lento.",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await executeTool(
+      "dispatch_pi_agent",
+      '{"question":"onde esta o gargalo?","context":"o usuario suspeita do cache"}',
+      CONV,
+    );
+
+    expect(result.meta).toMatchObject({ job_id: "job-1" });
+    expect(agentJobs.dispatchAgentJob).toHaveBeenCalledTimes(1);
+    const options: Partial<DispatchOptions> =
+      vi.mocked(agentJobs.dispatchAgentJob).mock.calls[0]?.[0] ?? {};
+    expect(options.prompt).toBe("onde esta o gargalo?");
+    // The server's block first, the model's nuance after, in one context field.
+    expect(options.context).toContain("O modulo de cobranca esta lento.");
+    expect(options.context).toContain("o usuario suspeita do cache");
+    expect(options.context!.indexOf("O modulo de cobranca")).toBeLessThan(
+      options.context!.indexOf("o usuario suspeita"),
+    );
+  });
+
+  it("caps the combined pi context at MAX_CONTEXT_CHARS", async () => {
+    currentSource.value = repoSource();
+    currentConversation.value = conversationWith([]);
+
+    const huge = "n".repeat(20_000);
+    await executeTool(
+      "dispatch_pi_agent",
+      JSON.stringify({ question: "onde esta?", context: huge }),
+      CONV,
+    );
+
+    const options: Partial<DispatchOptions> =
+      vi.mocked(agentJobs.dispatchAgentJob).mock.calls[0]?.[0] ?? {};
+    expect(options.context!.length).toBeLessThanOrEqual(MAX_CONTEXT_CHARS);
+    // The conversation block survives the cap: the model's context must not
+    // crowd the automatic block out of the prompt.
+    expect(options.context).toContain("# Contexto da conversa");
   });
 
   it("routes check_deep_think with no job_id and no material", async () => {
@@ -335,6 +456,17 @@ describe("the published schemas", () => {
     const check = tool("check_deep_think");
     expect(check.parameters.properties.job_id).toBeDefined();
     expect(check.parameters.required).toBeUndefined();
+  });
+
+  it("promises automatic conversation context on dispatch_pi_agent, nothing more", () => {
+    const agent = tool("dispatch_pi_agent");
+    const description =
+      (agent.parameters.properties.context as { description?: string } | undefined)
+        ?.description ?? "";
+    // The server attaches the conversation by itself, so the field is for what
+    // is not in it — and the promise must not outgrow the wiring.
+    expect(description).toContain("anexa automaticamente");
+    expect(description).toContain("NAO estao na conversa");
   });
 
   it("publishes MERMAID_KINDS as the enum of generate_diagram.kind", () => {

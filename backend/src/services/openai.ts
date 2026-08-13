@@ -214,10 +214,15 @@ export interface WebSearchResult {
  * Returns prose plus the `url_citation` annotations, because the model on the
  * other end is going to *speak* this: a synthesised answer with two or three
  * named sources reads aloud far better than ten raw search hits.
+ *
+ * `context` is the conversation block from `research-context.ts`: the synthesis
+ * model answers `query` alone today, so a question that only makes sense
+ * against what was just said (a follow-up, a correction) comes back generic.
+ * The block is billed once per call, so it can ride along free.
  */
 export async function webSearch(
   query: string,
-  { timeoutMs = 45_000 }: { timeoutMs?: number } = {},
+  { timeoutMs = 45_000, context }: { timeoutMs?: number; context?: string } = {},
 ): Promise<WebSearchResult> {
   const payload = await request<ResponsesPayload>(
     "/responses",
@@ -229,7 +234,9 @@ export async function webSearch(
       max_output_tokens: 900,
       input:
         "Pesquise na web e responda de forma curta e objetiva, em portugues do Brasil, " +
-        "em no maximo cinco frases, citando as fontes.\n\nPergunta: " +
+        "em no maximo cinco frases, citando as fontes.\n\n" +
+        (context ? `Contexto da conversa: ${context}\n\n` : "") +
+        "Pergunta: " +
         query,
     },
     timeoutMs,

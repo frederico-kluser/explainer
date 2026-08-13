@@ -1,4 +1,10 @@
-import { AgentJobError, dispatchAgentJob, getJob } from "./agent-jobs.js";
+import {
+  AgentJobError,
+  MAX_CONTEXT_CHARS,
+  dispatchAgentJob,
+  getJob,
+} from "./agent-jobs.js";
+import { buildResearchContext } from "./research-context.js";
 import { listSources, pickSource } from "./source-store.js";
 import {
   listSourceFiles,
@@ -249,6 +255,7 @@ export async function executeTool(
         source,
         requireString(args, "question", name),
         optionalString(args, "context", name),
+        await buildResearchContext(conversationId, sources),
       );
     }
 
@@ -270,7 +277,7 @@ export async function executeTool(
     // The three deliberation handlers own their own validation and never throw,
     // so there is nothing to pull apart here and nothing to catch.
     case "deep_think":
-      return runDeepThink(args, conversationId);
+      return runDeepThink(args, conversationId, await buildResearchContext(conversationId, sources));
 
     case "check_deep_think":
       return checkDeepThink(args, conversationId);
@@ -321,6 +328,7 @@ function dispatchAgent(
   source: ResolvedSource,
   question: string,
   context: string | undefined,
+  conversationContext: string,
 ): ToolOutcome {
   if (!source.root) {
     return {
@@ -332,11 +340,18 @@ function dispatchAgent(
   }
 
   try {
+    // The server's block comes first, the model's own nuances second, and the
+    // pair shares the cap `buildPrompt` also enforces — the model's `context`
+    // argument must not crowd the conversation block out of the prompt.
+    const finalContext = [conversationContext, context]
+      .filter((part): part is string => Boolean(part))
+      .join("\n\n")
+      .slice(0, MAX_CONTEXT_CHARS);
     const job = dispatchAgentJob({
       conversationId,
       prompt: question,
       cwd: source.root,
-      ...(context ? { context } : {}),
+      ...(finalContext ? { context: finalContext } : {}),
     });
     return {
       output:

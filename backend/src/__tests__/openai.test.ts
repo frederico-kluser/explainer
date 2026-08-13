@@ -211,3 +211,39 @@ describe("completeText", () => {
     expect(priceTextResponse(completion.model, completion.usage)).toBeGreaterThan(0);
   });
 });
+
+describe("webSearch", () => {
+  it("attaches the conversation context before the question when given one", async () => {
+    stubOpenAI({
+      model: openai.SEARCH_MODEL,
+      usage: { input_tokens: 100, output_tokens: 20 },
+      output: [message("Segundo o site tal, o valor atual e vinte reais.")],
+    });
+
+    const result = await openai.webSearch("quanto custa hoje?", {
+      context: "O usuario esta em Sao Paulo e pergunta sobre o plano mensal.",
+    });
+
+    const input = String(lastBody.input);
+    expect(input).toContain(
+      "Contexto da conversa: O usuario esta em Sao Paulo e pergunta sobre o plano mensal.",
+    );
+    // The conversation comes first; the question is what the search answers.
+    expect(input.indexOf("Contexto da conversa")).toBeLessThan(input.indexOf("Pergunta:"));
+    expect(result.text).toContain("Segundo o site tal");
+  });
+
+  it("keeps the plain query when no context is given", async () => {
+    stubOpenAI({
+      model: openai.SEARCH_MODEL,
+      usage: {},
+      output: [],
+    });
+
+    await openai.webSearch("quanto custa hoje?");
+
+    const input = String(lastBody.input);
+    expect(input).not.toContain("Contexto da conversa");
+    expect(input).toContain("Pergunta: quanto custa hoje?");
+  });
+});
