@@ -29,6 +29,7 @@ import type {
   BraveResult,
   DeepThinkEvent,
   DeepThinkJob,
+  WebSearchEvent,
   FloorRequest,
   FloorSnapshot,
   LiveMessage,
@@ -432,6 +433,21 @@ export function isDeepThinkEvent(event: SessionStreamEvent): event is DeepThinkE
 }
 
 /**
+ * Which half of the stream a web-search event belongs to.
+ *
+ * Sibling of `isDeepThinkEvent`, for the same reason: a `web_search_*` event
+ * must never reach the agent-job fold, where its unknown `type` would fall
+ * through into the error branch and invent a phantom pi card.
+ */
+export function isWebSearchEvent(event: SessionStreamEvent): event is WebSearchEvent {
+  return (
+    event.type === "web_search_activity" ||
+    event.type === "web_search_done" ||
+    event.type === "web_search_error"
+  );
+}
+
+/**
  * Whether this event is the server catching a new stream up on the past.
  *
  * Replays repopulate the cards and stop there. Injecting one makes the model
@@ -440,7 +456,7 @@ export function isDeepThinkEvent(event: SessionStreamEvent): event is DeepThinkE
  * this app produces and the longest thing it could read out.
  */
 export function isReplay(event: SessionStreamEvent): boolean {
-  return event.type !== "activity" && event.type !== "deep_think_activity"
+  return event.type !== "activity" && event.type !== "deep_think_activity" && event.type !== "web_search_activity"
     ? event.replay === true
     : false;
 }
@@ -791,6 +807,7 @@ export function sessionStreamHandler(deps: SessionStreamDeps): (raw: string) => 
     if (typeof event.job_id !== "string" || event.job_id === "") return;
 
     if (isDeepThinkEvent(event)) handleDeepThinkEvent(event, deps, settled);
+    else if (isWebSearchEvent(event)) return; // wired in onda2-websync-frontend
     else handleAgentJobEvent(event, deps);
   };
 }
