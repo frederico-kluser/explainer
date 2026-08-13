@@ -7,6 +7,7 @@ import {
   sessionStreamHandler,
   type SessionStreamDeps,
 } from "@/hooks/useRealtimeSession";
+import { userTextEvent } from "@/lib/realtime";
 import type { AgentJob, DeepThinkJob, TranscriptEntry, WebSearchJob } from "@/types";
 
 // The suite has no jsdom, so a React hook cannot be rendered here. Everything
@@ -516,5 +517,340 @@ describe("applyWebSearchEvent", () => {
 
     expect(jobs[0]?.cost_usd).toBeUndefined();
     expect(jobs[0]?.result).toBe(RESULT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The fold, arriving at the end instead of the beginning
+// ---------------------------------------------------------------------------
+
+describe("applyWebSearchEvent with no card to fold into", () => {
+  it("finishes a search whose done arrives before any other event", () => {
+    const jobs = applyWebSearchEvent(
+      [],
+      { type: "web_search_done", job_id: "s", result: RESULT, cost_usd: 0.02 },
+      CONV,
+      AT,
+    );
+
+    expect(jobs[0]).toMatchObject({
+      id: "s",
+      conversation_id: CONV,
+      query: "",
+      status: "done",
+      activity: "concluido",
+      result: RESULT,
+      cost_usd: 0.02,
+      started_at: AT,
+      finished_at: AT,
+    });
+  });
+
+  it("fails a search whose error arrives before any other event", () => {
+    const jobs = applyWebSearchEvent(
+      [],
+      { type: "web_search_error", job_id: "s", error: "sem chave" },
+      CONV,
+      AT,
+    );
+
+    expect(jobs[0]).toMatchObject({
+      status: "error",
+      activity: "falhou",
+      error: "sem chave",
+      started_at: AT,
+      finished_at: AT,
+    });
+  });
+
+  it("keeps a zero cost — the card guards on presence, not truthiness", () => {
+    const jobs = applyWebSearchEvent(
+      [],
+      { type: "web_search_done", job_id: "s", result: RESULT, cost_usd: 0 },
+      CONV,
+      AT,
+    );
+
+    expect(jobs[0]?.cost_usd).toBe(0);
+  });
+});
+
+describe("applyWebSearchEvent is monotonic in every direction", () => {
+  it("does not let a late activity drag a failed search back to running", () => {
+    const failed = applyWebSearchEvent(
+      [],
+      { type: "web_search_error", job_id: "s", error: "sem chave" },
+      CONV,
+      AT,
+    );
+    const late = applyWebSearchEvent(
+      failed,
+      { type: "web_search_activity", job_id: "s", activity: "ainda buscando" },
+      CONV,
+      AT,
+    );
+
+    expect(late).toBe(failed);
+    expect(late[0]?.status).toBe("error");
+    expect(late[0]?.activity).toBe("falhou");
+  });
+
+  it("does not let a done overwrite an error either", () => {
+    const failed = applyWebSearchEvent(
+      [],
+      { type: "web_search_error", job_id: "s", error: "sem chave" },
+      CONV,
+      AT,
+    );
+    const late = applyWebSearchEvent(
+      failed,
+      { type: "web_search_done", job_id: "s", result: RESULT },
+      CONV,
+      AT,
+    );
+
+    expect(late).toBe(failed);
+    expect(late[0]?.result).toBeUndefined();
+  });
+
+  it("leaves a search the user cancelled cancelled", () => {
+    // The stream never sends `cancelled` — the backend turns a cancel into a
+    // `web_search_error` — but a job list seeded from the registry could hold
+    // one, and a late frame for it must not show it working again.
+    const cancelled: WebSearchJob[] = [
+      {
+        id: "s",
+        conversation_id: CONV,
+        query: "",
+        status: "cancelled",
+        activity: "cancelado",
+        started_at: AT,
+      },
+    ];
+
+    const lateActivity = applyWebSearchEvent(
+      cancelled,
+      { type: "web_search_activity", job_id: "s", activity: "ainda buscando" },
+      CONV,
+      AT,
+    );
+    expect(lateActivity).toBe(cancelled);
+
+    const lateDone = applyWebSearchEvent(
+      cancelled,
+      { type: "web_search_done", job_id: "s", result: RESULT },
+      CONV,
+      AT,
+    );
+    expect(lateDone).toBe(cancelled);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What the handler hands the half that speaks
+// ---------------------------------------------------------------------------
+
+describe("a search that just finished", () => {
+  it("runs entry, persist, send and requestResponse in exactly that order", () => {
+    const order: string[] = [];
+    let responses = 0;
+    const deps: SessionStreamDeps = {
+      conversationId: CONV,
+      setJobs: () => {},
+      setDeepThinkJobs: () => {},
+      setWebSearchJobs: () => {},
+      upsertEntry: () => {
+        order.push("entry");
+      },
+      persist: () => {
+        order.push("persist");
+      },
+      send: () => {
+        order.push("send");
+      },
+      requestResponse: () => {
+        order.push("request");
+        responses += 1;
+      },
+    };
+
+    sessionStreamHandler(deps)(JSON.stringify({ type: "web_search_done", job_id: "s", result: RESULT }));
+
+    // The transcript line must exist before the turn that asks the model to
+    // speak it, and the archive before the ask — a response.create that wins
+    // the race reads a conversation the archive has not caught up with.
+    expect(order).toEqual(["entry", "persist", "send", "request"]);
+    expect(responses).toBe(1);
+  });
+
+  it("persists under the web- id, with the tool role and the [busca web] marker", () => {
+    const harness = record();
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_done", job_id: "search_1", result: RESULT }),
+    );
+
+    expect(harness.persisted).toEqual([
+      { id: "web-search_1", role: "tool", content: `[busca web] ${RESULT}` },
+    ]);
+  });
+
+  it("writes the transcript line under the web- id, as a final agent entry", () => {
+    const harness = record();
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_done", job_id: "search_1", result: RESULT }),
+    );
+
+    expect(harness.entries).toEqual([
+      { id: "web-search_1", role: "agent", text: RESULT, final: true },
+    ]);
+  });
+
+  it("hands the result to the model as one exact user turn", () => {
+    const harness = record();
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_done", job_id: "s", result: RESULT }),
+    );
+
+    expect(harness.sent).toEqual([
+      userTextEvent(
+        "A busca web terminou. Resultado:\n\n" +
+          `${RESULT}\n\n` +
+          "Explique isso para mim em voz alta, com suas palavras, de forma curta.",
+      ),
+    ]);
+  });
+
+  it("seeds the card with the handler's conversation id", () => {
+    const harness = record();
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_activity", job_id: "s", activity: "pesquisando" }),
+    );
+
+    expect(harness.webSearchJobs()[0]?.conversation_id).toBe(CONV);
+  });
+});
+
+describe("a search that just failed", () => {
+  it("speaks the reason in one exact user turn", () => {
+    const harness = record();
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_error", job_id: "s", error: "sem credito" }),
+    );
+
+    expect(harness.entries).toEqual([
+      { id: "web-s", role: "agent", text: "A busca web falhou: sem credito", final: true },
+    ]);
+    expect(harness.sent).toEqual([
+      userTextEvent("A busca web falhou: sem credito. Me avise disso em uma frase."),
+    ]);
+    expect(harness.responses()).toBe(1);
+    expect(harness.persisted).toEqual([]);
+  });
+
+  it("reads an empty error string as a reason the server did not give", () => {
+    const harness = record();
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_error", job_id: "s", error: "" }),
+    );
+
+    const spoken = JSON.stringify(harness.sent) + JSON.stringify(harness.entries);
+    expect(spoken).toContain("o servidor nao disse o motivo");
+    expect(spoken).not.toContain("undefined");
+  });
+});
+
+describe("the settled set, per connection", () => {
+  it("ignores a replayed copy of a search that already ended on this connection", () => {
+    const harness = record();
+    const handle = sessionStreamHandler(harness.deps);
+
+    handle(JSON.stringify({ type: "web_search_done", job_id: "s", result: RESULT }));
+    handle(
+      JSON.stringify({
+        type: "web_search_done",
+        job_id: "s",
+        result: RESULT,
+        replay: true,
+      }),
+    );
+
+    // One live ending, and the replay after it is not a second ending: no
+    // second transcript line, no second turn, no second archive write.
+    expect(harness.entries).toHaveLength(1);
+    expect(harness.persisted).toHaveLength(1);
+    expect(harness.sent).toHaveLength(1);
+    expect(harness.responses()).toBe(1);
+  });
+
+  it("does not speak a failure for a search that already succeeded", () => {
+    const harness = record();
+    const handle = sessionStreamHandler(harness.deps);
+
+    handle(JSON.stringify({ type: "web_search_done", job_id: "s", result: RESULT }));
+    handle(JSON.stringify({ type: "web_search_error", job_id: "s", error: "sem chave" }));
+
+    // The card closed done; the late failure neither redraws it nor announces
+    // itself. The user hears about the success once.
+    const search = harness.webSearchJobs()[0];
+    expect(search?.status).toBe("done");
+    expect(search?.error).toBeUndefined();
+    expect(harness.sent).toHaveLength(1);
+    expect(harness.responses()).toBe(1);
+    expect(harness.entries).toHaveLength(1);
+  });
+
+  it("drops a done whose result is only whitespace", () => {
+    const harness = record();
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_done", job_id: "s", result: "   " }),
+    );
+
+    expect(harness.webSearchJobs()[0]?.status).toBe("done");
+    expect(harness.entries).toEqual([]);
+    expect(harness.sent).toEqual([]);
+    expect(harness.persisted).toEqual([]);
+    expect(harness.responses()).toBe(0);
+  });
+
+  it("drops an error frame with no job in it, the same guard as the rest", () => {
+    const harness = record();
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_error", error: "sem chave" }),
+    );
+    sessionStreamHandler(harness.deps)(
+      JSON.stringify({ type: "web_search_activity", activity: "pesquisando" }),
+    );
+
+    expect(harness.webSearchJobs()).toEqual([]);
+    expect(harness.sent).toEqual([]);
+    expect(harness.responses()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Two searches share one stream
+// ---------------------------------------------------------------------------
+
+describe("two searches on one connection", () => {
+  it("keeps each search on its own card", () => {
+    const harness = record();
+    const handle = sessionStreamHandler(harness.deps);
+    const other = "O mercado de notebooks 2026";
+
+    handle(
+      JSON.stringify({ type: "web_search_activity", job_id: "s1", activity: "buscando" }),
+    );
+    handle(JSON.stringify({ type: "web_search_done", job_id: "s2", result: other }));
+    handle(JSON.stringify({ type: "web_search_done", job_id: "s1", result: RESULT }));
+
+    const searches = harness.webSearchJobs();
+    expect(searches).toHaveLength(2);
+    expect(searches[0]?.result).toBe(RESULT);
+    expect(searches[1]?.result).toBe(other);
+
+    // Each ending spoke and archived exactly once, under its own id.
+    expect(harness.sent).toHaveLength(2);
+    expect(harness.persisted.map((p) => p.id)).toEqual(["web-s2", "web-s1"]);
+    expect(harness.entries.map((e) => e.id)).toEqual(["web-s2", "web-s1"]);
   });
 });

@@ -305,6 +305,48 @@ describe("runTool", () => {
     expect(result.meta).toMatchObject({ job_id: "job_9", angles: ["riscos", "custo"] });
     expect(result.output).not.toContain("job_9");
   });
+
+  it("names the tool in the exact Portuguese deadline message", async () => {
+    vi.useFakeTimers();
+    try {
+      // A fetch that never settles until the abort signal ends it.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          (_url: string, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(new Error("Aborted")));
+            }),
+        ),
+      );
+
+      const pending = api.runTool(CONV, {
+        call_id: "call_t",
+        name: "web_search",
+        arguments: '{"query":"node lts"}',
+      });
+
+      // Attach the handler before the deadline fires: a rejection that happens
+      // with nobody listening is flagged as unhandled even though the test
+      // reads it one line later.
+      const errPromise = pending.then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      await vi.advanceTimersByTimeAsync(api.REALTIME_TOOL_TIMEOUT_MS + 1);
+
+      const err = await errPromise;
+      // The message is spoken back to the user by the model, so it is pinned
+      // whole — the `(timed out)` parenthetical that used to follow it was
+      // deleted precisely because it leaked English into the spoken turn.
+      expect((err as Error).message).toBe("web_search excedeu o limite de tempo");
+      expect((err as Error).message).not.toContain("(timed out)");
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
