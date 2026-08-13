@@ -13,6 +13,7 @@ import {
   functionOutputEvent,
   userTextEvent,
 } from "@/lib/realtime";
+import type { MermaidDiagram } from "@/types";
 
 describe("functionCallsFrom", () => {
   it("pulls every function call out of a response.done payload", () => {
@@ -145,6 +146,128 @@ describe("runTool gives up on a tool that hangs", () => {
   });
 });
 
+describe("runTool signal and deadline handling", () => {
+  it("hands its abort signal to the fetch and aborts it on timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const initSeen: RequestInit[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_url: string, init?: RequestInit) => {
+          initSeen.push(init ?? {});
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("Aborted")));
+          });
+        }),
+      );
+
+      const pending = api.runTool(CONV, {
+        call_id: "call_t",
+        name: "web_search",
+        arguments: '{"query":"node lts"}',
+      });
+      const rejection = expect(pending).rejects.toThrow(/limite de tempo/);
+      await vi.advanceTimersByTimeAsync(api.REALTIME_TOOL_TIMEOUT_MS + 1);
+      await rejection;
+
+      // The fetch saw the controller's signal, and the deadline aborted it —
+      // the timeout is enforced on the wire, not just after it.
+      expect(initSeen).toHaveLength(1);
+      expect(initSeen[0]?.signal).toBeInstanceOf(AbortSignal);
+      expect(initSeen[0]?.signal?.aborted).toBe(true);
+
+      // One POST to the tool endpoint carrying the whole call.
+      expect(initSeen[0]?.method).toBe("POST");
+      expect(JSON.parse(String(initSeen[0]?.body))).toEqual({
+        conversation_id: CONV,
+        call_id: "call_t",
+        name: "web_search",
+        arguments: '{"query":"node lts"}',
+      });
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("resolves untouched when the server answers before the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () =>
+              Promise.resolve({
+                call_id: "call_t",
+                name: "web_search",
+                output: "achei",
+                meta: null,
+              }),
+          }),
+        ),
+      );
+
+      const result = await api.runTool(CONV, {
+        call_id: "call_t",
+        name: "web_search",
+        arguments: "{}",
+      });
+
+      expect(result).toEqual({
+        call_id: "call_t",
+        name: "web_search",
+        output: "achei",
+        meta: null,
+      });
+      // The deadline timer was cleared in `finally` — nothing stays armed, and
+      // the healthy call must not be able to time out afterwards.
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(api.REALTIME_TOOL_TIMEOUT_MS + 1);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("propagates a plain network error without rewriting it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+    );
+
+    const err = await api
+      .runTool(CONV, { call_id: "call_t", name: "web_search", arguments: "{}" })
+      .catch((caught) => caught);
+
+    // The deadline never fired, so the original failure is the one that
+    // surfaces — and it must not be the timeout sentence.
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as Error).message).toBe("Failed to fetch");
+  });
+
+  it("surfaces the server's own message for an HTTP failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve(JSON.stringify({ error: "pane no servidor" })),
+        }),
+      ),
+    );
+
+    const err = await api
+      .runTool(CONV, { call_id: "call_t", name: "web_search", arguments: "{}" })
+      .catch((caught) => caught);
+
+    expect((err as Error).message).toBe("pane no servidor");
+  });
+});
+
 describe("executeToolCalls under a dead network", () => {
   it("turns every failed call into a spoken output the model can answer", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
@@ -227,6 +350,26 @@ describe("failedToolOutcomes", () => {
       expect(outcome.diagram).toBeNull();
     }
     expect(outcomes.map((outcome) => outcome.call.call_id)).toEqual(["call_1", "call_2"]);
+  });
+
+  it("answers a single call with the exact spoken sentence", () => {
+    const [outcome] = failedToolOutcomes([
+      { name: "web_search", call_id: "call_1", arguments: "{}" },
+    ]);
+
+    expect(outcome?.output).toBe(
+      "A ferramenta falhou por demora ou erro de conexao. Avise o usuario e proponha tentar de novo.",
+    );
+    expect(outcome?.diagram).toBeNull();
+    expect(outcome?.call).toEqual({
+      name: "web_search",
+      call_id: "call_1",
+      arguments: "{}",
+    });
+  });
+
+  it("returns no outcomes for an empty batch", () => {
+    expect(failedToolOutcomes([])).toEqual([]);
   });
 });
 
@@ -363,6 +506,154 @@ describe("foldToolOutcomes", () => {
     await settle();
     expect(h.pending.size).toBe(0);
     expect(h.responses()).toBe(1);
+  });
+
+  /** A fold harness that records every argument the hook's deps would see. */
+  function strictFoldHarness() {
+    const order: string[] = [];
+    const sent: Array<{ call_id: string; output: string }> = [];
+    const upserts: Array<{ id: string; role: string; final: boolean; text: string }> = [];
+    const diagramUpdates: Array<(previous: MermaidDiagram[]) => MermaidDiagram[]> = [];
+    let active: string | null = "tool";
+    let arms = 0;
+
+    const deps: ToolOutcomeDeps = {
+      upsertEntry: (id, role, mutate, final = false) => {
+        upserts.push({ id, role, final, text: mutate("") });
+        order.push(`upsert:${id}`);
+      },
+      setDiagrams: (update) => {
+        diagramUpdates.push(update);
+      },
+      addPendingAck: (callId) => {
+        order.push(`ack:${callId}`);
+      },
+      send: (event) => {
+        const item = (event as { item?: { call_id?: string; output?: string } }).item;
+        sent.push({ call_id: item?.call_id ?? "?", output: item?.output ?? "" });
+        order.push(`send:${item?.call_id}`);
+      },
+      setActiveTool: (name) => {
+        active = name;
+        order.push(`active:${name}`);
+      },
+      armAckTimer: () => {
+        arms += 1;
+        order.push("arm");
+      },
+    };
+
+    return {
+      deps,
+      order,
+      sent,
+      upserts,
+      diagramUpdates,
+      active: () => active,
+      arms: () => arms,
+    };
+  }
+
+  const diagram = (id: string, source: string): MermaidDiagram => ({
+    id,
+    kind: "flowchart",
+    source,
+    caption: "fluxo",
+    created_at: "2026-08-13T00:00:00.000Z",
+  });
+
+  it("emits nothing and still closes the turn for an empty batch", () => {
+    const h = strictFoldHarness();
+
+    foldToolOutcomes(h.deps, []);
+
+    expect(h.order).toEqual(["active:null", "arm"]);
+    expect(h.active()).toBeNull();
+    expect(h.arms()).toBe(1);
+    expect(h.sent).toEqual([]);
+    expect(h.upserts).toEqual([]);
+  });
+
+  it("upserts, registers and sends three calls in order, preserving ids", () => {
+    const h = strictFoldHarness();
+
+    foldToolOutcomes(h.deps, [
+      { call: { name: "web_search", call_id: "call_1", arguments: "{}" }, output: "a", diagram: null },
+      { call: { name: "search_source", call_id: "call_2", arguments: "{}" }, output: "b", diagram: null },
+      { call: { name: "generate_diagram", call_id: "call_3", arguments: "{}" }, output: "c", diagram: null },
+    ]);
+
+    // One synchronous pass: upsert, then ack, then send, per call, and the
+    // spinner off and the ack timer armed exactly once, in the `finally`.
+    expect(h.order).toEqual([
+      "upsert:tool-call_1",
+      "ack:call_1",
+      "send:call_1",
+      "upsert:tool-call_2",
+      "ack:call_2",
+      "send:call_2",
+      "upsert:tool-call_3",
+      "ack:call_3",
+      "send:call_3",
+      "active:null",
+      "arm",
+    ]);
+    expect(h.upserts.map((entry) => entry.id)).toEqual([
+      "tool-call_1",
+      "tool-call_2",
+      "tool-call_3",
+    ]);
+    for (const entry of h.upserts) {
+      expect(entry.role).toBe("tool");
+      expect(entry.final).toBe(true);
+    }
+    expect(h.upserts[0]?.text).toBe("web_search — a");
+    expect(h.upserts[2]?.text).toBe("generate_diagram — c");
+    expect(h.sent.map((item) => item.call_id)).toEqual(["call_1", "call_2", "call_3"]);
+    expect(h.arms()).toBe(1);
+  });
+
+  it("sends only the drawn diagrams to the gallery, replacing same ids", () => {
+    const h = strictFoldHarness();
+    const fresh = diagram("d1", "graph TD novo");
+
+    foldToolOutcomes(h.deps, [
+      { call: { name: "web_search", call_id: "call_1", arguments: "{}" }, output: "a", diagram: null },
+      { call: { name: "generate_diagram", call_id: "call_2", arguments: "{}" }, output: "desenhei", diagram: fresh },
+    ]);
+
+    expect(h.diagramUpdates).toHaveLength(1);
+    // A redraw of the same id replaces the earlier version instead of
+    // duplicating it — `appendDiagram` under the fold's updater.
+    const updated = h.diagramUpdates[0]!([diagram("d1", "graph TD velho")]);
+    expect(updated).toEqual([fresh]);
+    expect(h.upserts).toHaveLength(2);
+
+    // An all-null batch never touches the gallery.
+    const none = strictFoldHarness();
+    foldToolOutcomes(none.deps, [
+      { call: { name: "web_search", call_id: "call_1", arguments: "{}" }, output: "a", diagram: null },
+    ]);
+    expect(none.diagramUpdates).toEqual([]);
+  });
+
+  it("still closes the turn when the gallery update throws", () => {
+    const h = strictFoldHarness();
+    h.deps.setDiagrams = () => {
+      throw new Error("gallery boom");
+    };
+
+    expect(() =>
+      foldToolOutcomes(h.deps, [
+        { call: { name: "generate_diagram", call_id: "call_2", arguments: "{}" }, output: "x", diagram: diagram("d1", "graph TD") },
+      ]),
+    ).toThrow("gallery boom");
+
+    // The throw happened before the emit loop, yet the turn still closes.
+    expect(h.order).toEqual(["active:null", "arm"]);
+    expect(h.active()).toBeNull();
+    expect(h.arms()).toBe(1);
+    expect(h.sent).toEqual([]);
   });
 });
 
