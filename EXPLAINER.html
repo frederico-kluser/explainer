@@ -1,62 +1,998 @@
 <!doctype html>
-<html lang="pt-BR" data-theme="dark">
+<!--
+  TEMPLATE — EXPLAINER do deep-orchestrator.
+
+  Uso: o orquestrador, na fase COMMIT-FINAL, preenche este template e entrega o
+  EXPLAINER.html da execução. Duas formas de preencher:
+
+  1. TOKENS INLINE  — substituição simples de string. Cada token {{NOME}} é
+     trocado pelo valor real:
+       2.0  13/08/2026  main  Sistema de pesquisa do Explainer: busca web virou assíncrona (a conversa continua falando durante a pesquisa), contexto da conversa agora é enviado às pesquisas (online e especialistas) e falhas do fallback de busca foram corrigidas.
+       2  26  12
+     Os tokens inline aparecem na navbar, no hero, nos cards de estatística,
+     no rodapé e na tabela de placeholders da aba "Visão geral".
+
+  2. SLOTS — bloco substituído INTEIRO, delimitado por um par de comentários
+     HTML: um com o texto {{SLOT}} begin e outro com {{SLOT}} end (sem os
+     delimitadores — veja os exemplos reais no corpo do arquivo). O gerador
+     substitui TUDO entre o par pelo conteúdo real. O que está entre os
+     marcadores é EXEMPLO demonstrativo (fallback) e morre na geração.
+       {{WAVES_TABLE}}   (aba Ondas — <table> com colunas Onda|Worktree|Tarefas|Commits|Status)
+       {{FILES_TABLE}}   (aba Arquivos — <table> com colunas Arquivo|Tipo|Diff)
+       {{COMMITS_LIST}}  (aba Arquivos — lista de commits squash)
+       {{BEFORE_AFTER}}  (aba De-Para — seções de de-para adicionais)
+       {{DECISIONS}}     (aba Decisões — lista de premissas inferidas)
+       {{TIMELINE}}      (aba Timeline — linha do tempo da execução)
+
+  Exemplo de geração manual:
+       ./scripts/generate-explainer.sh > EXPLAINER.html
+  Ou: preencha os tokens/slots com sed/awk e salve como EXPLAINER.html.
+
+  Arquivo único, sem build: Bootstrap 5 + Bootstrap Icons + highlight.js por CDN
+  (versões travadas com SRI). Abre com duplo clique (file://) e imprime em PDF
+  com todas as abas.
+-->
+<html lang="pt-BR" data-bs-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Explainer — Esforço padrão max, footer sticky e teste de conectividade</title>
+<!-- Diz ao navegador que a página é escura ANTES do CSS carregar: sem flash
+     branco, e os controles nativos (scrollbar, select, input) já nascem escuros. -->
+<meta name="color-scheme" content="dark">
+<title>EXPLAINER — deep-orchestrator · de-para da execução</title>
+
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+      integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+      crossorigin="anonymous">
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
+      integrity="sha384-CK2SzKma4jA5H/MXDUU7i1TqZlCFaD4T01vtyDFvPlD97JQyS+IsSh1nI2EFbpyk"
+      crossorigin="anonymous">
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css"
+      integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH"
+      crossorigin="anonymous">
+
 <style>
-:root { --bg: #0a0a0b; --card: #141416; --border: #27272a; --text: #fafafa; --muted: #a1a1aa; --accent: #3b82f6; --green: #22c55e; --amber: #f59e0b; --red: #ef4444; }
-body { margin: 0; font: 14px/1.6 system-ui, sans-serif; background: var(--bg); color: var(--text); }
-.container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
-h1 { font-size: 1.5rem; margin: 0 0 16px; }
-h2 { font-size: 1.15rem; margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
-th { color: var(--muted); font-weight: 600; }
-.tag { display: inline-block; padding: 1px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-.tag-green { background: #166534; color: #86efac; }
+  /* ── Paleta do deep-orchestrator ──────────────────────────────────────────
+     Fundo #1a1a2e, accent #00d4ff (ciano), sucesso #00ff88, warning #ffaa00.
+     Tudo deriva destas variáveis — não cravamos hex no conteúdo. */
+  :root {
+    --do-bg: #1a1a2e;
+    --do-bg-soft: #16213e;
+    --do-card: #1e1e38;
+    --do-accent: #00d4ff;
+    --do-success: #00ff88;
+    --do-warning: #ffaa00;
+    --do-danger: #ff6b6b;
+  }
+
+  [data-bs-theme="dark"] {
+    --bs-body-bg: var(--do-bg);
+    --bs-body-color: #dcdce8;
+    --bs-secondary-color: #8b8ba7;
+    --bs-border-color: #2e2e4a;
+    --bs-body-font-family: system-ui, -apple-system, 'Segoe UI', Roboto,
+                           'Helvetica Neue', Arial, sans-serif;
+  }
+
+  body { background-image: radial-gradient(ellipse 80% 40% at 50% -10%, rgba(0,212,255,.07), transparent 60%); }
+
+  /* Âncora não fica escondida atrás da navbar fixa. */
+  [id] { scroll-margin-top: 5rem; }
+
+  a { color: var(--do-accent); }
+  a:hover { color: #4de0ff; }
+
+  .brand-accent, .stat-value { color: var(--do-accent); }
+
+  /* Navbar com borda inferior em tom de accent. */
+  .navbar { border-bottom: 1px solid rgba(0,212,255,.25); }
+
+  /* Hero com gradiente sutil: azul-noite para um leve toque ciano. */
+  .explainer-hero {
+    background: linear-gradient(135deg, #16213e 0%, #1a1a2e 55%, #0f3460 100%);
+    border: 1px solid var(--bs-border-color);
+    box-shadow: inset 0 0 2.5rem rgba(0,212,255,.05);
+  }
+
+  /* Título de seção com filete de gradiente sutil sob o texto. */
+  .pane-title { position: relative; padding-bottom: .5rem; }
+  .pane-title::after {
+    content: ''; position: absolute; left: 0; bottom: 0;
+    height: 2px; width: 4.5rem; border-radius: 2px;
+    background: linear-gradient(90deg, var(--do-accent), transparent);
+  }
+
+  /* Cards e grupos de lista: tom levemente mais claro que o fundo. */
+  .card { --bs-card-bg: var(--do-card); --bs-card-border-color: var(--bs-border-color); }
+  .card-header {
+    background: linear-gradient(90deg, rgba(0,212,255,.10), rgba(0,212,255,0));
+    border-bottom: 1px solid var(--bs-border-color);
+  }
+  .list-group-item { background-color: var(--do-card); }
+
+  /* Abas: ativa em accent com sublinhado no mesmo tom. */
+  .nav-tabs { border-bottom-color: var(--bs-border-color); }
+  .nav-tabs .nav-link { color: var(--bs-secondary-color); }
+  .nav-tabs .nav-link:hover { color: var(--bs-body-color); border-color: var(--bs-border-color) var(--bs-border-color) transparent; }
+  .nav-tabs .nav-link.active {
+    color: var(--do-accent); font-weight: 600;
+    background-color: transparent;
+    border-color: var(--bs-border-color) var(--bs-border-color) var(--do-accent);
+  }
+
+  /* Badges da paleta. */
+  .badge-accent  { background: rgba(0,212,255,.14);  color: var(--do-accent);  border: 1px solid rgba(0,212,255,.35); }
+  .badge-ok      { background: rgba(0,255,136,.12);  color: var(--do-success); border: 1px solid rgba(0,255,136,.35); }
+  .badge-warn    { background: rgba(255,170,0,.12);  color: var(--do-warning); border: 1px solid rgba(255,170,0,.35); }
+  .badge-danger  { background: rgba(255,107,107,.12); color: var(--do-danger); border: 1px solid rgba(255,107,107,.35); }
+  .badge-soft    { background: rgba(139,139,167,.12); color: var(--bs-secondary-color); border: 1px solid var(--bs-border-color); }
+
+  /* Diff stats: + verde, − vermelho, dígitos tabulares. */
+  .diff-plus  { color: var(--do-success); font-variant-numeric: tabular-nums; }
+  .diff-minus { color: var(--do-danger); font-variant-numeric: tabular-nums; }
+
+  /* De-Para: cartões com borda indicando o lado da comparação. */
+  .depara-antes  { border-color: rgba(139,139,167,.45); }
+  .depara-depois { border-color: rgba(0,255,136,.35); }
+
+  /* Timeline vertical: linha + marcador ciano com brilho sutil. */
+  .timeline { position: relative; }
+  .timeline-item { position: relative; padding-left: 1.4rem; border-left: 2px solid var(--bs-border-color); }
+  .timeline-item::before {
+    content: ''; position: absolute; left: -.42rem; top: .3rem;
+    width: .7rem; height: .7rem; border-radius: 50%;
+    background: var(--do-accent); box-shadow: 0 0 .6rem rgba(0,212,255,.6);
+  }
+  .timeline-item:last-child { border-left-color: transparent; }
+
+  /* Bloco de código: espaço à direita para o botão de copiar não cobrir o texto. */
+  pre { position: relative; margin-bottom: 1rem; }
+  pre code.hljs { padding-right: 4rem; border-radius: var(--bs-border-radius); font-size: .875rem; }
+
+  .copy-btn { position: absolute; top: .5rem; right: .5rem; opacity: .4; transition: opacity .15s; }
+  pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+
+  /* Abrir o arquivo em #pane-x foca o painel (bom: o leitor de tela cai no
+     conteúdo), e o outline branco do navegador fica gritante. Anel discreto,
+     do tema, no lugar — tirar o indicador por completo quebraria quem navega
+     por teclado. */
+  .tab-pane:focus-visible { outline: 0; box-shadow: 0 0 0 .2rem rgba(var(--bs-emphasis-color-rgb), .15); }
+
+  /* Impressão/PDF: abre TODAS as abas, senão o papel sai com uma só. */
+  @media print {
+    .nav-tabs, .copy-btn, details, .explainer-hero { display: none !important; }
+    .tab-content > .tab-pane { display: block !important; opacity: 1 !important; page-break-inside: avoid; }
+    .tab-pane::before { content: attr(data-print-title); display: block;
+                        font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 .5rem; }
+  }
 </style>
 </head>
-<body>
-<div class="container">
-<h1>Pensadores — Esforco padrao max, footer sticky e teste de conectividade</h1>
-<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px">
-  <div class="card" style="flex:1"><p style="margin:0;font-size:20px;font-weight:700">4</p><p style="margin:0;font-size:12px;color:var(--muted)">commits</p></div>
-  <div class="card" style="flex:1"><p style="margin:0;font-size:20px;font-weight:700">2</p><p style="margin:0;font-size:12px;color:var(--muted)">ondas</p></div>
-  <div class="card" style="flex:1"><p style="margin:0;font-size:20px;font-weight:700">4</p><p style="margin:0;font-size:12px;color:var(--muted)">agentes</p></div>
-  <div class="card" style="flex:1"><p style="margin:0;font-size:20px;font-weight:700">1480</p><p style="margin:0;font-size:12px;color:var(--muted)">testes passando</p></div>
-</div>
 
-<h2>Ondas</h2>
-<table>
-<tr><th>Onda</th><th>Worktree</th><th>Tarefa</th><th>Status</th></tr>
-<tr><td>1</td><td>onda1-effort-max</td><td>6 niveis de effort + default max + migracao de rosters</td><td><span class="tag tag-green">merged</span></td></tr>
-<tr><td>1</td><td>onda1-effort-types</td><td>Tipo ReasoningEffort com 6 niveis no frontend</td><td><span class="tag tag-green">merged</span></td></tr>
-<tr><td>1</td><td>onda1-test-endpoint</td><td>POST /api/thinkers/test — ping de conectividade</td><td><span class="tag tag-green">merged</span></td></tr>
-<tr><td>2</td><td>onda2-save-ux</td><td>Footer sticky + teste ao salvar + dedup</td><td><span class="tag tag-green">merged</span></td></tr>
-</table>
+<body class="bg-body">
 
-<h2>Arquivos modificados</h2>
-<table>
-<tr><th>Arquivo</th><th>Mudanca</th></tr>
-<tr><td>backend/src/services/thinker-roster.ts</td><td>REASONING_EFFORTS 6 niveis, defaultChoice effort:max, normalizeChoice fallback max</td></tr>
-<tr><td>backend/src/routes/thinkers.ts</td><td>Novo endpoint POST /api/thinkers/test com validacao, dedup e ping</td></tr>
-<tr><td>frontend/src/types/index.ts</td><td>ReasoningEffort 6 niveis, interface ConfigTestEnvelope</td></tr>
-<tr><td>frontend/src/components/ui/centered-overlay.tsx</td><td>Prop footer opcional</td></tr>
-<tr><td>frontend/src/components/ui/ThinkerRosterPanel.tsx</td><td>Footer sticky, teste ao salvar com dedup, estados testing/testResults</td></tr>
-<tr><td>frontend/src/lib/api.ts</td><td>Funcao testConfigs()</td></tr>
-</table>
+<nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
+  <div class="container">
+    <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">v2.0 · 13/08/2026</span>
+  </div>
+</nav>
 
-<h2>Decisoes</h2>
-<ul>
-<li>Esforco padrao "max" para Master, Planner e todos os 10 slots</li>
-<li>Rosters existentes migram automaticamente na primeira leitura</li>
-<li>Teste informativo: erro de rede permite salvar; 400 de validacao aborta</li>
-<li>Deduplicacao no cliente e no servidor</li>
-<li>Footer via sticky CSS (App.tsx fora do escopo)</li>
-</ul>
-<p style="color:var(--muted);font-size:12px">2026-08-09 · main · 4 squash commits</p>
-</div>
+<main class="container py-4" style="max-width: 62rem">
+
+  <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
+    <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
+    <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
+    <p class="lead text-white-50 mb-3">Sistema de pesquisa do Explainer: busca web virou assíncrona (a conversa continua falando durante a pesquisa), contexto da conversa agora é enviado às pesquisas (online e especialistas) e falhas do fallback de busca foram corrigidas.</p>
+    <div class="d-flex flex-wrap gap-2">
+      <span class="badge badge-accent">v2.0</span>
+      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>13/08/2026</span>
+      <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
+    </div>
+  </header>
+
+  <!-- ABAS
+       Regras que não podem ser quebradas:
+       · <ul role="tablist"> e cada <button role="tab">
+       · button.id  ←→  tabpanel.aria-labelledby
+       · button.data-bs-target ←→ #id do tabpanel (e aria-controls com o mesmo id, sem #)
+       · exatamente UM botão .active + UM painel .show.active
+       O Bootstrap já faz navegação por seta/Home/End no tablist; não reimplemente. -->
+  <ul class="nav nav-tabs" id="doc-tabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="tab-visao" data-bs-toggle="tab" data-bs-target="#pane-visao"
+              type="button" role="tab" aria-controls="pane-visao" aria-selected="true">
+        <i class="bi bi-eye me-1"></i>Visão geral
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-ondas" data-bs-toggle="tab" data-bs-target="#pane-ondas"
+              type="button" role="tab" aria-controls="pane-ondas" aria-selected="false">
+        <i class="bi bi-layers me-1"></i>Ondas
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-arquivos" data-bs-toggle="tab" data-bs-target="#pane-arquivos"
+              type="button" role="tab" aria-controls="pane-arquivos" aria-selected="false">
+        <i class="bi bi-files me-1"></i>Arquivos
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-depara" data-bs-toggle="tab" data-bs-target="#pane-depara"
+              type="button" role="tab" aria-controls="pane-depara" aria-selected="false">
+        <i class="bi bi-arrow-left-right me-1"></i>De-Para
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-decisoes" data-bs-toggle="tab" data-bs-target="#pane-decisoes"
+              type="button" role="tab" aria-controls="pane-decisoes" aria-selected="false">
+        <i class="bi bi-lightbulb me-1"></i>Decisões
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-timeline" data-bs-toggle="tab" data-bs-target="#pane-timeline"
+              type="button" role="tab" aria-controls="pane-timeline" aria-selected="false">
+        <i class="bi bi-clock-history me-1"></i>Timeline
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content border border-top-0 rounded-bottom p-4" id="doc-tabs-content">
+
+    <!-- ══════════════ ABA 1 · VISÃO GERAL ══════════════ -->
+    <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
+         aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
+      <h2 class="h4 pane-title">Resumo da execução</h2>
+      <p class="text-body-secondary">Sistema de pesquisa do Explainer: busca web virou assíncrona (a conversa continua falando durante a pesquisa), contexto da conversa agora é enviado às pesquisas (online e especialistas) e falhas do fallback de busca foram corrigidas.</p>
+
+      <div class="alert alert-primary d-flex gap-2" role="alert">
+        <i class="bi bi-info-circle-fill flex-shrink-0"></i>
+        <div><strong>O que é este documento:</strong> o EXPLAINER gerado pelo deep-orchestrator na fase COMMIT-FINAL, ao fim de cada execução. Mostra o de-para (antes/depois) de tudo que foi feito: ondas, worktrees, arquivos modificados, decisões autônomas e timeline.</div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-6 col-lg-4">
+          <div class="card h-100 text-center">
+            <div class="card-body py-4">
+              <i class="bi bi-layers fs-3 stat-value"></i>
+              <div class="display-6 fw-bold stat-value">2</div>
+              <div class="text-body-secondary small">Ondas executadas</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-lg-4">
+          <div class="card h-100 text-center">
+            <div class="card-body py-4">
+              <i class="bi bi-robot fs-3 stat-value"></i>
+              <div class="display-6 fw-bold stat-value">26</div>
+              <div class="text-body-secondary small">Sub-agentes</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-lg-4">
+          <div class="card h-100 text-center">
+            <div class="card-body py-4">
+              <i class="bi bi-git-commit fs-3 stat-value"></i>
+              <div class="display-6 fw-bold stat-value">12</div>
+              <div class="text-body-secondary small">Commits (squash)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="h4 pane-title mt-5">Como este documento é gerado</h2>
+      <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
+<pre><code class="language-bash"># Gera o explainer a partir do template
+./scripts/generate-explainer.sh &gt; EXPLAINER.html
+# Ou preenche manualmente os placeholders 2.0, 13/08/2026, main, ...</code></pre>
+      <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
+
+      <details class="mt-4">
+        <summary class="text-body-secondary">Placeholders usados na geração</summary>
+        <div class="table-responsive mt-2">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr><th scope="col">Placeholder</th><th scope="col">Onde aparece</th><th scope="col">Preenchido com</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>&#123;&#123;VERSION&#125;&#125;</code></td><td>Navbar, hero, rodapé</td><td>Versão do orquestrador</td></tr>
+              <tr><td><code>&#123;&#123;DATE&#125;&#125;</code></td><td>Navbar, hero, rodapé</td><td>Data da execução</td></tr>
+              <tr><td><code>&#123;&#123;BRANCH&#125;&#125;</code></td><td>Hero, rodapé</td><td>Branch principal</td></tr>
+              <tr><td><code>&#123;&#123;TASK_SUMMARY&#125;&#125;</code></td><td>Visão geral</td><td>Resumo da tarefa</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_WAVES&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de ondas</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_AGENTS&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de sub-agentes</td></tr>
+              <tr><td><code>&#123;&#123;TOTAL_COMMITS&#125;&#125;</code></td><td>Cards de estatística</td><td>Número de commits</td></tr>
+              <tr><td><code>&#123;&#123;WAVES_TABLE&#125;&#125;</code></td><td>Aba Ondas</td><td>Tabela HTML de ondas (Onda | Worktree | Tarefas | Commits | Status)</td></tr>
+              <tr><td><code>&#123;&#123;FILES_TABLE&#125;&#125;</code></td><td>Aba Arquivos</td><td>Tabela HTML de arquivos modificados (Arquivo | Tipo | Diff)</td></tr>
+              <tr><td><code>&#123;&#123;BEFORE_AFTER&#125;&#125;</code></td><td>Aba De-Para</td><td>Seções de de-para adicionais</td></tr>
+              <tr><td><code>&#123;&#123;DECISIONS&#125;&#125;</code></td><td>Aba Decisões</td><td>Lista de decisões autônomas</td></tr>
+              <tr><td><code>&#123;&#123;TIMELINE&#125;&#125;</code></td><td>Aba Timeline</td><td>Linha do tempo da execução</td></tr>
+              <tr><td><code>&#123;&#123;COMMITS_LIST&#125;&#125;</code></td><td>Aba Arquivos</td><td>Lista de commits squash</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+
+    <!-- ══════════════ ABA 2 · ONDAS EXECUTADAS ══════════════ -->
+    <div class="tab-pane fade" id="pane-ondas" role="tabpanel"
+         aria-labelledby="tab-ondas" tabindex="0" data-print-title="Ondas executadas">
+      <h2 class="h4 pane-title">Ondas executadas</h2>
+      <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
+
+      <!-- {{WAVES_TABLE}} begin -->
+
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th scope="col">Onda</th>
+              <th scope="col">Worktree</th>
+              <th scope="col">Tarefas</th>
+              <th scope="col" class="text-end">Commits</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-accent">Onda 1</span></td>
+              <td><code>onda1-websurf-fallback</code></td>
+              <td>Fallback do CLI surf-research-skill corrigido (invocação sem <code>--</code>) + 6 testes</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluída</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-accent">Onda 1</span></td>
+              <td><code>onda1-research-context</code></td>
+              <td>Contexto automático (materiais + conversa recente, sem LLM) anexado a web_search, dispatch_pi_agent e deep_think; caps ampliados</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluída</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-accent">Onda 1</span></td>
+              <td><code>onda1-toolcall-timeout</code></td>
+              <td>Timeout no runTool (75s) + outputs de erro que destravam a conversa em falha de tool call</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluída</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-accent">Onda 2</span></td>
+              <td><code>PREP-onda-2</code></td>
+              <td>Contrato SSE web_search_* (WebSearchJob/WebSearchEvent) nos dois pacotes + narrowing integrado</td>
+              <td class="text-end">2</td>
+              <td><span class="badge badge-ok">Concluída</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-accent">Onda 2</span></td>
+              <td><code>onda2-websync-backend</code></td>
+              <td>web_search assíncrona (jobs SSE, 409 por conversa, timeout 180s, cancel que desarma o timer), check_web_search, replay só de jobs finalizados, descrição da tool reescrita</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluída</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-accent">Onda 2</span></td>
+              <td><code>onda2-websync-frontend</code></td>
+              <td>handleWebSearchEvent (injeção + persist [busca web]), applyWebSearchEvent, WebSearchCard, reset de estado, fix PT-BR do timeout</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluída</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-warn">Subwave</span></td>
+              <td><code>test-onda1-{websurf,context,toolcall}-coverage</code></td>
+              <td>62 testes novos (100% stmts/branch no web-search.ts; e2e real do destrave; invariantes de truncamento)</td>
+              <td class="text-end">3</td>
+              <td><span class="badge badge-ok">Concluída</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-warn">Subwave</span></td>
+              <td><code>test-onda2-{websync-backend,websync-frontend}</code></td>
+              <td>62 testes novos (falsos positivos corrigidos com prova por mutação; filtros SSE honestos; reset de conversa; pin do default 180s)</td>
+              <td class="text-end">2</td>
+              <td><span class="badge badge-ok">Concluída</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+<!-- {{WAVES_TABLE}} end -->
+
+      <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelos dados reais da execução.</p>
+
+      <h3 class="h6 mt-4 text-body-secondary">Legenda de status</h3>
+      <div class="d-flex flex-wrap gap-2">
+        <span class="badge badge-ok">Concluída</span>
+        <span class="badge badge-warn">Parcial</span>
+        <span class="badge badge-danger">Bloqueada</span>
+      </div>
+    </div>
+
+    <!-- ══════════════ ABA 3 · ARQUIVOS MODIFICADOS ══════════════ -->
+    <div class="tab-pane fade" id="pane-arquivos" role="tabpanel"
+         aria-labelledby="tab-arquivos" tabindex="0" data-print-title="Arquivos modificados">
+      <h2 class="h4 pane-title">Arquivos modificados</h2>
+      <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
+
+      <!-- {{FILES_TABLE}} begin -->
+
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr><th scope="col">Arquivo</th><th scope="col">Tipo</th><th scope="col" class="text-end">Diff</th></tr>
+          </thead>
+          <tbody>            <tr>
+              <td><code>backend/src/services/web-search-jobs.ts</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+237</td>
+            </tr>            <tr>
+              <td><code>backend/src/services/research-context.ts</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+136</td>
+            </tr>            <tr>
+              <td><code>backend/src/tools/web-search.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+34 −1</td>
+            </tr>            <tr>
+              <td><code>backend/src/services/tool-executor.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+93 −1</td>
+            </tr>            <tr>
+              <td><code>backend/src/services/agent-jobs.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+23 −1</td>
+            </tr>            <tr>
+              <td><code>backend/src/services/deep-think.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+30</td>
+            </tr>            <tr>
+              <td><code>backend/src/services/openai.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+11</td>
+            </tr>            <tr>
+              <td><code>backend/src/tools/deliberation-tools.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+7</td>
+            </tr>            <tr>
+              <td><code>backend/src/tools/index.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+35 −2</td>
+            </tr>            <tr>
+              <td><code>backend/src/routes/agents.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+50 −4</td>
+            </tr>            <tr>
+              <td><code>backend/src/types/deep-tools.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+42</td>
+            </tr>            <tr>
+              <td><code>backend/src/types/index.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+1</td>
+            </tr>            <tr>
+              <td><code>frontend/src/hooks/useRealtimeSession.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+287 −28</td>
+            </tr>            <tr>
+              <td><code>frontend/src/lib/api.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+42 −9</td>
+            </tr>            <tr>
+              <td><code>frontend/src/components/ui/WebSearchCard.tsx</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+73</td>
+            </tr>            <tr>
+              <td><code>frontend/src/App.tsx</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+9 −2</td>
+            </tr>            <tr>
+              <td><code>frontend/src/types/index.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+37 −1</td>
+            </tr>            <tr>
+              <td><code>backend/src/__tests__/web-search-jobs.test.ts</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+488</td>
+            </tr>            <tr>
+              <td><code>backend/src/__tests__/web-search.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+526</td>
+            </tr>            <tr>
+              <td><code>backend/src/__tests__/research-context.test.ts</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+351</td>
+            </tr>            <tr>
+              <td><code>backend/src/__tests__/tool-executor.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+483 −13</td>
+            </tr>            <tr>
+              <td><code>backend/src/__tests__/agents-sse.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+315 −15</td>
+            </tr>            <tr>
+              <td><code>backend/src/__tests__/deep-think.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+188</td>
+            </tr>            <tr>
+              <td><code>backend/src/__tests__/agent-jobs.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+142</td>
+            </tr>            <tr>
+              <td><code>backend/src/__tests__/openai.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+71</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/realtime-websearch.test.ts</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+856</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/realtime.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+581 −6</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/toolcall-e2e.test.tsx</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+453</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/conversation-switch-reset.test.tsx</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+268</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/app-websearch-panel.test.tsx</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+225</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/websearch-card-render.test.tsx</code></td>
+              <td><span class="badge badge-ok">novo</span></td>
+              <td class="text-end diff-plus">+159</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/api.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+42</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/app-setup-gate.test.tsx</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+1</td>
+            </tr>            <tr>
+              <td><code>frontend/src/__tests__/realtime-deepthink.test.ts</code></td>
+              <td><span class="badge badge-accent">modificado</span></td>
+              <td class="text-end diff-plus">+7</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-body-secondary small">34 arquivos · +6 212 / −91 linhas (c26f01e..HEAD)</p>
+
+<!-- {{FILES_TABLE}} end -->
+
+      <p class="text-body-secondary small">Exemplo demonstrativo — valores aproximados, substituídos na geração.</p>
+
+      <h2 class="h4 pane-title mt-4">Commits (squash)</h2>
+      <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
+
+      <!-- {{COMMITS_LIST}} begin -->
+<ul class="list-group list-group-flush">        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">ed7768a</span>
+          <div><strong>Subwave Onda 2:</strong> test-onda2-websync-frontend: handler da busca web (fold, card, reset de conversa)</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">19ec852</span>
+          <div><strong>Subwave Onda 2:</strong> test-onda2-websync-backend: endurece os testes da busca assíncrona (prune, disarm, filtros SSE, default 180s)</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">c3e6898</span>
+          <div><strong>Subwave Onda 1:</strong> test-onda1-toolcall-coverage: loop de tools (timeout, e2e do destrave)</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">8bbe8d0</span>
+          <div><strong>Subwave Onda 1:</strong> test-onda1-context-coverage: pipeline de contexto com pin de presença</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">4400d6f</span>
+          <div><strong>Subwave Onda 1:</strong> test-onda1-websurf-coverage: fallback de busca web (28 casos)</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">ac1b2b8</span>
+          <div><strong>Onda 2:</strong> frontend: injeção do resultado da busca web no fluxo de voz (handler SSE, WebSearchCard, persist [busca web])</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">82f8b5e</span>
+          <div><strong>Onda 2:</strong> backend: busca web assíncrona (jobs SSE + check_web_search + contexto) e limpeza do timer no cancel</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">b0d6611</span>
+          <div><strong>Onda 2 (PREP):</strong> integra o contrato web_search_* ao narrowing do sessionStreamHandler</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">5f2ed74</span>
+          <div><strong>Onda 2 (PREP):</strong> contrato SSE da busca web assíncrona (WebSearchJob/WebSearchEvent)</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">0e37318</span>
+          <div><strong>Onda 1:</strong> frontend: destrava a conversa quando um tool call falha ou estoura o timeout</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">6c0fff8</span>
+          <div><strong>Onda 1:</strong> backend: contexto da conversa enviado às pesquisas (web, agente pi e pensadores deep_think)</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">75dd538</span>
+          <div><strong>Onda 1:</strong> backend: corrige a invocação do CLI surf-research-skill no fallback de busca web</div>
+        </li>
+      </ul>
+<!-- {{COMMITS_LIST}} end -->
+
+      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — hashes fictícios, substituídos na geração.</p>
+    </div>
+
+    <!-- ══════════════ ABA 4 · DE-PARA (BEFORE/AFTER) ══════════════ -->
+    <div class="tab-pane fade" id="pane-depara" role="tabpanel"
+         aria-labelledby="tab-depara" tabindex="0" data-print-title="De-Para">
+      <h2 class="h4 pane-title">De-Para: o que mudou</h2>
+      <p>Comparação lado a lado entre o estado inicial do repositório e o estado final após a execução.</p>
+
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100 depara-antes">
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
+            <div class="card-body">
+              <p class="card-text text-body-secondary">Estado inicial do repositório — apenas o skill de orquestração, sem recursos auxiliares.</p>
+              <ul class="list-unstyled mb-0 d-grid gap-2">
+                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>SKILL.md</code> — definição do orquestrador (XML, fases, regras)</li>
+                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>README.md</code> — documentação pública</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card h-100 depara-depois">
+            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
+            <div class="card-body">
+              <p class="card-text text-body-secondary">Estado final — três novos diretórios e o skill atualizado.</p>
+              <ul class="list-unstyled mb-0 d-grid gap-2">
+                <li><i class="bi bi-terminal me-2 text-body-secondary"></i><code>scripts/</code> — brave-search.sh · check-brave-credits.sh</li>
+                <li><i class="bi bi-file-earmark-text me-2 text-body-secondary"></i><code>prompts/</code> — ecc-prompts.md · ecc-skills.md · search-prompts.md</li>
+                <li><i class="bi bi-file-earmark-code me-2 text-body-secondary"></i><code>templates/</code> — html-explainer.html</li>
+                <li><i class="bi bi-gear me-2 text-body-secondary"></i><code>SKILL.md</code> — atualizado (ondas ilimitadas, novos recursos)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- {{BEFORE_AFTER}} begin -->
+
+      <div class="accordion" id="depara-accordion">
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#dep1">1 · A fala congela durante a pesquisa — web_search síncrona → assíncrona</button></h3>
+          <div id="dep1" class="accordion-collapse collapse show" data-bs-parent="#depara-accordion">
+            <div class="accordion-body">
+              <p><strong>Antes:</strong> <code>web_search</code> era a única tool lenta SÍNCRONA. O frontend fazia <code>await executeToolCalls</code> e só depois enviava o <code>function_call_output</code>; o servidor demorava 45s (OpenAI) + 30s (fallback surf). Durante a espera a conversa ficava presa no turno aberto — o explainer não respondia a nada. Pior: o fetch não tinha timeout, então um servidor pendurado bloqueava a conversa para sempre.</p>
+              <p><strong>Depois:</strong> <code>web_search</code> responde em milissegundos com um job id (padrão do agente pi). A busca roda em background (<code>web-search-jobs.ts</code>: 1 por conversa, timeout 180s, cancel que desarma o timer) e o resultado chega pelo SSE (<code>web_search_done</code>) — o frontend injeta o texto e pede uma resposta, o modelo narra com suas palavras. O modelo é instruído a avisar em voz alta e CONTINUAR conversando enquanto a busca roda.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#dep2">2 · "Alguns falham" — fallback do CLI surf sempre quebrava</button></h3>
+          <div id="dep2" class="accordion-collapse collapse" data-bs-parent="#depara-accordion">
+            <div class="accordion-body">
+              <p><strong>Antes:</strong> <code>surf-research-skill search -- &lt;query&gt; --max N --json</code> — o separador <code>--</code> não é suportado pelo CLI; a chamada falhava sempre com <i>Usage:</i>, inclusive quando a busca da OpenAI falhava e o fallback era a única saída (verificado ao vivo: exit 0 na forma correta).</p>
+              <p><strong>Depois:</strong> <code>surf-research-skill search "&lt;query&gt;" --max N --json</code>, com teste que trava o array exato de args (falha se o <code>--</code> voltar) e cobertura de 100% stmts/branch/funcs/lines no arquivo.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#dep3">3 · Contexto insuficiente — nada era enviado às pesquisas</button></h3>
+          <div id="dep3" class="accordion-collapse collapse" data-bs-parent="#depara-accordion">
+            <div class="accordion-body">
+              <p><strong>Antes:</strong> o modelo de síntese da busca web recebia só a <code>query</code>; o agente pi recebia <code>question</code> + um <code>context</code> opcional que o modelo podia omitir; os pensadores do deep_think viam apenas o <code>scenario</code>. Nenhum deles via os materiais da conversa nem o histórico.</p>
+              <p><strong>Depois:</strong> <code>buildResearchContext()</code> monta um bloco PT-BR (materiais + últimos turns, mais recentes primeiro, truncado com marcador, cap 3 000, SEM custo de LLM) e o anexa às três vias: ao input do OpenAI na busca web, ao <code>context</code> do agente pi (cap 6 000; pergunta agora com cap 8 000) e ao planner/pensadores/síntese do deep_think. O resultado de cada busca é persistido como <code>[busca web]</code> — alimentando o contexto de buscas futuras.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#dep4">4 · Tool call que falhava congelava o turno — sem rede de segurança</button></h3>
+          <div id="dep4" class="accordion-collapse collapse" data-bs-parent="#depara-accordion">
+            <div class="accordion-body">
+              <p><strong>Antes:</strong> se o fetch de <code>/api/realtime/tool</code> pendurasse ou a rede caísse, nenhum <code>function_call_output</code> era enviado — turno aberto para sempre, spinner eterno.</p>
+              <p><strong>Depois:</strong> <code>runTool</code> tem timeout (75s — o worst case legítimo do servidor é 45+30=75s) via AbortController; o <code>runToolCalls</code> trata falha de lote com <code>failedToolOutcomes</code> e fecha o turno SEMPRE (<code>foldToolOutcomes</code>: ack-antes-send numa passada síncrona, <code>setActiveTool(null)</code> + ack timer no finally), enviando outputs de erro falados em PT-BR. Provado por um teste e2e que monta o hook real com handshake WebRTC genuíno.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#dep5">5 · Novas ferramentas e UI</button></h3>
+          <div id="dep5" class="accordion-collapse collapse" data-bs-parent="#depara-accordion">
+            <div class="accordion-body">
+              <p><strong>check_web_search</strong> — por paridade com <code>check_pi_agent</code>/<code>check_deep_think</code>: consulta o estado de uma busca (running/done/error/ausente), leitura do registry, oferecida nas mesmas condições que a própria busca. A descrição da <code>web_search</code> foi reescrita para ensinar o contrato assíncrono (avise e continue conversando; uma busca por vez; segunda chamada com uma em andamento é recusada com 409).</p>
+              <p><strong>WebSearchCard</strong> — card novo (espelho do AgentJobCard, <code>data-role="web-search"</code>) mostrando a busca em andamento e o custo; o estado <code>webSearchJobs</code> reseta na troca de conversa. <strong>Replay SSE</strong> segue a regra dos irmãos: só jobs finalizados carregam <code>replay: true</code>; reconexão nunca narra resposta antiga.</p>
+              <p><strong>Fix cosmético herdado:</strong> o "(timed out)" em inglês na string falada do timeout virou "excedeu o limite de tempo".</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+<!-- {{BEFORE_AFTER}} end -->
+
+      <h2 class="h4 pane-title">Impacto</h2>
+      <p>O que cada mudança significa para quem usa o deep-orchestrator:</p>
+      <div class="list-group list-group-flush mb-4">
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-search fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Busca Brave integrada</strong> — sub-agentes pesquisam na web direto do terminal (curl + API Brave), sem depender de outras ferramentas.</div>
+        </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-credit-card-2-front fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Créditos sob controle</strong> — o orquestrador consulta os créditos restantes da API antes de disparar ondas longas.</div>
+        </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-shield-check fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Execução confiável</strong> — contratos ECC (execução de código confiável) que os sub-agentes seguem ao executar código.</div>
+        </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-chat-square-text fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Busca padronizada</strong> — prompts de pesquisa consistentes entre sub-agentes (search-prompts.md).</div>
+        </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-file-earmark-code fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>De-para visível</strong> — toda execução termina com um EXPLAINER.html legível (este documento).</div>
+        </div>
+        <div class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-gear fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Processo documentado</strong> — ondas ilimitadas e o novo fluxo registrados no SKILL.md.</div>
+        </div>
+      </div>
+
+      <h2 class="h4 pane-title">Novas capacidades</h2>
+      <div class="row g-3">
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-search fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Busca Brave interna</h3>
+              <p class="small text-body-secondary mb-0">Sub-agentes pesquisam na web via API Brave, direto do terminal — sem sair do fluxo.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-shield-check fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">ECC prompts</h3>
+              <p class="small text-body-secondary mb-0">Contratos de execução de código confiável que os sub-agentes seguem (ecc-prompts.md, ecc-skills.md).</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-infinity fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Ondas ilimitadas</h3>
+              <p class="small text-body-secondary mb-0">O plano não fica limitado a N ondas — a topologia das dependências manda.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-credit-card-2-front fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">Verificação de créditos</h3>
+              <p class="small text-body-secondary mb-0">Créditos da API Brave consultados antes de ondas longas — o orquestrador sabe quando parar.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <i class="bi bi-file-earmark-code fs-3 stat-value"></i>
+              <h3 class="h6 mt-2 mb-1">HTML explainer</h3>
+              <p class="small text-body-secondary mb-0">Este documento: o de-para (antes/depois) de tudo que foi feito na execução.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ ABA 5 · DECISÕES AUTÔNOMAS ══════════════ -->
+    <div class="tab-pane fade" id="pane-decisoes" role="tabpanel"
+         aria-labelledby="tab-decisoes" tabindex="0" data-print-title="Decisões autônomas">
+      <h2 class="h4 pane-title">Premissas inferidas sem perguntar</h2>
+      <p>O orquestrador opera em autonomia total: nenhuma pergunta foi feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
+
+      <!-- {{DECISIONS}} begin -->
+<ul class="list-group list-group-flush">        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>web_search assíncrona é a decisão central:</strong> A skill integrating-openai-realtime prescreve: 'A slow tool must not block the conversation. Return something immediately and inject the real answer later'. web_search era a única tool lenta que violava isso; o fix correto era assíncrono, não um timeout menor.</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Timeout do job de busca em 180s:</strong> O pior caso legítimo é 45s (OpenAI) + 30s (fallback surf) = 75s. Um timeout menor mataria a busca no meio do fallback — pinado com teste (default 180s).</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Timeout do runTool em 75s, não 60s:</strong> 60s cortaria uma busca legítima no fallback (75s é o worst case real verificado no código); 75s destrava a conversa em qualquer cenário e nunca dispara com o dispatch assíncrono (que responde em ms).</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Bloco de contexto SEM custo de LLM:</strong> buildResearchContext lê storage (getConversation) + source-store — nada de buildResume/summarizer por tool call. Cada caractere de instrução é re-bilado; o bloco entra uma vez por chamada de pesquisa, nunca nas instruções do realtime.</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>prompts.ts intacto:</strong> A descrição da tool é o contrato (o modelo lê o schema da tool no session); ensinar o comportamento em TOOL_GUIDANCE seria re-bilado em toda resposta sem mudar comportamento. As descrições de web_search/check_web_search/context foram atualizadas em tools/index.ts.</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>check_web_search registry read-only:</strong> Sem rotas extras de listagem, sem polling de UI — apenas o espelho de check_pi_agent. Paridade com os irmãos, escopo mínimo.</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>WebSearchCard espelha AgentJobCard:</strong> Busca web não tem fan de thinkers — o padrão DeepThinkCard seria over-engineering. Sem onCancel (o cancel pertence ao registry do pi; busca não tem processo filho).</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Erros de busca não são persistidos:</strong> Espelha os handlers irmãos (agente pi e deep-think): só resultados úteis entram no arquivo da conversa; o motivo da falha é falado e mostrado no card.</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Testes da subwave foram integrados à main:</strong> As testing subwaves rodaram contra a base da Onda 1; a Onda 2 mudou a API (retorno {text, cost_usd}, 4 args com contexto, frase PT-BR). Os pins stale foram reescritos contra main — o pin de ausência virou pin de presença (falha se o contexto sumir).</div>
+        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
+          <div><strong>Falsos positivos de teste corrigidos com prova por mutação:</strong> prune-running (running sempre os mais novos), disarm do timer no timeout (getTimerCount era vácuo), filtros de conversa do SSE (testes liam 1 chunk só) — cada fix comprovado: mutação na produção → teste falha; restauração → passa.</div>
+        </li>
+      </ul>
+<!-- {{DECISIONS}} end -->
+
+      <p class="text-body-secondary small mt-2">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelas decisões reais da execução.</p>
+    </div>
+
+    <!-- ══════════════ ABA 6 · TIMELINE ══════════════ -->
+    <div class="tab-pane fade" id="pane-timeline" role="tabpanel"
+         aria-labelledby="tab-timeline" tabindex="0" data-print-title="Timeline">
+      <h2 class="h4 pane-title">Linha do tempo da execução</h2>
+      <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
+
+      <!-- {{TIMELINE}} begin -->
+
+      <ol class="timeline list-unstyled mb-0">
+        <li class="timeline-item mb-4">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-accent">17:16</span>
+            <strong>FASE 0 + ANALYZE</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">Fronteira resolvida (MODE=normal, raiz /home/ondokai/Projects/explainer). Project-router e 6 skills carregadas. Diagnóstico no código: 3 subsistemas de pesquisa (web_search síncrono que bloqueia a fala; fallback surf sempre quebrado — verificado ao vivo; zero contexto enviado a web/pi/deep_think) + fetch de tool sem timeout.</p>
+        </li>
+        <li class="timeline-item mb-4">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-accent">17:25</span>
+            <strong>PLAN + ONDA 1</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">Plano publicado (2 ondas + subwaves). 3 worktrees paralelas (surf-fallback · research-context · toolcall-timeout). Barreira: revisão adversarial 'nada a refutar' nas três; 1a/1b/1c squash-mergeadas com gate verde. Replan aprovou emendas para a Onda 2.</p>
+        </li>
+        <li class="timeline-item mb-4">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-accent">17:40</span>
+            <strong>ONDA 2 (PREP + 2 worktrees)</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">COMMIT PREP: contrato SSE web_search_* fixado nos dois pacotes. backend (jobs + check_web_search + contexto + replay) e frontend (handler + card + persist) em paralelo. Revisor adversarial achou 1 problema real no backend (timer do job cancelado nunca era limpo) — fix com prova por mutação. Replan final: CONVERGÊNCIA.</p>
+        </li>
+        <li class="timeline-item mb-4">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-accent">18:10</span>
+            <strong>TESTING SUBWAVES (5 worktrees)</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">Onda 1: 62 testes (100% de cobertura no fallback; e2e do destrave com WebRTC real; invariantes de truncamento). Onda 2: 62 testes. Revisão adversarial dos testes achou 3 pins stale (API da Onda 2) + 2 falsos positivos + 1 gap — todos corrigidos com integração a main e prova por mutação. Um conflito de merge resolvido preservando os dois lados (29 casos em web-search.test.ts).</p>
+        </li>
+        <li class="timeline-item">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge badge-ok">19:00</span>
+            <strong>COMMIT-FINAL</strong>
+          </div>
+          <p class="mb-0 text-body-secondary small">12 squash commits em main; gates verdes após cada merge (validate + frontend separado); 1 275 testes backend + 476 frontend; worktrees/branches removidos e arquivados em refs/do-archive; contenção provada; este EXPLAINER.html gerado.</p>
+        </li>
+      </ol>
+
+<!-- {{TIMELINE}} end -->
+
+      <p class="text-body-secondary small mt-3">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pela timeline real da execução.</p>
+    </div>
+
+  </div>
+
+  <footer class="text-body-secondary small border-top mt-5 pt-3">
+    Gerado por <strong>deep-orchestrator</strong> v2.0 · 13/08/2026 · branch main.
+    Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
+  </footer>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+        crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"
+        integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU"
+        crossorigin="anonymous"></script>
+
+<script>
+/* ── runtime do documento ────────────────────────────────────────────────────
+   Copie este bloco inteiro, sem editar. Ele faz três coisas:
+   1. guarda o código-fonte cru ANTES de qualquer transformação (para o copiar);
+   2. destaca a sintaxe e injeta o botão de copiar;
+   3. liga as abas ao #hash da URL, nos dois sentidos.
+   ────────────────────────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+
+  // 1. Fonte cru primeiro. Depois do highlight o DOM ganha <span>; textContent ainda
+  //    devolve o texto certo, mas plugins de numeração de linha o contaminam. Guardar
+  //    antes é a única versão que nunca mente.
+  var sources = new WeakMap();
+  document.querySelectorAll('pre > code').forEach(function (code) {
+    sources.set(code, code.textContent.replace(/\n$/, ''));
+  });
+
+  // 2. Highlight. Declare sempre a linguagem na classe: a auto-detecção erra em
+  //    trechos curtos (o mesmo snippet vira "ruby" numa aba e "perl" na outra).
+  if (window.hljs) hljs.highlightAll();
+
+  // Copiar. navigator.clipboard exige contexto seguro; em file:// o comportamento
+  // varia por navegador, então o fallback com execCommand não é opcional.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(function () { return true; },
+                                                      function () { return legacyCopy(text); });
+    }
+    return Promise.resolve(legacyCopy(text));
+  }
+
+  function legacyCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // position:fixed + opacity:0 evita que a página role até o textarea.
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length); // iOS ignora select() sozinho
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  document.querySelectorAll('pre > code').forEach(function (code) {
+    var pre = code.parentElement;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
+    btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+    btn.setAttribute('aria-label', 'Copiar código');
+    btn.addEventListener('click', function () {
+      copyText(sources.get(code) || code.textContent).then(function (ok) {
+        btn.innerHTML = ok ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-x-lg"></i>';
+        btn.classList.toggle('btn-outline-success', ok);
+        btn.classList.toggle('btn-outline-danger', !ok);
+        btn.classList.remove('btn-outline-secondary');
+        setTimeout(function () {
+          btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+          btn.className = 'btn btn-sm btn-outline-secondary copy-btn';
+        }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+
+  // 3. Aba ↔ URL. Sem isto, mandar "olha a aba De-Para" exige explicar o clique.
+  var tabs = document.querySelectorAll('[data-bs-toggle="tab"]');
+  if (!tabs.length) return;
+
+  function activateFromHash() {
+    var hash = window.location.hash;
+    if (!hash || hash.length < 2) return;
+    var target = document.querySelector(hash);
+    if (!target) return;
+    // O #hash pode apontar para o painel OU para um título dentro dele.
+    var pane = target.closest('.tab-pane') || (target.classList.contains('tab-pane') ? target : null);
+    if (!pane) return;
+    var trigger = document.querySelector('[data-bs-target="#' + CSS.escape(pane.id) + '"]');
+    if (trigger) bootstrap.Tab.getOrCreateInstance(trigger).show();
+    // O navegador já tentou rolar até o alvo — e falhou, porque naquele instante o
+    // painel ainda era display:none. Agora que apareceu, role de novo: sem isto a
+    // página abre num scroll intermediário, com as abas escondidas atrás da navbar.
+    var scrollTo = target !== pane ? target : (trigger && trigger.closest('[role="tablist"]')) || pane;
+    requestAnimationFrame(function () { scrollTo.scrollIntoView({ block: 'start' }); });
+  }
+
+  tabs.forEach(function (t) {
+    t.addEventListener('shown.bs.tab', function (e) {
+      var id = (e.target.getAttribute('data-bs-target') || '').slice(1);
+      // replaceState, não location.hash: mudar o hash direto faz a página pular.
+      if (id) history.replaceState(null, '', '#' + id);
+    });
+  });
+
+  window.addEventListener('hashchange', activateFromHash);
+  activateFromHash();
+})();
+</script>
 </body>
 </html>
