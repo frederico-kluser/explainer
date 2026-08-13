@@ -14,6 +14,9 @@ process.env.HOME = tmpHome;
 const conversation = { value: null as Conversation | null };
 const sources = { value: [] as ResolvedSource[] };
 
+// A spy, so a test can prove the optional-sources path never re-reads the store.
+const listSourcesMock = vi.fn(async () => sources.value);
+
 vi.mock("../services/storage.js", async () => {
   const actual = await vi.importActual<typeof import("../services/storage.js")>(
     "../services/storage.js",
@@ -25,7 +28,7 @@ vi.mock("../services/source-store.js", async () => {
   const actual = await vi.importActual<typeof import("../services/source-store.js")>(
     "../services/source-store.js",
   );
-  return { ...actual, listSources: async () => sources.value };
+  return { ...actual, listSources: listSourcesMock };
 });
 
 const { buildResearchContext, MAX_CONTEXT_CHARS } = await import(
@@ -188,5 +191,161 @@ describe("buildResearchContext", () => {
     const block = await buildResearchContext(CONV);
 
     expect(block).toContain("1. Um repo (repo — https://exemplo.test/repo)");
+  });
+
+  it("does not re-read the materials when the caller passes them", async () => {
+    sources.value = [];
+    conversation.value = conversationWith([]);
+    listSourcesMock.mockClear();
+
+    const block = await buildResearchContext(CONV, [repoSource()]);
+
+    expect(block).toContain("1. Um repo (repo — https://exemplo.test/repo)");
+    expect(listSourcesMock).not.toHaveBeenCalled();
+  });
+
+  it("lays the sections out in order: title, materials, latest turns", async () => {
+    sources.value = [repoSource()];
+    conversation.value = conversationWith([message("user", "oi", 1)]);
+
+    const block = await buildResearchContext(CONV);
+
+    const title = block.indexOf("# Contexto da conversa");
+    const materials = block.indexOf("## Materiais");
+    const turns = block.indexOf("## Ultimos momentos da conversa (mais recentes primeiro)");
+    expect(title).toBe(0);
+    expect(materials).toBeGreaterThan(title);
+    expect(turns).toBeGreaterThan(materials);
+  });
+
+  it("labels a tool turn with content as ferramenta, like the user sees it", async () => {
+    sources.value = [];
+    conversation.value = conversationWith([
+      message("user", "leia o arquivo", 1),
+      { id: "m2", role: "tool", content: "resultado da leitura: 42", timestamp: "2026-01-01T00:00:02.000Z" },
+      message("assistant", "encontrei 42", 3),
+    ]);
+
+    const block = await buildResearchContext(CONV);
+
+    expect(block).toContain("ferramenta: resultado da leitura: 42");
+    expect(block).toContain("assistente: encontrei 42");
+    // Newest first still holds across roles.
+    expect(block.indexOf("assistente: encontrei 42")).toBeLessThan(
+      block.indexOf("ferramenta: resultado da leitura: 42"),
+    );
+  });
+
+  it("labels every material kind, and drops the origin when a source has none", async () => {
+    sources.value = [
+      {
+        id: "mat-1",
+        kind: "repo",
+        label: "Repo local",
+        root: "/srv/repo",
+        resolved_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "mat-2",
+        kind: "machine",
+        label: "Docs da maquina",
+        root: "/srv/machine",
+        resolved_at: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    conversation.value = conversationWith([]);
+
+    const block = await buildResearchContext(CONV);
+
+    // No origin segment on either line — the ` — <origin>` part only exists
+    // when the source carries one.
+    expect(block).toContain("1. Repo local (repo) — posso ler, procurar e mandar agente");
+    expect(block).toContain("2. Docs da maquina (machine) — posso ler, procurar e mandar agente");
+    expect(block).not.toContain("— https://");
+  });
+
+  it("clips a turn only once it passes 500 characters", async () => {
+    sources.value = [];
+    conversation.value = conversationWith([
+      message("user", "a".repeat(500), 2),
+      message("assistant", "b".repeat(501), 1),
+    ]);
+
+    const block = await buildResearchContext(CONV);
+
+    // Exactly at the clip limit the turn stays whole; one character past it,
+    // the last character gives way to the ellipsis.
+    expect(block).toContain(`usuario: ${"a".repeat(500)}`);
+    expect(block).toContain(`assistente: ${"b".repeat(499)}…`);
+    expect(block).not.toContain(`assistente: ${"b".repeat(500)}`);
+  });
+
+  it("treats a transcript of empty turns as having no history", async () => {
+    sources.value = [];
+    conversation.value = conversationWith([
+      { id: "m1", role: "user", content: "", timestamp: "2026-01-01T00:00:01.000Z" },
+      { id: "m2", role: "tool", content: null, timestamp: "2026-01-01T00:00:02.000Z" },
+    ]);
+
+    const block = await buildResearchContext(CONV);
+
+    expect(block).toContain("A conversa ainda nao tem historico registrado.");
+  });
+
+  it("keeps the whole block under the cap when materials eat the transcript budget", async () => {
+    sources.value = [repoSource(), markdownSource()];
+    // The material lines shrink the transcript's share of the 3 000-character
+    // budget; the invariant must hold with the fixed sections in place too.
+    const many = Array.from({ length: 80 }, (_, i) =>
+      message("user", `turno ${i} ` + "y".repeat(40), i),
+    );
+    conversation.value = conversationWith(many);
+
+    const block = await buildResearchContext(CONV);
+
+    expect(block.length).toBeLessThanOrEqual(MAX_CONTEXT_CHARS);
+    expect(block).toContain("[...conversa anterior truncada...]");
+    expect(block).toContain("1. Um repo (repo");
+  });
+
+  it("lands exactly on the cap when a turn is clipped at the boundary", async () => {
+    sources.value = [];
+    // No materials, so the fixed sections cost 80 characters and the transcript
+    // budget is 2 884. Seven turns of 450 characters each: six fit whole
+    // (6 × 460 with their separators), the seventh is clipped to the remaining
+    // 124 characters and the marker then fills the budget exactly. Before the
+    // separator accounting in `transcript`, the join overflowed the cap by
+    // roughly twenty characters — this pins the boundary with zero slack.
+    const many = Array.from({ length: 7 }, (_, i) => message("user", "x".repeat(450), i));
+    conversation.value = conversationWith(many);
+
+    const block = await buildResearchContext(CONV);
+
+    expect(block.length).toBe(MAX_CONTEXT_CHARS);
+    expect(block).toContain("[...conversa anterior truncada...]");
+    // The marker is the last thing in the block — the cut happened here.
+    expect(block.endsWith("[...conversa anterior truncada...]")).toBe(true);
+    // The newest turn survived whole; the oldest was clipped mid-word.
+    expect(block).toContain(`usuario: ${"x".repeat(450)}`);
+    expect(block).toContain(`usuario: ${"x".repeat(113)}…`);
+  });
+
+  it("drops the overflowing turn whole when fewer than 41 characters remain", async () => {
+    sources.value = [];
+    // Twenty-six turns of 100 characters each cost 26 × 110 with their
+    // separators = 2 860 against a transcript budget of 2 884. The twenty-
+    // seventh overflows with only 24 characters left — too small for the
+    // smallest useful clip (41), so no half-line is emitted: the marker follows
+    // the last full turn instead.
+    const many = Array.from({ length: 27 }, (_, i) => message("user", "u".repeat(100), i));
+    conversation.value = conversationWith(many);
+
+    const block = await buildResearchContext(CONV);
+
+    expect(block).toContain("[...conversa anterior truncada...]");
+    expect(block).not.toContain("…");
+    expect((block.match(/usuario: /g) ?? []).length).toBe(26);
+    expect(block.length).toBeLessThanOrEqual(MAX_CONTEXT_CHARS);
+    expect(block.length).toBeGreaterThan(MAX_CONTEXT_CHARS - 100);
   });
 });

@@ -926,6 +926,129 @@ describe("dispatchDeepThink", () => {
     }
   });
 
+  it("carries no conversation context in any stage when none is given", async () => {
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload(
+            '[{"angle":"evidencia","prompt":"p"},{"angle":"risco","prompt":"p"}]',
+          );
+        case "thinker":
+          return textPayload(`Pensamento sobre ${angleOf(thinkerPrompt(body))}.`);
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "sem contexto nenhum",
+      thinkerCount: 2,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    // Planner + both thinkers + the synthesiser all re-word the scenario, so
+    // all four would carry the block if one were given. None of them may.
+    expect(requests.length).toBeGreaterThanOrEqual(4);
+    for (const body of requests) {
+      expect(firstUserText(body)).not.toContain("Contexto da conversa");
+    }
+  });
+
+  it("treats a whitespace-only context as absent", async () => {
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload('[{"angle":"evidencia","prompt":"p"}]');
+        case "thinker":
+          return textPayload("Pensamento curto.");
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "contexto em branco",
+      context: "  \n  ",
+      thinkerCount: 1,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    for (const body of requests) {
+      expect(firstUserText(body)).not.toContain("Contexto da conversa");
+    }
+  });
+
+  it("caps a context at exactly 4 000 characters, not one more", async () => {
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload('[{"angle":"evidencia","prompt":"p"}]');
+        case "thinker":
+          return textPayload("Pensamento curto.");
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "cenario curto",
+      context: "c".repeat(4_001),
+      thinkerCount: 1,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    // One character over the cap: every stage that carries the block gets
+    // exactly 4 000 of them — the slice is exact, not approximate.
+    const carrying = requests.filter((b) => firstUserText(b).includes("Contexto da conversa:"));
+    expect(carrying).toHaveLength(3); // planner + thinker + synthesiser
+    for (const body of carrying) {
+      const match = /Contexto da conversa: (c+)/.exec(firstUserText(body));
+      expect(match?.[1]).toBe("c".repeat(4_000));
+    }
+  });
+
+  it("keeps the context between the scenario and the reflection", async () => {
+    handler = (body) => {
+      switch (stageOf(body)) {
+        case "planner":
+          return textPayload(
+            '[{"angle":"evidencia","prompt":"p"},{"angle":"risco","prompt":"p"}]',
+          );
+        case "thinker":
+          return textPayload(`Pensamento sobre ${angleOf(thinkerPrompt(body))}.`);
+        default:
+          return textPayload("Consolidado.");
+      }
+    };
+
+    const job = await mod.dispatchDeepThink({
+      conversationId: randomUUID(),
+      scenario: "migrar o banco",
+      context: "o prazo e curto",
+      reflection: "acho que da tempo",
+      thinkerCount: 2,
+      searchFn,
+    });
+    await waitFor(job.id, "deep_think_done");
+
+    const carrying = requests.filter((b) => firstUserText(b).includes("Contexto da conversa:"));
+    expect(carrying).toHaveLength(4);
+    for (const body of carrying) {
+      const text = firstUserText(body);
+      expect(text.indexOf("Cenario:")).toBeGreaterThan(-1);
+      expect(text.indexOf("Cenario:")).toBeLessThan(text.indexOf("Contexto da conversa:"));
+      expect(text.indexOf("Contexto da conversa:")).toBeLessThan(
+        text.indexOf("Reflexao de quem perguntou:"),
+      );
+    }
+  });
+
   it("rejects an empty scenario", async () => {
     await expect(
       mod.dispatchDeepThink({ conversationId: randomUUID(), scenario: "   ", searchFn }),

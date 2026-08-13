@@ -246,4 +246,39 @@ describe("webSearch", () => {
     expect(input).not.toContain("Contexto da conversa");
     expect(input).toContain("Pergunta: quanto custa hoje?");
   });
+
+  it("assembles the input exactly: instruction, context, then the question", async () => {
+    stubOpenAI({
+      model: openai.SEARCH_MODEL,
+      usage: { input_tokens: 100, output_tokens: 20 },
+      output: [message("resposta")],
+    });
+
+    await openai.webSearch("quanto custa?", {
+      context: "bloco da conversa",
+    });
+
+    expect(lastBody.input).toBe(
+      "Pesquise na web e responda de forma curta e objetiva, em portugues do Brasil, " +
+        "em no maximo cinco frases, citando as fontes.\n\n" +
+        "Contexto da conversa: bloco da conversa\n\n" +
+        "Pergunta: quanto custa?",
+    );
+  });
+
+  it("mounts the search payload around the context-aware input", async () => {
+    stubOpenAI({
+      model: openai.SEARCH_MODEL,
+      usage: {},
+      output: [],
+    });
+
+    await openai.webSearch("quanto custa?", { context: "um bloco" });
+
+    expect(lastBody.model).toBe(openai.SEARCH_MODEL);
+    expect(lastBody.tools).toEqual([{ type: "web_search" }]);
+    expect(lastBody.tool_choice).toBe("auto");
+    expect(lastBody.max_output_tokens).toBe(900);
+    expect(lastBody.reasoning).toEqual({ effort: "low" });
+  });
 });

@@ -127,6 +127,88 @@ describe("buildPrompt", () => {
       prompt.indexOf("Pergunta: qual o bug?"),
     );
   });
+
+  it("omits the context section when the context is only whitespace", async () => {
+    const done = waitFor((e) => e.type === "done");
+
+    const job = mod.dispatchAgentJob({
+      conversationId: CONV,
+      prompt: "qual o bug?",
+      cwd: workdir,
+      context: "   ",
+    });
+    await done;
+
+    const prompt = mod.getJob(job.id)?.prompt ?? "";
+    expect(prompt).not.toContain("Contexto:");
+    expect(prompt).toContain("Pergunta: qual o bug?");
+  });
+
+  it("trims the context and keeps one at exactly the cap whole", async () => {
+    const done = waitFor((e) => e.type === "done");
+
+    const job = mod.dispatchAgentJob({
+      conversationId: CONV,
+      prompt: "pergunta",
+      cwd: workdir,
+      context: `  ${"c".repeat(mod.MAX_CONTEXT_CHARS)}  `,
+    });
+    await done;
+
+    const prompt = mod.getJob(job.id)?.prompt ?? "";
+    const contextPart = prompt.slice(
+      prompt.indexOf("Contexto: ") + "Contexto: ".length,
+      prompt.indexOf("\n\nPergunta: "),
+    );
+    // Trimmed at both ends first, then sliced — a context of exactly the cap
+    // survives intact, so the slice has no off-by-one.
+    expect(contextPart.length).toBe(mod.MAX_CONTEXT_CHARS);
+    expect(contextPart).toBe("c".repeat(mod.MAX_CONTEXT_CHARS));
+  });
+
+  it("caps the context at exactly MAX_CONTEXT_CHARS, not one more", async () => {
+    const done = waitFor((e) => e.type === "done");
+
+    const job = mod.dispatchAgentJob({
+      conversationId: CONV,
+      prompt: "pergunta",
+      cwd: workdir,
+      context: "c".repeat(mod.MAX_CONTEXT_CHARS + 1),
+    });
+    await done;
+
+    const prompt = mod.getJob(job.id)?.prompt ?? "";
+    const contextPart = prompt.slice(
+      prompt.indexOf("Contexto: ") + "Contexto: ".length,
+      prompt.indexOf("\n\nPergunta: "),
+    );
+    expect(contextPart.length).toBe(mod.MAX_CONTEXT_CHARS);
+    expect(contextPart).toBe("c".repeat(mod.MAX_CONTEXT_CHARS));
+    expect(prompt).not.toContain("c".repeat(mod.MAX_CONTEXT_CHARS + 1));
+  });
+
+  it("caps the question and the context independently", async () => {
+    const done = waitFor((e) => e.type === "done");
+
+    const job = mod.dispatchAgentJob({
+      conversationId: CONV,
+      prompt: "p".repeat(20_000),
+      cwd: workdir,
+      context: "c".repeat(10_000),
+    });
+    await done;
+
+    const prompt = mod.getJob(job.id)?.prompt ?? "";
+    // A long question is cut at its own 8 000-character ceiling, and a long
+    // context at its own — neither cap borrows from the other.
+    expect(prompt).toContain(`Pergunta: ${"p".repeat(MAX_PROMPT_CHARS)}`);
+    expect(prompt).not.toContain("p".repeat(MAX_PROMPT_CHARS + 1));
+    const contextPart = prompt.slice(
+      prompt.indexOf("Contexto: ") + "Contexto: ".length,
+      prompt.indexOf("\n\nPergunta: "),
+    );
+    expect(contextPart).toBe("c".repeat(mod.MAX_CONTEXT_CHARS));
+  });
 });
 
 describe("dispatchAgentJob", () => {

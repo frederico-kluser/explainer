@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { DispatchOptions } from "../services/agent-jobs.js";
-import type { WebSearchOptions } from "../services/web-search-jobs.js";
 import type { WebSearchJob } from "../types/deep-tools.js";
 import type { Conversation, ResolvedSource } from "../types/index.js";
 
@@ -61,6 +60,13 @@ vi.mock("../services/agent-jobs.js", async () => {
   };
 });
 
+// web_search would call the Responses API and, on failure, a CLI; the wiring
+// under test is whether the executor hands it the conversation block, so the
+// body is a spy that records the arguments.
+vi.mock("../tools/web-search.js", () => ({
+  executeWebSearch: vi.fn(async () => "resultado da busca"),
+}));
+
 // The three deliberation bodies spend money and talk to two providers; what is
 // under test here is the spine, so they are replaced by spies that record the
 // arguments the switch forwarded.
@@ -79,27 +85,23 @@ vi.mock("../tools/deliberation-tools.js", () => ({
   })),
 }));
 
-// A real search hits the OpenAI API and the surf CLI; the registry functions
-// are spies so the wiring under test is the dispatch/check routing, not the
-// search itself.
+// A real search hits the OpenAI API and the surf CLI; the registry reads are
+// spies so check_web_search's four states are scriptable. dispatchWebSearch
+// stays real on purpose: the web_search tests below pin the conversation block
+// reaching executeWebSearch (mocked above), and that call happens inside the
+// real dispatch path. listWebSearchJobs delegates to the real registry so the
+// real dispatch (which reads it through a module-local binding the mock cannot
+// reach) and the executor's own reads agree on the same jobs.
 vi.mock("../services/web-search-jobs.js", async () => {
   const actual = await vi.importActual<typeof import("../services/web-search-jobs.js")>(
     "../services/web-search-jobs.js",
   );
   return {
     ...actual,
-    dispatchWebSearch: vi.fn(
-      (options: { conversationId: string; query: string; context?: string }) => ({
-        id: "search-1",
-        conversation_id: options.conversationId,
-        query: options.query,
-        status: "running",
-        activity: "buscando na web",
-        started_at: new Date().toISOString(),
-      }),
-    ),
     getWebSearchJob: vi.fn(() => undefined),
-    listWebSearchJobs: vi.fn(() => []),
+    listWebSearchJobs: vi.fn((conversationId: string) =>
+      actual.listWebSearchJobs(conversationId),
+    ),
   };
 });
 
@@ -113,6 +115,7 @@ const webSearchJobs = await import("../services/web-search-jobs.js");
 const { MERMAID_KINDS } = await import("../services/mermaid.js");
 const { MAX_THINKERS } = await import("../types/deep-tools.js");
 const deliberation = await import("../tools/deliberation-tools.js");
+const webSearchTool = await import("../tools/web-search.js");
 
 const CONV = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -370,7 +373,7 @@ describe("the async web search", () => {
     };
   }
 
-  it("dispatches the search with the conversation block and answers immediately", async () => {
+  it("dispatches the search and answers immediately", async () => {
     currentSource.value = markdownSource();
     currentConversation.value = conversationWith([
       {
@@ -383,36 +386,63 @@ describe("the async web search", () => {
 
     const result = await executeTool("web_search", '{"query":"preco do petroleo"}', CONV);
 
-    // The whole point: a voice turn is not blocked on the search.
-    expect(result.meta).toMatchObject({ job_id: "search-1", status: "running" });
+    // The whole point: a voice turn is not blocked on the search. The dispatch
+    // is real, so the job id is a live uuid — the shape is what matters here,
+    // and the conversation block is pinned on executeWebSearch in the test
+    // right after, the deepest hop of the same call.
+    expect(result.meta).toMatchObject({ job_id: expect.any(String), status: "running" });
     expect(result.output).toMatch(/Busca disparada/);
-    expect(result.output).not.toContain("search-1");
+    expect(result.output).not.toContain(String(result.meta?.job_id ?? ""));
+  });
 
-    const options: Partial<WebSearchOptions> =
-      vi.mocked(webSearchJobs.dispatchWebSearch).mock.calls[0]?.[0] ?? {};
-    expect(options.query).toBe("preco do petroleo");
-    // The automatic conversation block rides along, like every research tool.
-    expect(options.context).toContain("# Contexto da conversa");
-    expect(options.context).toContain("Quero saber o preco do petroleo.");
+  it("hands the conversation block to the web search", async () => {
+    currentSource.value = repoSource();
+    currentConversation.value = conversationWith([
+      {
+        id: "m1",
+        role: "user",
+        content: "O preco do plano subiu.",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await executeTool("web_search", '{"query":"preco atual do plano"}', CONV);
+
+    // The block rides as the search's 4th argument — pinned by presence: if
+    // the context stops being forwarded, this call fails on arity or content.
+    expect(result.output).toMatch(/Busca disparada/);
+    expect(webSearchTool.executeWebSearch).toHaveBeenCalledTimes(1);
+    expect(webSearchTool.executeWebSearch).toHaveBeenCalledWith(
+      "preco atual do plano",
+      CONV,
+      undefined,
+      expect.stringContaining("# Contexto da conversa"),
+    );
+    const block = vi.mocked(webSearchTool.executeWebSearch).mock.calls[0]?.[3] ?? "";
+    expect(block).toContain("O preco do plano subiu.");
   });
 
   it("answers the 409 with a spoken sentence, keeping the id out of it", async () => {
     currentSource.value = markdownSource();
-    const running = runningSearch();
-    vi.mocked(webSearchJobs.listWebSearchJobs).mockReturnValue([running]);
-    vi.mocked(webSearchJobs.dispatchWebSearch).mockImplementation(() => {
-      throw new webSearchJobs.WebSearchJobError(
-        "Ja existe uma busca em andamento nesta conversa (job search-1).",
-        409,
-      );
-    });
+    // A search that never answers keeps its job "running" in the real
+    // registry, so the second dispatch trips the real 409 check.
+    vi.mocked(webSearchTool.executeWebSearch).mockImplementationOnce(
+      () => new Promise<never>(() => undefined),
+    );
+    const first = await executeTool("web_search", '{"query":"primeira"}', CONV);
+    const runningId = String(first.meta?.job_id ?? "");
 
-    const result = await executeTool("web_search", '{"query":"outra"}', CONV);
+    try {
+      const result = await executeTool("web_search", '{"query":"outra"}', CONV);
 
-    expect(result.output).toMatch(/Ja tem uma busca em andamento/);
-    // Spoken, the uuid would be read out digit by digit; it belongs in meta.
-    expect(result.output).not.toContain("search-1");
-    expect(result.meta).toMatchObject({ job_id: "search-1", status: "running" });
+      expect(result.output).toMatch(/Ja tem uma busca em andamento/);
+      // Spoken, the uuid would be read out digit by digit; it belongs in meta.
+      expect(result.output).not.toContain(runningId);
+      expect(result.meta).toMatchObject({ job_id: runningId, status: "running" });
+    } finally {
+      // Tear the hanging job off its budget timer so the suite is not held open.
+      webSearchJobs.cancelWebSearch(runningId);
+    }
   });
 
   it("reports a running search through check_web_search", async () => {
@@ -467,6 +497,47 @@ describe("the async web search", () => {
   });
 });
 
+describe("the research tools and the conversation block", () => {
+  it("sends only the automatic block when the model gives no context of its own", async () => {
+    currentSource.value = repoSource();
+    currentConversation.value = conversationWith([
+      {
+        id: "m1",
+        role: "user",
+        content: "O modulo de cobranca esta lento.",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    await executeTool("dispatch_pi_agent", '{"question":"onde esta o gargalo?"}', CONV);
+
+    const options: Partial<DispatchOptions> =
+      vi.mocked(agentJobs.dispatchAgentJob).mock.calls[0]?.[0] ?? {};
+    expect(options.context).toContain("# Contexto da conversa");
+    expect(options.context).toContain("O modulo de cobranca esta lento.");
+    // Nothing was appended after the block — the block itself is the context.
+    expect(options.context!.indexOf("# Contexto da conversa")).toBe(0);
+  });
+
+  it("slices the combined pi context at exactly MAX_CONTEXT_CHARS", async () => {
+    currentSource.value = repoSource();
+    currentConversation.value = conversationWith([]);
+
+    const huge = "n".repeat(20_000);
+    await executeTool(
+      "dispatch_pi_agent",
+      JSON.stringify({ question: "onde esta?", context: huge }),
+      CONV,
+    );
+
+    const options: Partial<DispatchOptions> =
+      vi.mocked(agentJobs.dispatchAgentJob).mock.calls[0]?.[0] ?? {};
+    // The join of block + model context is sliced at the cap with no slack, and
+    // the block survives the cut — the model's own words are what gives way.
+    expect(options.context!.length).toBe(MAX_CONTEXT_CHARS);
+    expect(options.context).toContain("# Contexto da conversa");
+  });
+});
 describe("toolsForSources publishes the deliberation tools", () => {
   it("hides deep_think when BRAVE_API_KEY is unset and shows it when set", () => {
     delete process.env.BRAVE_API_KEY;
