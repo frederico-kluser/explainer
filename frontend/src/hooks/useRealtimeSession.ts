@@ -334,6 +334,82 @@ export async function executeToolCalls(
   );
 }
 
+/**
+ * The batch-wide failure fallback: every call becomes a spoken failure output.
+ *
+ * `executeToolCalls` already converts a per-call rejection into an output, so
+ * reaching this means the batch itself died — a bug, or a future flow. Each
+ * call still needs an answer or the turn stays open on outputs that never
+ * come, so the model hears one generic sentence per call and can propose a
+ * retry.
+ */
+export function failedToolOutcomes(
+  calls: readonly RealtimeFunctionCall[],
+): ToolCallOutcome[] {
+  const output =
+    "A ferramenta falhou por demora ou erro de conexao. Avise o usuario e proponha tentar de novo.";
+  return calls.map((call) => ({ call, output, diagram: null }));
+}
+
+/** Everything the outcome fold touches, so it can be driven without React. */
+export interface ToolOutcomeDeps {
+  upsertEntry: (
+    id: string,
+    role: TranscriptEntry["role"],
+    mutate: (previous: string) => string,
+    final?: boolean,
+  ) => void;
+  setDiagrams: (update: (previous: MermaidDiagram[]) => MermaidDiagram[]) => void;
+  /** Register the call_id the server must acknowledge before we ask for a response. */
+  addPendingAck: (callId: string) => void;
+  send: (event: object) => void;
+  setActiveTool: (name: string | null) => void;
+  /** Arm the escape hatch that closes the turn when an ack never arrives. */
+  armAckTimer: () => void;
+}
+
+/**
+ * Emit tool outcomes and close the turn.
+ *
+ * The ack-ordering invariant lives here: each `call_id` joins `pendingAcks`
+ * before its `function_call_output` is sent, all in one synchronous pass. An
+ * `await` inside the loop would let the first acknowledgement drain the pending
+ * set to zero while later outputs are still unsent, and `flushAcks` would then
+ * ask for a response the model cannot yet answer. The `finally` guarantees the
+ * turn closes even when the loop throws mid-way: the spinner goes away and the
+ * ack timer still fires, so the conversation never stays stuck on a tool.
+ */
+export function foldToolOutcomes(
+  deps: ToolOutcomeDeps,
+  results: readonly ToolCallOutcome[],
+): void {
+  try {
+    // On screen before the model starts talking about it: `output` carries
+    // only the caption, so a caption without its drawing is the model
+    // describing something nobody can see.
+    const drawn = results
+      .map((result) => result.diagram)
+      .filter((diagram): diagram is MermaidDiagram => diagram !== null);
+    if (drawn.length > 0) {
+      deps.setDiagrams((previous) => drawn.reduce(appendDiagram, previous));
+    }
+
+    for (const { call, output } of results) {
+      deps.upsertEntry(
+        `tool-${call.call_id}`,
+        "tool",
+        () => `${call.name} — ${summarizeToolOutput(output)}`,
+        true,
+      );
+      deps.addPendingAck(call.call_id);
+      deps.send(functionOutputEvent(call.call_id, output));
+    }
+  } finally {
+    deps.setActiveTool(null);
+    deps.armAckTimer();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The job stream
 // ---------------------------------------------------------------------------
@@ -1435,38 +1511,35 @@ export function useRealtimeSession(
         );
       }
 
-      const results = await executeToolCalls(id, calls);
-
-      // On screen before the model starts talking about it: `output` carries
-      // only the caption, so a caption without its drawing is the model
-      // describing something nobody can see.
-      const drawn = results
-        .map((result) => result.diagram)
-        .filter((diagram): diagram is MermaidDiagram => diagram !== null);
-      if (drawn.length > 0) {
-        setDiagrams((previous) => drawn.reduce(appendDiagram, previous));
+      // `executeToolCalls` turns a per-call rejection into a spoken output, so
+      // a rejection here means the batch itself died. Either way every call
+      // gets an answer and the turn closes — the conversation must not stay
+      // stuck waiting on a `function_call_output` that never comes.
+      let results: ToolCallOutcome[];
+      try {
+        results = await executeToolCalls(id, calls);
+      } catch {
+        results = failedToolOutcomes(calls);
       }
 
-      // One synchronous pass, no `await` inside it: the first acknowledgement
-      // would otherwise drain `pendingAcks` while later outputs are still
-      // unsent, and `flushAcks` would ask for a response the model cannot answer.
-      for (const { call, output } of results) {
-        upsertEntry(
-          `tool-${call.call_id}`,
-          "tool",
-          () => `${call.name} — ${summarizeToolOutput(output)}`,
-          true,
-        );
-        pendingAcksRef.current.add(call.call_id);
-        send(functionOutputEvent(call.call_id, output));
-      }
-
-      setActiveTool(null);
-
-      // Wait for the server to confirm the outputs before asking for a
-      // response; the timer is the escape hatch if an ack never shows up.
-      if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
-      ackTimerRef.current = setTimeout(flushAcks, ACK_TIMEOUT_MS);
+      foldToolOutcomes(
+        {
+          upsertEntry,
+          setDiagrams,
+          addPendingAck: (callId) => {
+            pendingAcksRef.current.add(callId);
+          },
+          send,
+          setActiveTool,
+          // Wait for the server to confirm the outputs before asking for a
+          // response; the timer is the escape hatch if an ack never shows up.
+          armAckTimer: () => {
+            if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+            ackTimerRef.current = setTimeout(flushAcks, ACK_TIMEOUT_MS);
+          },
+        },
+        results,
+      );
     },
     [flushAcks, send, upsertEntry],
   );

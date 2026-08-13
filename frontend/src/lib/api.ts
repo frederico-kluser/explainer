@@ -251,16 +251,48 @@ export interface ToolResult {
   meta: ToolMeta | null;
 }
 
+/**
+ * How long a tool call may run before the browser gives up on it, in ms.
+ *
+ * The server has no deadline of its own on `/api/realtime/tool`, so this is the
+ * only ceiling a stuck socket has: without it, `runTool` hangs forever and the
+ * conversation stays open on a `function_call_output` that never comes. The
+ * value sits above every legitimate budget — 25 s for `generate_diagram`,
+ * 45 s of OpenAI `web_search` plus up to 30 s of the surf fallback — so a real
+ * search is never cut mid-flight. The wave that makes `web_search` async will
+ * drop the server's answer time and this ceiling with it.
+ */
+export const REALTIME_TOOL_TIMEOUT_MS = 75_000;
+
 /** Run one of the model's function calls on the server. */
 export async function runTool(
   conversationId: string,
   call: { call_id: string; name: string; arguments: string },
 ): Promise<ToolResult> {
-  const response = await postJSON("/api/realtime/tool", {
-    conversation_id: conversationId,
-    ...call,
-  });
-  return handleResponse<ToolResult>(response);
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REALTIME_TOOL_TIMEOUT_MS);
+
+  try {
+    const response = await postJSON(
+      "/api/realtime/tool",
+      { conversation_id: conversationId, ...call },
+      { signal: controller.signal },
+    );
+    return await handleResponse<ToolResult>(response);
+  } catch (err) {
+    // Our own deadline, not the server's: name the tool instead of surfacing a
+    // bare AbortError — this message is what the model reads back out loud.
+    if (timedOut) {
+      throw new Error(`${call.name} excedeu o limite de tempo (timed out)`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ----- Agent jobs -----
