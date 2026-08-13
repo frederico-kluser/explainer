@@ -495,6 +495,95 @@ describe("the async web search", () => {
     expect(result.output).toBe("Nenhuma busca com esse identificador.");
     expect(result.meta).toBeUndefined();
   });
+
+  it("rejects an empty or missing query on web_search", async () => {
+    currentSource.value = markdownSource();
+
+    await expect(executeTool("web_search", '{"query":"   "}', CONV)).rejects.toThrow(
+      ToolValidationError,
+    );
+    await expect(executeTool("web_search", "{}", CONV)).rejects.toThrow(
+      /"query" must be a non-empty string/,
+    );
+    // Validation runs before the dispatch, so the search itself is never
+    // reached. dispatchWebSearch is real here (the wave-1 mock keeps the real
+    // dispatch for the block-forwarding tests), so the spy on the search body
+    // is the observable that proves nothing was dispatched.
+    expect(webSearchTool.executeWebSearch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty or missing job_id on check_web_search", async () => {
+    currentSource.value = markdownSource();
+
+    await expect(executeTool("check_web_search", '{"job_id":""}', CONV)).rejects.toThrow(
+      ToolValidationError,
+    );
+    await expect(executeTool("check_web_search", "{}", CONV)).rejects.toThrow(
+      /"job_id" must be a non-empty string/,
+    );
+    expect(webSearchJobs.getWebSearchJob).not.toHaveBeenCalled();
+  });
+
+  it("answers the search of another conversation when handed its id", async () => {
+    // Premise, not a fix: the registry is process-wide and `check_web_search`
+    // looks a job up by id without checking the conversation. A foreign id can
+    // only reach the model by accident (ids are minted per dispatch), so the
+    // behaviour is pinned as it is, not corrected here.
+    currentSource.value = markdownSource();
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReturnValue(
+      runningSearch({
+        id: "search-foreign",
+        conversation_id: "550e8400-e29b-41d4-a716-446655449999",
+        status: "done",
+        activity: "concluido",
+        result: "resultado da outra conversa",
+      }),
+    );
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-foreign"}', CONV);
+
+    expect(result.output).toContain("resultado da outra conversa");
+    expect(result.meta).toMatchObject({ job_id: "search-foreign", status: "done" });
+  });
+
+  it("answers noMaterial for check_web_search, like web_search, when nothing is added", async () => {
+    // Both tools are offered on an empty conversation, and both answer with the
+    // "add a material" sentence — the check never even looks the job up.
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReturnValue(runningSearch());
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-1"}', CONV);
+
+    expect(result.output).toMatch(/Nenhum material/i);
+    expect(webSearchJobs.getWebSearchJob).not.toHaveBeenCalled();
+  });
+
+  it("reports a cancelled search's spoken error through check_web_search", async () => {
+    currentSource.value = markdownSource();
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReturnValue(
+      runningSearch({
+        status: "cancelled",
+        activity: "",
+        error: "Cancelado pelo usuario.",
+      }),
+    );
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-1"}', CONV);
+
+    expect(result.output).toBe("Cancelado pelo usuario.");
+    expect(result.meta).toMatchObject({ job_id: "search-1", status: "cancelled" });
+  });
+
+  it("answers the fallback sentence when a finished search has no result or error", async () => {
+    currentSource.value = markdownSource();
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReturnValue(
+      runningSearch({ status: "done", activity: "concluido" }),
+    );
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-1"}', CONV);
+
+    expect(result.output).toBe("A busca terminou sem resposta.");
+    expect(result.meta).toMatchObject({ job_id: "search-1", status: "done" });
+  });
 });
 
 describe("the research tools and the conversation block", () => {
@@ -697,6 +786,23 @@ describe("the published schemas", () => {
     const check = tool("check_web_search");
     expect(check.parameters.properties.job_id).toBeDefined();
     expect(check.parameters.required).toEqual(["job_id"]);
+  });
+
+  it("teaches the async contract inside the web_search description", () => {
+    const search = tool("web_search");
+    const description = search.description;
+    // The model must know the result arrives later, that it must keep talking,
+    // that one search runs at a time, and how to ask about a running one.
+    expect(description).toContain("resultado chega sozinho");
+    expect(description).toContain("CONTINUE A CONVERSA");
+    expect(description).toContain("UMA busca por vez");
+    expect(description).toContain("check_web_search");
+    expect(search.parameters.required).toEqual(["query"]);
+    // The clamp in web-search.ts slices at 400; the schema has to say so.
+    const queryDescription =
+      (search.parameters.properties.query as { description?: string } | undefined)
+        ?.description ?? "";
+    expect(queryDescription).toContain("400 caracteres");
   });
 
   it("promises automatic conversation context on dispatch_pi_agent, nothing more", () => {

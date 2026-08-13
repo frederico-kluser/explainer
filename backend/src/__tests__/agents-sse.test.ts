@@ -225,30 +225,43 @@ describe("GET /api/agents/events", () => {
   });
 
   it("keeps another conversation's round off this stream", async () => {
+    const round = deepThinkJob({ status: "running", synthesis: undefined });
     const foreign: DeepThinkJob = {
       id: randomUUID(),
       conversation_id: randomUUID(),
       scenario: "outra conversa",
-      status: "done",
-      activity: "",
+      status: "running",
+      activity: "Quatro pensadores lendo a web.",
       thinkers: [],
-      synthesis: "nao deve aparecer",
       started_at: new Date().toISOString(),
     };
     deepThinkJobs.set(foreign.id, foreign);
-    const mine = deepThinkJob();
 
-    const events = await readEvents(1, () => {
+    // The foreign event is delivered first and the stream is read until two of
+    // our own events arrive: reading one event would abort before a leaked
+    // foreign frame was consumed, so the filter could be deleted unnoticed.
+    const events = await readEvents(2, () => {
       deepThinkListener?.({
-        type: "deep_think_done",
+        type: "deep_think_activity",
         job_id: foreign.id,
-        synthesis: "nao deve aparecer",
+        activity: "Quatro pensadores lendo a web.",
         thinkers: [],
+      });
+      deepThinkListener?.({
+        type: "deep_think_activity",
+        job_id: round.id,
+        activity: "Quatro pensadores lendo a web.",
+        thinkers: round.thinkers,
+      });
+      deepThinkListener?.({
+        type: "deep_think_activity",
+        job_id: round.id,
+        activity: "Sintetizando.",
+        thinkers: round.thinkers,
       });
     });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ job_id: mine.id, replay: true });
+    expect(events.map((event) => event.job_id)).toEqual([round.id, round.id]);
   });
 
   it("subscribes to all three buses on one connection", async () => {
@@ -306,6 +319,15 @@ describe("GET /api/agents/events", () => {
     });
   });
 
+  it("leaves the cost off a replayed done search that cost nothing", async () => {
+    webSearchJob(); // done, without cost_usd
+
+    const [event] = await readEvents(1);
+
+    expect(event).toMatchObject({ type: "web_search_done", replay: true });
+    expect(event).not.toHaveProperty("cost_usd");
+  });
+
   it("replays a cancelled search as an error", async () => {
     webSearchJob({ status: "cancelled", activity: "", error: "Cancelado pelo usuario." });
 
@@ -340,27 +362,175 @@ describe("GET /api/agents/events", () => {
   });
 
   it("keeps another conversation's search off this stream", async () => {
+    const job = webSearchJob({ status: "running", activity: "buscando na web", result: undefined });
     const foreign: WebSearchJob = {
       id: randomUUID(),
       conversation_id: randomUUID(),
       query: "outra conversa",
-      status: "done",
-      activity: "concluido",
-      result: "nao deve aparecer",
+      status: "running",
+      activity: "buscando na web",
+      result: undefined,
       started_at: new Date().toISOString(),
     };
     webSearchJobs.set(foreign.id, foreign);
-    const mine = webSearchJob();
 
-    const events = await readEvents(1, () => {
+    // The foreign event is delivered first and the stream is read until two of
+    // our own events arrive: reading one event would abort before a leaked
+    // foreign frame was consumed, so the filter could be deleted unnoticed.
+    const events = await readEvents(2, () => {
       webSearchListener?.({
-        type: "web_search_done",
+        type: "web_search_activity",
         job_id: foreign.id,
-        result: "nao deve aparecer",
+        activity: "formatando os resultados",
+      });
+      webSearchListener?.({
+        type: "web_search_activity",
+        job_id: job.id,
+        activity: "buscando na web",
+      });
+      webSearchListener?.({
+        type: "web_search_activity",
+        job_id: job.id,
+        activity: "formatando os resultados",
       });
     });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ job_id: mine.id, replay: true });
+    expect(events.map((event) => event.job_id)).toEqual([job.id, job.id]);
+  });
+
+  it("answers 400 when the conversation_id is not a UUID", async () => {
+    const res = await fetch(`${base}/events?conversation_id=nao-eh-uuid`);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Invalid conversation_id",
+    });
+  });
+
+  it("carries a live cancelled search as an error, without the replay flag", async () => {
+    // The job sits in the registry as running so the replay loop has nothing to
+    // say; the cancel arrives live, the way the registry emits it.
+    const job = webSearchJob({ status: "running", activity: "buscando na web", result: undefined });
+
+    const events = await readEvents(1, () => {
+      webSearchJobs.set(job.id, { ...job, status: "cancelled", activity: "", error: "Cancelado pelo usuario." });
+      webSearchListener?.({
+        type: "web_search_error",
+        job_id: job.id,
+        error: "Cancelado pelo usuario.",
+      });
+    });
+
+    expect(events[0]).toMatchObject({
+      type: "web_search_error",
+      error: "Cancelado pelo usuario.",
+    });
+    expect(events[0]!.replay).toBeUndefined();
+  });
+
+  it("carries agent, deep-think and web-search events on the same connection", async () => {
+    const agentId = randomUUID();
+    agentJobs.set(agentId, {
+      id: agentId,
+      conversation_id: conversationId,
+      prompt: "explique o modulo",
+      cwd: "/srv/explainer",
+      status: "running",
+      activity: "trabalhando",
+      started_at: new Date().toISOString(),
+    });
+    const round = deepThinkJob({ status: "running", synthesis: undefined });
+    const search = webSearchJob({ status: "running", result: undefined });
+
+    const events = await readEvents(3, () => {
+      agentListener?.({ type: "done", job_id: agentId, result: "resposta do agente" });
+      deepThinkListener?.({
+        type: "deep_think_activity",
+        job_id: round.id,
+        activity: "Quatro pensadores lendo a web.",
+        thinkers: round.thinkers,
+      });
+      webSearchListener?.({
+        type: "web_search_activity",
+        job_id: search.id,
+        activity: "formatando os resultados",
+      });
+    });
+
+    // One EventSource carries all three subsystems; an agent result and a
+    // search stage do not need separate connections to reach the browser.
+    expect(events.map((event) => event.type)).toEqual([
+      "done",
+      "deep_think_activity",
+      "web_search_activity",
+    ]);
+  });
+
+  it("cleans up all three subscriptions when the client leaves", async () => {
+    webSearchJob(); // a replay so the stream is demonstrably subscribed
+    const controller = new AbortController();
+    const res = await fetch(`${base}/events?conversation_id=${conversationId}`, {
+      signal: controller.signal,
+    });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!buffer.includes("web_search_done")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+    }
+    expect(webSearchListener).toBeTypeOf("function");
+
+    controller.abort();
+
+    let cleared = false;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (
+        agentListener === null &&
+        deepThinkListener === null &&
+        webSearchListener === null
+      ) {
+        cleared = true;
+        break;
+      }
+    }
+
+    // A dead connection must not keep paying for events no browser renders.
+    expect(cleared).toBe(true);
+  });
+
+  it("writes a keep-alive comment every 25s while the stream is open", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    try {
+      webSearchJob();
+      const controller = new AbortController();
+      const res = await fetch(`${base}/events?conversation_id=${conversationId}`, {
+        signal: controller.signal,
+      });
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!buffer.includes("web_search_done")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+      }
+
+      vi.advanceTimersByTime(25_000);
+
+      let frame = "";
+      while (!frame.includes("keep-alive")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        frame += decoder.decode(value, { stream: true });
+      }
+      expect(frame).toContain(": keep-alive");
+
+      controller.abort();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -277,12 +277,15 @@ describe("executeWebSearch OpenAI path", () => {
       }),
     );
 
-    const { text } = await executeWebSearch("pergunta", CONV);
+    const { text, cost_usd } = await executeWebSearch("pergunta", CONV);
 
     expect(warn).toHaveBeenCalledWith(
       "[web_search] OpenAI returned no text; falling back to surf",
     );
     expect(text).toContain("[1] T");
+    // An empty answer is not an error: the paid request still happened, so the
+    // cost rides the fallback's answer instead of being thrown away.
+    expect(cost_usd).toBeGreaterThan(0);
   });
 
   it("warns with the failure reason before falling back when OpenAI throws", async () => {
@@ -314,12 +317,13 @@ describe("executeWebSearch OpenAI path", () => {
 
 describe("executeWebSearch query validation", () => {
   it("answers the empty-query message without calling OpenAI or the CLI", async () => {
-    expect((await executeWebSearch("", CONV)).text).toBe(
-      "Busca vazia: informe o que pesquisar.",
-    );
-    expect((await executeWebSearch("   ", CONV)).text).toBe(
-      "Busca vazia: informe o que pesquisar.",
-    );
+    const empty = await executeWebSearch("", CONV);
+    const blank = await executeWebSearch("   ", CONV);
+
+    expect(empty.text).toBe("Busca vazia: informe o que pesquisar.");
+    expect(empty.cost_usd).toBeUndefined();
+    expect(blank.text).toBe("Busca vazia: informe o que pesquisar.");
+    expect(blank.cost_usd).toBeUndefined();
     expect(mockWebSearch).not.toHaveBeenCalled();
     expect(execFileMock).not.toHaveBeenCalled();
   });
@@ -339,6 +343,24 @@ describe("executeWebSearch query validation", () => {
       expect.anything(),
       expect.any(Function),
     );
+  });
+
+  it("clamps the query to 400 characters after trimming it", async () => {
+    mockWebSearch.mockResolvedValue({
+      text: "x",
+      citations: [],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: "gpt-5.2",
+      search_calls: 0,
+    });
+
+    await executeWebSearch(`  ${"a".repeat(500)}  `, CONV);
+
+    // MAX_QUERY_LENGTH is not exported; the trim and clamp are pinned through
+    // the call.
+    expect(mockWebSearch).toHaveBeenCalledWith("a".repeat(400), {
+      context: undefined,
+    });
   });
 });
 

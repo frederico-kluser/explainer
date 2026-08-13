@@ -183,6 +183,32 @@ describe("dispatchWebSearch", () => {
     expect(mod.getWebSearchJob(job.id)?.status).toBe("error");
   });
 
+  it("runs the 180s default budget when no timeout is injected", () => {
+    vi.useFakeTimers();
+    try {
+      executeWebSearchMock.mockImplementationOnce(hangingSearch);
+
+      // No timeoutMs: the dispatch path has to fall back to the module's
+      // DEFAULT_TIMEOUT_MS, which nothing else in the suite pins.
+      const job = mod.dispatchWebSearch({ conversationId: randomUUID(), query: "x" });
+      expect(vi.getTimerCount()).toBe(1);
+
+      // One second short of the default budget the job is still running...
+      vi.advanceTimersByTime(180_000 - 1);
+      expect(mod.getWebSearchJob(job.id)?.status).toBe("running");
+
+      // ...and the 180s mark kills it, with the seconds read from the constant
+      // spoken back in the error.
+      vi.advanceTimersByTime(1);
+      expect(mod.getWebSearchJob(job.id)?.status).toBe("error");
+      expect(mod.getWebSearchJob(job.id)?.error).toBe(
+        "A busca passou de 180s e foi interrompida.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("drops the late arrival of a cancelled search without emitting anything", async () => {
     let resolveSearch: (value: SearchResult) => void = () => undefined;
     executeWebSearchMock.mockImplementationOnce(
@@ -247,5 +273,216 @@ describe("dispatchWebSearch", () => {
     expect(mod.getWebSearchJob(ids[9]!)).toBeUndefined();
     expect(mod.getWebSearchJob(ids[59]!)).toBeDefined();
     expect(mod.getWebSearchJob(ids[58]!)).toBeDefined();
+  });
+
+  it("trims the query before storing it and searching", async () => {
+    executeWebSearchMock.mockResolvedValueOnce({ text: "ok" });
+
+    const conv = randomUUID();
+    const job = mod.dispatchWebSearch({
+      conversationId: conv,
+      query: "  com espacos  ",
+    });
+    expect(job.query).toBe("com espacos");
+
+    await waitFor((e) => e.type === "web_search_done" && e.job_id === job.id);
+    expect(executeWebSearchMock).toHaveBeenCalledWith(
+      "com espacos",
+      conv,
+      undefined,
+      undefined,
+    );
+  });
+
+  it("lets two conversations search at the same time", async () => {
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    const a = mod.dispatchWebSearch({ conversationId: randomUUID(), query: "a" });
+    const b = mod.dispatchWebSearch({ conversationId: randomUUID(), query: "b" });
+
+    // The 409 is per conversation: a search in one must not block another.
+    expect(a.status).toBe("running");
+    expect(b.status).toBe("running");
+
+    expect(mod.cancelWebSearch(a.id)).toBe(true);
+    expect(mod.cancelWebSearch(b.id)).toBe(true);
+  });
+
+  it("lists only the jobs of the conversation asked about", async () => {
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    const convA = randomUUID();
+    const convB = randomUUID();
+    const a = mod.dispatchWebSearch({ conversationId: convA, query: "a" });
+    const b = mod.dispatchWebSearch({ conversationId: convB, query: "b" });
+
+    expect(mod.listWebSearchJobs(convA).map((job) => job.id)).toEqual([a.id]);
+    expect(mod.listWebSearchJobs(convB).map((job) => job.id)).toEqual([b.id]);
+    expect(mod.listWebSearchJobs(randomUUID())).toEqual([]);
+    expect(mod.getWebSearchJob("nao-existe")).toBeUndefined();
+
+    expect(mod.cancelWebSearch(a.id)).toBe(true);
+    expect(mod.cancelWebSearch(b.id)).toBe(true);
+  });
+
+  it("ignores a cancel for a finished job or an unknown id", async () => {
+    executeWebSearchMock.mockResolvedValueOnce({ text: "pronto" });
+    const job = mod.dispatchWebSearch({ conversationId: randomUUID(), query: "x" });
+    await waitFor((e) => e.type === "web_search_done" && e.job_id === job.id);
+
+    // Only `running` jobs can be cancelled; a done job is left alone.
+    expect(mod.cancelWebSearch(job.id)).toBe(false);
+    expect(mod.getWebSearchJob(job.id)?.status).toBe("done");
+    expect(mod.cancelWebSearch(randomUUID())).toBe(false);
+  });
+
+  it("frees the conversation slot once a job is cancelled or finished", async () => {
+    executeWebSearchMock.mockImplementationOnce(hangingSearch);
+    executeWebSearchMock.mockResolvedValueOnce({ text: "ok" });
+
+    const conv = randomUUID();
+    const first = mod.dispatchWebSearch({ conversationId: conv, query: "primeira" });
+    expect(mod.cancelWebSearch(first.id)).toBe(true);
+
+    const second = mod.dispatchWebSearch({ conversationId: conv, query: "segunda" });
+    await waitFor((e) => e.type === "web_search_done" && e.job_id === second.id);
+
+    // A finished search is not "running", so the conversation is free again.
+    const third = mod.dispatchWebSearch({ conversationId: conv, query: "terceira" });
+    expect(third.status).toBe("running");
+    expect(mod.cancelWebSearch(third.id)).toBe(true);
+  });
+
+  it("disarms the budget timer when the timeout fires", () => {
+    vi.useFakeTimers();
+    try {
+      const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(global, "clearTimeout");
+      executeWebSearchMock.mockImplementationOnce(hangingSearch);
+
+      const job = mod.dispatchWebSearch({
+        conversationId: randomUUID(),
+        query: "x",
+        timeoutMs: 30_000,
+      });
+      expect(vi.getTimerCount()).toBe(1);
+
+      const budgetTimer = setTimeoutSpy.mock.results[0]!.value;
+
+      vi.advanceTimersByTime(30_000);
+      expect(mod.getWebSearchJob(job.id)?.status).toBe("error");
+      // The timer has already fired by the time finish() runs on this path, so
+      // `getTimerCount()` (pending timers only) cannot see the disarm — that
+      // assertion held whether or not finish() cleared the timer. The search
+      // never settles, so runSearch's finally, the other clearTimeout site,
+      // never runs: the only clearTimeout caller in this window is finish(),
+      // and the id it clears must be the budget timer's own.
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(budgetTimer);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops the late arrival of a job that timed out", async () => {
+    let resolveSearch: (value: SearchResult) => void = () => undefined;
+    executeWebSearchMock.mockImplementationOnce(
+      () => new Promise<SearchResult>((resolve) => { resolveSearch = resolve; }),
+    );
+
+    const job = mod.dispatchWebSearch({
+      conversationId: randomUUID(),
+      query: "lenta",
+      timeoutMs: 50,
+    });
+    const event = await waitFor((e) => e.type === "web_search_error" && e.job_id === job.id);
+    expect(event.type).toBe("web_search_error");
+    if (event.type === "web_search_error") expect(event.error).toMatch(/interrompida/);
+
+    const events: WebSearchEvent[] = [];
+    const unsubscribe = mod.subscribeWebSearch((e) => events.push(e));
+
+    resolveSearch({ text: "chegou tarde", cost_usd: 0.01 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mod.getWebSearchJob(job.id)?.status).toBe("error");
+    expect(mod.getWebSearchJob(job.id)?.result).toBeUndefined();
+    expect(events.some((e) => e.type === "web_search_done")).toBe(false);
+    unsubscribe();
+  });
+
+  it("never prunes a running job", async () => {
+    // 5 searches, still running, dispatched first: they are the oldest jobs in
+    // the registry. The prune sorts by started_at and deletes from the oldest
+    // end, so a prune that kept the 50 newest by age alone would take them
+    // before any finished job — only the explicit "not running" filter can
+    // protect them.
+    executeWebSearchMock.mockImplementation(hangingSearch);
+    const runningIds: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      runningIds.push(
+        mod.dispatchWebSearch({ conversationId: randomUUID(), query: `r${i}` }).id,
+      );
+    }
+
+    // 55 finished searches, one per conversation — every one settled before the
+    // next dispatch, so the prune always sees them.
+    executeWebSearchMock.mockResolvedValue({ text: "ok" });
+    const finishedIds: string[] = [];
+    for (let i = 0; i < 55; i++) {
+      const job = mod.dispatchWebSearch({ conversationId: randomUUID(), query: `f${i}` });
+      finishedIds.push(job.id);
+      await waitFor((e) => e.type === "web_search_done" && e.job_id === job.id);
+      // started_at is ms-precision and the prune sorts on it, so the pause
+      // keeps the order deterministic.
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+
+    // The oldest finished jobs were pruned away — but the running ones survive
+    // even though they predate every finished job.
+    expect(mod.getWebSearchJob(finishedIds[0]!)).toBeUndefined();
+    expect(mod.getWebSearchJob(finishedIds[10]!)).toBeDefined();
+    expect(mod.getWebSearchJob(finishedIds[54]!)).toBeDefined();
+    for (const id of runningIds) {
+      expect(mod.getWebSearchJob(id)?.status).toBe("running");
+    }
+
+    for (const id of runningIds) expect(mod.cancelWebSearch(id)).toBe(true);
+  });
+
+  it("stops delivering to a listener that unsubscribed", async () => {
+    executeWebSearchMock.mockResolvedValueOnce({ text: "ok" });
+
+    const received: WebSearchEvent[] = [];
+    const unsubscribe = mod.subscribeWebSearch((event) => received.push(event));
+    unsubscribe();
+
+    const job = mod.dispatchWebSearch({ conversationId: randomUUID(), query: "x" });
+    await waitFor((e) => e.type === "web_search_done" && e.job_id === job.id);
+
+    expect(received).toEqual([]);
+  });
+
+  it("stamps the terminal state on the job's activity", async () => {
+    executeWebSearchMock.mockRejectedValueOnce(new Error("boom"));
+    const conv = randomUUID();
+    const failed = mod.dispatchWebSearch({ conversationId: conv, query: "falha" });
+    await waitFor((e) => e.type === "web_search_error" && e.job_id === failed.id);
+    expect(mod.getWebSearchJob(failed.id)?.activity).toMatch(/A busca falhou: boom/);
+
+    executeWebSearchMock.mockImplementationOnce(hangingSearch);
+    const cancelled = mod.dispatchWebSearch({ conversationId: conv, query: "cancela" });
+    mod.cancelWebSearch(cancelled.id);
+    expect(mod.getWebSearchJob(cancelled.id)?.activity).toBe("Cancelado pelo usuario.");
+  });
+
+  it("carries an empty result when the search answers with nothing", async () => {
+    executeWebSearchMock.mockResolvedValueOnce({ text: "" });
+
+    const job = mod.dispatchWebSearch({ conversationId: randomUUID(), query: "x" });
+    const event = await waitFor((e) => e.type === "web_search_done" && e.job_id === job.id);
+
+    expect(event.type).toBe("web_search_done");
+    if (event.type === "web_search_done") expect(event.result).toBe("");
   });
 });
