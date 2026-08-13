@@ -24,6 +24,7 @@ import { AgentJobCard } from "@/components/ui/AgentJobCard";
 import { VoiceSettings } from "@/components/ui/VoiceSettings";
 import { CostPanel } from "@/components/ui/CostPanel";
 import { DeepThinkCard } from "@/components/ui/DeepThinkCard";
+import { WebSearchCard } from "@/components/ui/WebSearchCard";
 import { MemoryPanel } from "@/components/ui/MemoryPanel";
 import { MermaidDiagram } from "@/components/ui/MermaidDiagram";
 import { Button } from "@/components/ui/button";
@@ -106,6 +107,7 @@ export function App() {
     activeTool,
     jobs,
     deepThinkJobs,
+    webSearchJobs,
     diagrams,
     documentContent,
     setDocumentContent,
@@ -641,7 +643,7 @@ export function App() {
   // decides, so only one copy exists — two `MemoryPanel`s would each fetch, and
   // two `Sidebar`s would claim the same `layoutId`.
   const agentsPanel =
-    jobs.length > 0 || deepThinkJobs.length > 0 ? (
+    jobs.length > 0 || deepThinkJobs.length > 0 || webSearchJobs.length > 0 ? (
       <div
         className={cn(
           "space-y-2",
@@ -668,6 +670,11 @@ export function App() {
             that cannot work. */}
         {deepThinkJobs.map((job) => (
           <DeepThinkCard key={job.id} job={job} />
+        ))}
+        {/* No `onCancel` either, for the same reason the round has none: the
+            cancel endpoint belongs to the pi job registry. */}
+        {webSearchJobs.map((job) => (
+          <WebSearchCard key={job.id} job={job} />
         ))}
       </div>
     ) : (

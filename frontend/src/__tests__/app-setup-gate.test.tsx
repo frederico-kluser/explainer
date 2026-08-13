@@ -37,6 +37,7 @@ vi.mock("@/hooks/useRealtimeSession", async (importOriginal) => {
     activeTool: null,
     jobs: [],
     deepThinkJobs: [],
+    webSearchJobs: [],
     diagrams: [],
     resumed: false,
     memoryEvents: 0,

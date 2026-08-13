@@ -132,7 +132,7 @@ describe("runTool gives up on a tool that hangs", () => {
       // under `advanceTimersByTimeAsync` with nobody listening is flagged as
       // unhandled even though the test catches it one line later.
       const rejection = expect(pending).rejects.toThrow(/web_search/);
-      const deadline = expect(pending).rejects.toThrow(/timed out/);
+      const deadline = expect(pending).rejects.toThrow(/limite de tempo/);
 
       await vi.advanceTimersByTimeAsync(api.REALTIME_TOOL_TIMEOUT_MS + 1);
 

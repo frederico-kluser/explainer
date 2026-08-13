@@ -29,6 +29,7 @@ import type {
   RealtimeSessionToken,
   ThinkerResult,
   TranscriptEntry,
+  WebSearchJob,
 } from "@/types";
 
 // The suite has no jsdom, so a React hook cannot be rendered here. Everything
@@ -48,6 +49,7 @@ interface Recorded {
   deps: SessionStreamDeps;
   jobs: () => AgentJob[];
   deepThinkJobs: () => DeepThinkJob[];
+  webSearchJobs: () => WebSearchJob[];
   sent: object[];
   entries: Array<{ id: string; role: TranscriptEntry["role"]; text: string; final?: boolean }>;
   persisted: Array<{ id: string; role: string; content: string }>;
@@ -58,6 +60,7 @@ interface Recorded {
 function record(): Recorded {
   let jobs: AgentJob[] = [];
   let deepThinkJobs: DeepThinkJob[] = [];
+  let webSearchJobs: WebSearchJob[] = [];
   let responses = 0;
   const sent: object[] = [];
   const entries: Recorded["entries"] = [];
@@ -70,6 +73,9 @@ function record(): Recorded {
     },
     setDeepThinkJobs: (update) => {
       deepThinkJobs = update(deepThinkJobs);
+    },
+    setWebSearchJobs: (update) => {
+      webSearchJobs = update(webSearchJobs);
     },
     upsertEntry: (id, role, mutate, final) => {
       entries.push({ id, role, text: mutate(""), final });
@@ -89,6 +95,7 @@ function record(): Recorded {
     deps,
     jobs: () => jobs,
     deepThinkJobs: () => deepThinkJobs,
+    webSearchJobs: () => webSearchJobs,
     sent,
     entries,
     persisted,

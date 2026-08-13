@@ -41,6 +41,7 @@ import type {
   ThinkerResult,
   ThinkerStatus,
   TranscriptEntry,
+  WebSearchJob,
 } from "@/types";
 
 export type SessionStatus = "idle" | "connecting" | "live" | "error";
@@ -81,6 +82,8 @@ export interface RealtimeSessionState {
   jobs: AgentJob[];
   /** Deliberation rounds, newest last, for the fan of thinkers on screen. */
   deepThinkJobs: DeepThinkJob[];
+  /** Background web searches, newest last, for the card under the same heading. */
+  webSearchJobs: WebSearchJob[];
   /**
    * Every diagram this session drew, in order.
    *
@@ -703,6 +706,74 @@ export function applyDeepThinkEvent(
   return next;
 }
 
+/** A search in one of these has already ended, and it ends exactly once. */
+const TERMINAL_WEB_SEARCH: ReadonlySet<WebSearchJob["status"]> = new Set<
+  WebSearchJob["status"]
+>(["done", "error", "cancelled"]);
+
+export function applyWebSearchEvent(
+  jobs: WebSearchJob[],
+  event: WebSearchEvent,
+  conversationId: string,
+  at: string,
+): WebSearchJob[] {
+  const index = jobs.findIndex((job) => job.id === event.job_id);
+  const base: WebSearchJob =
+    index === -1
+      ? {
+          id: event.job_id,
+          conversation_id: conversationId,
+          // The stream never carries the query — only the server saw it. Same
+          // gap `AgentJob.prompt` and `DeepThinkJob.scenario` leave.
+          query: "",
+          status: "running",
+          activity: "",
+          started_at: at,
+        }
+      : jobs[index]!;
+
+  // The same one-way transition the other two folds make, for the same reason:
+  // SSE promises delivery, not order. A late `web_search_activity` used to drag
+  // a finished search back to "pesquisando", and an error followed by a done
+  // left one card holding both.
+  if (index !== -1 && TERMINAL_WEB_SEARCH.has(base.status)) return jobs;
+
+  let updated: WebSearchJob;
+  switch (event.type) {
+    case "web_search_activity":
+      updated = { ...base, activity: textOf(event.activity) };
+      break;
+    case "web_search_done":
+      updated = {
+        ...base,
+        status: "done",
+        activity: "concluido",
+        result: textOf(event.result),
+        cost_usd: costOf(event.cost_usd),
+        finished_at: at,
+      };
+      break;
+    case "web_search_error":
+      updated = {
+        ...base,
+        status: "error",
+        activity: "falhou",
+        error: textOf(event.error),
+        finished_at: at,
+      };
+      break;
+    default:
+      // An event this client does not know is not a failed search. Ignoring it
+      // costs a card; folding it in invents one.
+      return jobs;
+  }
+
+  const next = [...jobs];
+  if (index === -1) next.push(updated);
+  else next[index] = updated;
+  return next;
+}
+
 // ---------------------------------------------------------------------------
 // Archiving a turn
 // ---------------------------------------------------------------------------
@@ -760,6 +831,7 @@ export interface SessionStreamDeps {
   conversationId: string;
   setJobs: (update: (previous: AgentJob[]) => AgentJob[]) => void;
   setDeepThinkJobs: (update: (previous: DeepThinkJob[]) => DeepThinkJob[]) => void;
+  setWebSearchJobs: (update: (previous: WebSearchJob[]) => WebSearchJob[]) => void;
   upsertEntry: (
     id: string,
     role: TranscriptEntry["role"],
@@ -807,7 +879,7 @@ export function sessionStreamHandler(deps: SessionStreamDeps): (raw: string) => 
     if (typeof event.job_id !== "string" || event.job_id === "") return;
 
     if (isDeepThinkEvent(event)) handleDeepThinkEvent(event, deps, settled);
-    else if (isWebSearchEvent(event)) return; // wired in onda2-websync-frontend
+    else if (isWebSearchEvent(event)) handleWebSearchEvent(event, deps, settled);
     else handleAgentJobEvent(event, deps);
   };
 }
@@ -921,6 +993,65 @@ function handleDeepThinkEvent(
     userTextEvent(
       `A rodada de deliberacao falhou: ${reason}. Me avise disso em uma frase.`,
     ),
+  );
+  deps.requestResponse();
+}
+
+function handleWebSearchEvent(
+  event: WebSearchEvent,
+  deps: SessionStreamDeps,
+  settled: Set<string>,
+): void {
+  // A search that already ended neither redraws its card nor speaks again.
+  if (settled.has(event.job_id)) return;
+  if (event.type !== "web_search_activity") settled.add(event.job_id);
+
+  const at = nowISO();
+  deps.setWebSearchJobs((previous) =>
+    applyWebSearchEvent(previous, event, deps.conversationId, at),
+  );
+
+  // A search in progress is a card, not a turn. The model already said out loud
+  // that it was going to look things up; narrating each stage would talk over
+  // the conversation it was told to keep having.
+  if (event.type === "web_search_activity") return;
+
+  if (event.type === "web_search_done") {
+    // A search that ended with nothing to report leaves the card and stops
+    // there. Injecting an empty result is how "undefined" got read out loud.
+    const result = textOf(event.result);
+    if (!result.trim()) return;
+
+    deps.upsertEntry(`web-${event.job_id}`, "agent", () => result, true);
+    if (isReplay(event)) return;
+    // The `[busca web]` marker is what the research context of later searches
+    // reads back — without it, the context the user asked for stays blind to
+    // every search that already ran in this conversation.
+    deps.persist(`web-${event.job_id}`, "tool", `[busca web] ${result}`);
+
+    // The result arrives ready to speak, so it is handed over whole rather
+    // than summarised again.
+    deps.send(
+      userTextEvent(
+        "A busca web terminou. Resultado:\n\n" +
+          `${result}\n\n` +
+          "Explique isso para mim em voz alta, com suas palavras, de forma curta.",
+      ),
+    );
+    deps.requestResponse();
+    return;
+  }
+
+  const reason = reasonOf(event.error);
+  deps.upsertEntry(
+    `web-${event.job_id}`,
+    "agent",
+    () => `A busca web falhou: ${reason}`,
+    true,
+  );
+  if (isReplay(event)) return;
+  deps.send(
+    userTextEvent(`A busca web falhou: ${reason}. Me avise disso em uma frase.`),
   );
   deps.requestResponse();
 }
@@ -1377,6 +1508,7 @@ export function useRealtimeSession(
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [jobs, setJobs] = useState<AgentJob[]>([]);
   const [deepThinkJobs, setDeepThinkJobs] = useState<DeepThinkJob[]>([]);
+  const [webSearchJobs, setWebSearchJobs] = useState<WebSearchJob[]>([]);
   const [diagrams, setDiagrams] = useState<MermaidDiagram[]>([]);
   /**
    * The conversation's markdown, as the server last knew it.
@@ -1692,6 +1824,7 @@ export function useRealtimeSession(
         conversationId: id,
         setJobs,
         setDeepThinkJobs,
+        setWebSearchJobs,
         upsertEntry,
         persist,
         send,
@@ -2082,6 +2215,7 @@ export function useRealtimeSession(
     setTranscript([]);
     setJobs([]);
     setDeepThinkJobs([]);
+    setWebSearchJobs([]);
     setDiagrams([]);
     setDocumentContent(null);
     setResumed(false);
@@ -2194,6 +2328,7 @@ export function useRealtimeSession(
     activeTool,
     jobs,
     deepThinkJobs,
+    webSearchJobs,
     diagrams,
     documentContent,
     setDocumentContent,

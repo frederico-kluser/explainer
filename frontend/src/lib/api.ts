@@ -287,7 +287,7 @@ export async function runTool(
     // Our own deadline, not the server's: name the tool instead of surfacing a
     // bare AbortError — this message is what the model reads back out loud.
     if (timedOut) {
-      throw new Error(`${call.name} excedeu o limite de tempo (timed out)`);
+      throw new Error(`${call.name} excedeu o limite de tempo`);
     }
     throw err;
   } finally {
