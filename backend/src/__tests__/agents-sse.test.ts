@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import type { AgentJob } from "../types/index.js";
 import type { AgentJobEvent } from "../services/agent-jobs.js";
-import type { DeepThinkEvent, DeepThinkJob } from "../types/deep-tools.js";
+import type { DeepThinkEvent, DeepThinkJob, WebSearchEvent, WebSearchJob } from "../types/deep-tools.js";
 
 const tmpHome = mkdtempSync(join(tmpdir(), "explainer-agents-sse-"));
 process.env.HOME = tmpHome;
@@ -46,6 +46,21 @@ vi.mock("../services/deep-think.js", () => ({
   },
 }));
 
+const webSearchJobs = new Map<string, WebSearchJob>();
+let webSearchListener: ((event: WebSearchEvent) => void) | null = null;
+
+vi.mock("../services/web-search-jobs.js", () => ({
+  getWebSearchJob: (id: string) => webSearchJobs.get(id),
+  listWebSearchJobs: (conversationId: string) =>
+    [...webSearchJobs.values()].filter((job) => job.conversation_id === conversationId),
+  subscribeWebSearch: (listener: (event: WebSearchEvent) => void) => {
+    webSearchListener = listener;
+    return () => {
+      webSearchListener = null;
+    };
+  },
+}));
+
 const express = (await import("express")).default;
 const agentsRouter = (await import("../routes/agents.js")).default;
 
@@ -67,8 +82,10 @@ beforeEach(() => {
   conversationId = randomUUID();
   agentJobs.clear();
   deepThinkJobs.clear();
+  webSearchJobs.clear();
   agentListener = null;
   deepThinkListener = null;
+  webSearchListener = null;
 });
 
 function deepThinkJob(overrides: Partial<DeepThinkJob> = {}): DeepThinkJob {
@@ -87,6 +104,22 @@ function deepThinkJob(overrides: Partial<DeepThinkJob> = {}): DeepThinkJob {
     ...overrides,
   };
   deepThinkJobs.set(id, job);
+  return job;
+}
+
+function webSearchJob(overrides: Partial<WebSearchJob> = {}): WebSearchJob {
+  const id = randomUUID();
+  const job: WebSearchJob = {
+    id,
+    conversation_id: conversationId,
+    query: "preco do petroleo",
+    status: "done",
+    activity: "concluido",
+    result: "O petroleo subiu. Fontes:\n[1] Exemplo",
+    started_at: new Date().toISOString(),
+    ...overrides,
+  };
+  webSearchJobs.set(id, job);
   return job;
 }
 
@@ -218,14 +251,15 @@ describe("GET /api/agents/events", () => {
     expect(events[0]).toMatchObject({ job_id: mine.id, replay: true });
   });
 
-  it("subscribes to both buses on one connection", async () => {
+  it("subscribes to all three buses on one connection", async () => {
     deepThinkJob();
     await readEvents(1);
 
-    // One EventSource, two registries: a browser cannot end up connected for
-    // agent jobs and disconnected for deep-think.
+    // One EventSource, three registries: a browser cannot end up connected for
+    // agent jobs and disconnected for deep-think or web search.
     expect(agentListener).toBeTypeOf("function");
     expect(deepThinkListener).toBeTypeOf("function");
+    expect(webSearchListener).toBeTypeOf("function");
   });
 
   it("still replays pi agent jobs, and still marks them", async () => {
@@ -243,5 +277,90 @@ describe("GET /api/agents/events", () => {
 
     const [event] = await readEvents(1);
     expect(event).toMatchObject({ type: "done", result: "resposta antiga", replay: true });
+  });
+
+  it("replays a finished web search marked as a replay, cost included", async () => {
+    const job = webSearchJob({ cost_usd: 0.0123 });
+
+    const [event] = await readEvents(1);
+
+    expect(event).toMatchObject({
+      type: "web_search_done",
+      job_id: job.id,
+      result: "O petroleo subiu. Fontes:\n[1] Exemplo",
+      cost_usd: 0.0123,
+      // Without this the client narrates an old result on every reconnect.
+      replay: true,
+    });
+  });
+
+  it("replays a failed search as an error, also marked", async () => {
+    webSearchJob({ status: "error", activity: "", error: "A busca falhou: boom", result: undefined });
+
+    const [event] = await readEvents(1);
+
+    expect(event).toMatchObject({
+      type: "web_search_error",
+      error: "A busca falhou: boom",
+      replay: true,
+    });
+  });
+
+  it("replays a cancelled search as an error", async () => {
+    webSearchJob({ status: "cancelled", activity: "", error: "Cancelado pelo usuario." });
+
+    const [event] = await readEvents(1);
+    expect(event).toMatchObject({ type: "web_search_error", replay: true });
+  });
+
+  it("does not replay a search that is still running", async () => {
+    webSearchJob({ status: "running", activity: "buscando na web", result: undefined });
+    const finished = webSearchJob();
+
+    const [event] = await readEvents(1);
+    expect(event).toMatchObject({ job_id: finished.id, type: "web_search_done" });
+  });
+
+  it("carries live searches on the same stream, without the replay flag", async () => {
+    const job = webSearchJob({ status: "running", activity: "buscando na web", result: undefined });
+
+    const events = await readEvents(1, () => {
+      webSearchListener?.({
+        type: "web_search_activity",
+        job_id: job.id,
+        activity: "formatando os resultados",
+      });
+    });
+
+    expect(events[0]).toMatchObject({
+      type: "web_search_activity",
+      activity: "formatando os resultados",
+    });
+    expect(events[0]!.replay).toBeUndefined();
+  });
+
+  it("keeps another conversation's search off this stream", async () => {
+    const foreign: WebSearchJob = {
+      id: randomUUID(),
+      conversation_id: randomUUID(),
+      query: "outra conversa",
+      status: "done",
+      activity: "concluido",
+      result: "nao deve aparecer",
+      started_at: new Date().toISOString(),
+    };
+    webSearchJobs.set(foreign.id, foreign);
+    const mine = webSearchJob();
+
+    const events = await readEvents(1, () => {
+      webSearchListener?.({
+        type: "web_search_done",
+        job_id: foreign.id,
+        result: "nao deve aparecer",
+      });
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ job_id: mine.id, replay: true });
   });
 });

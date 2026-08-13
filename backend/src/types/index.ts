@@ -58,6 +58,7 @@ export interface ResolvedSource {
 
 export type ToolName =
   | "web_search"
+  | "check_web_search"
   | "list_materials"
   | "read_source_doc"
   | "search_source"

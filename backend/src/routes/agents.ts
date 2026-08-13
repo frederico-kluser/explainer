@@ -6,8 +6,13 @@ import {
   listDeepThinkJobs,
   subscribeDeepThink,
 } from "../services/deep-think.js";
+import {
+  getWebSearchJob,
+  listWebSearchJobs,
+  subscribeWebSearch,
+} from "../services/web-search-jobs.js";
 import { isUUID } from "../middleware/sandbox.js";
-import type { DeepThinkEvent } from "../types/deep-tools.js";
+import type { DeepThinkEvent, WebSearchEvent } from "../types/deep-tools.js";
 
 const router = Router();
 
@@ -20,11 +25,12 @@ const router = Router();
 // conversation, so the model can speak an answer it asked for a minute ago
 // without ever having blocked on it.
 //
-// Deep-think rides the same stream rather than a second one. Its discriminants
-// (`deep_think_activity` / `_done` / `_error`) are disjoint from the agent job's
-// (`activity` / `done` / `error`), so one connection carries both without either
-// side having to know about the other — and a browser holding one EventSource
-// cannot end up connected for agents and disconnected for deep-think.
+// Deep-think and web search ride the same stream rather than a second one.
+// Their discriminants (`deep_think_*` / `web_search_*`) are disjoint from the
+// agent job's (`activity` / `done` / `error`), so one connection carries all
+// three without either side having to know about the others — and a browser
+// holding one EventSource cannot end up connected for agents and disconnected
+// for deep-think or web search.
 
 router.get("/events", (req: Request, res: Response) => {
   const conversationId = String(req.query.conversation_id ?? "");
@@ -97,6 +103,30 @@ router.get("/events", (req: Request, res: Response) => {
     }
   }
 
+  // Same rule for the web searches: only finished ones carry `replay: true`,
+  // and the flag exists on `_done` / `_error` alone. A client that reconnects
+  // mid-search picks the job back up on its next stage — the running job has
+  // no replay event to deliver.
+  for (const job of listWebSearchJobs(conversationId)) {
+    if (job.status === "done") {
+      const event: WebSearchEvent = {
+        type: "web_search_done",
+        job_id: job.id,
+        result: job.result ?? "",
+        replay: true,
+      };
+      if (job.cost_usd !== undefined) event.cost_usd = job.cost_usd;
+      send(event);
+    } else if (job.status === "error" || job.status === "cancelled") {
+      send({
+        type: "web_search_error",
+        job_id: job.id,
+        error: job.error ?? "Falhou.",
+        replay: true,
+      });
+    }
+  }
+
   const unsubscribe = subscribe((event) => {
     const job = getJob(event.job_id);
     if (!job || job.conversation_id !== conversationId) return;
@@ -111,6 +141,13 @@ router.get("/events", (req: Request, res: Response) => {
     send(event);
   });
 
+  const unsubscribeWebSearch = subscribeWebSearch((event) => {
+    // Same tie: the registry, not the event, owns the conversation.
+    const job = getWebSearchJob(event.job_id);
+    if (!job || job.conversation_id !== conversationId) return;
+    send(event);
+  });
+
   // Proxies drop idle connections; a comment line every 25s keeps this one warm.
   const keepAlive = setInterval(() => {
     if (!res.writableEnded) res.write(": keep-alive\n\n");
@@ -120,6 +157,7 @@ router.get("/events", (req: Request, res: Response) => {
     clearInterval(keepAlive);
     unsubscribe();
     unsubscribeDeepThink();
+    unsubscribeWebSearch();
     if (!res.writableEnded) res.end();
   });
 });

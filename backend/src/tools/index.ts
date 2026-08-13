@@ -49,9 +49,13 @@ const WEB_SEARCH: RealtimeTool = {
   type: "function",
   name: "web_search",
   description:
-    "Pesquisa na internet e devolve uma resposta curta com fontes. Use para fatos " +
-    "atuais, noticias, documentacao de terceiros ou qualquer coisa que nao esteja " +
-    "nos materiais da conversa.",
+    "Pesquisa na internet e devolve NA HORA o aviso de que a busca comecou; o " +
+    "resultado chega sozinho depois, no fluxo da conversa, com as fontes. Use " +
+    "para fatos atuais, noticias, documentacao de terceiros ou qualquer coisa " +
+    "que nao esteja nos materiais. Ao disparar, avise o usuario em voz alta que " +
+    "a busca comecou e CONTINUE A CONVERSA — nunca fique em silencio esperando. " +
+    "So pode haver UMA busca por vez: disparar outra com uma em andamento e " +
+    "recusado — espere terminar ou consulte o estado com check_web_search.",
   parameters: {
     type: "object",
     properties: {
@@ -61,6 +65,21 @@ const WEB_SEARCH: RealtimeTool = {
       },
     },
     required: ["query"],
+  },
+};
+
+const CHECK_WEB_SEARCH: RealtimeTool = {
+  type: "function",
+  name: "check_web_search",
+  description:
+    "Consulta o estado de uma busca web disparada antes. Use apenas se o usuario " +
+    "perguntar; normalmente o resultado chega sozinho quando fica pronto.",
+  parameters: {
+    type: "object",
+    properties: {
+      job_id: { type: "string", description: "Identificador devolvido por web_search." },
+    },
+    required: ["job_id"],
   },
 };
 
@@ -451,7 +470,7 @@ export function toolsForSources(
   const fromMode = modeTools(mode);
 
   if (sources.length === 0) {
-    return [WEB_SEARCH, ...deliberationTools(), ...fromMode];
+    return [WEB_SEARCH, CHECK_WEB_SEARCH, ...deliberationTools(), ...fromMode];
   }
 
   const hasFiles = sources.some((source) => Boolean(source.root));
@@ -467,7 +486,7 @@ export function toolsForSources(
     );
   }
 
-  tools.push(WEB_SEARCH, ...deliberationTools(), ...fromMode);
+  tools.push(WEB_SEARCH, CHECK_WEB_SEARCH, ...deliberationTools(), ...fromMode);
 
   // Naming a material only makes sense when there is more than one to name.
   if (sources.length > 1) tools.unshift(LIST_MATERIALS);
@@ -484,6 +503,7 @@ export const ALL_TOOLS: RealtimeTool[] = [
   DISPATCH_PI_AGENT,
   CHECK_PI_AGENT,
   WEB_SEARCH,
+  CHECK_WEB_SEARCH,
   DEEP_THINK,
   CHECK_DEEP_THINK,
   GENERATE_DIAGRAM,

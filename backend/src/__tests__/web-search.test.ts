@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { executeWebSearch } from "../tools/web-search.js";
-import { webSearch } from "../services/openai.js";
+import { webSearch, type WebSearchResult } from "../services/openai.js";
 
 // web-search.ts promisifies execFile at module load and hardcodes the CLI name
 // (no env override like agent-jobs' PI_BIN), so a subprocess fake cannot point
@@ -87,11 +87,11 @@ describe("executeWebSearch surf fallback", () => {
       }),
     );
 
-    const out = await executeWebSearch("pergunta", CONV);
+    const { text } = await executeWebSearch("pergunta", CONV);
 
-    expect(out).toContain("[1] Titulo do artigo");
-    expect(out).toContain("https://exemplo.com/artigo");
-    expect(out).toContain("Trecho inicial do conteudo da pagina.");
+    expect(text).toContain("[1] Titulo do artigo");
+    expect(text).toContain("https://exemplo.com/artigo");
+    expect(text).toContain("Trecho inicial do conteudo da pagina.");
   });
 
   it("tells the user the CLI is missing when spawn fails with ENOENT", async () => {
@@ -100,9 +100,9 @@ describe("executeWebSearch surf fallback", () => {
       Object.assign(new Error("spawn surf-research-skill ENOENT"), { code: "ENOENT" }),
     );
 
-    const out = await executeWebSearch("pergunta", CONV);
+    const { text } = await executeWebSearch("pergunta", CONV);
 
-    expect(out).toBe(
+    expect(text).toBe(
       "A busca na web esta indisponivel: nem a API da OpenAI respondeu, nem o CLI " +
         "surf-research-skill esta instalado. Responda com o que voce ja sabe e avise " +
         "que nao foi possivel consultar a internet.",
@@ -113,9 +113,9 @@ describe("executeWebSearch surf fallback", () => {
     mockWebSearch.mockRejectedValue(new Error("api down"));
     mockSurfError(new Error("boom"));
 
-    const out = await executeWebSearch("pergunta", CONV);
+    const { text } = await executeWebSearch("pergunta", CONV);
 
-    expect(out).toBe("Busca na web falhou: boom");
+    expect(text).toBe("Busca na web falhou: boom");
   });
 
   it("accepts the legacy envelope with results at the top level", async () => {
@@ -126,17 +126,77 @@ describe("executeWebSearch surf fallback", () => {
       }),
     );
 
-    const out = await executeWebSearch("pergunta", CONV);
+    const { text } = await executeWebSearch("pergunta", CONV);
 
-    expect(out).toContain("[1] Antigo");
+    expect(text).toContain("[1] Antigo");
   });
 
   it("answers `Nenhum resultado encontrado.` when the envelope carries no results", async () => {
     mockWebSearch.mockRejectedValue(new Error("api down"));
     mockSurfOutput(JSON.stringify({ data: { results: [] } }));
 
-    const out = await executeWebSearch("pergunta", CONV);
+    const { text } = await executeWebSearch("pergunta", CONV);
 
-    expect(out).toBe("Nenhum resultado encontrado.");
+    expect(text).toBe("Nenhum resultado encontrado.");
+  });
+});
+
+describe("executeWebSearch OpenAI path", () => {
+  // gpt-5.2-mini is on the rate card, so the reported cost is a real number.
+  function openAiAnswer(overrides: Partial<WebSearchResult> = {}): WebSearchResult {
+    return {
+      text: "O petroleo subiu.",
+      citations: [{ title: "Exemplo", url: "https://exemplo.com" }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+      model: "gpt-5.2-mini",
+      search_calls: 1,
+      ...overrides,
+    };
+  }
+
+  it("passes the conversation context into the OpenAI web search", async () => {
+    mockWebSearch.mockResolvedValue(openAiAnswer());
+
+    const { text } = await executeWebSearch(
+      "pergunta",
+      CONV,
+      undefined,
+      "Contexto da conversa: o usuario acabou de falar do preco.",
+    );
+
+    expect(text).toContain("O petroleo subiu.");
+    expect(mockWebSearch).toHaveBeenCalledWith("pergunta", {
+      context: "Contexto da conversa: o usuario acabou de falar do preco.",
+    });
+  });
+
+  it("reports the OpenAI cost on the result, with the sources appended", async () => {
+    mockWebSearch.mockResolvedValue(openAiAnswer());
+
+    const { text, cost_usd } = await executeWebSearch("pergunta", CONV);
+
+    // Flat fee of 1 search call plus the model's tokens on the rate card.
+    expect(cost_usd).toBeGreaterThan(0);
+    expect(text).toContain("O petroleo subiu.");
+    expect(text).toContain("Fontes:\n[1] Exemplo — https://exemplo.com");
+  });
+
+  it("keeps the cost off the result when the fallback answered instead", async () => {
+    mockWebSearch.mockRejectedValue(new Error("api down"));
+    mockSurfOutput(JSON.stringify({ data: { results: [] } }));
+
+    const { text, cost_usd } = await executeWebSearch("pergunta", CONV);
+
+    expect(text).toBe("Nenhum resultado encontrado.");
+    expect(cost_usd).toBeUndefined();
+  });
+
+  it("appends no source block when the answer carries no citations", async () => {
+    mockWebSearch.mockResolvedValue(openAiAnswer({ citations: [] }));
+
+    const { text } = await executeWebSearch("pergunta", CONV);
+
+    expect(text).toBe("O petroleo subiu.");
+    expect(text).not.toContain("Fontes:");
   });
 });

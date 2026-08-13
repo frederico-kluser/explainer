@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { DispatchOptions } from "../services/agent-jobs.js";
+import type { WebSearchOptions } from "../services/web-search-jobs.js";
+import type { WebSearchJob } from "../types/deep-tools.js";
 import type { Conversation, ResolvedSource } from "../types/index.js";
 
 // The store reads and writes conversation JSON on disk; the executor's job is
@@ -77,12 +79,37 @@ vi.mock("../tools/deliberation-tools.js", () => ({
   })),
 }));
 
+// A real search hits the OpenAI API and the surf CLI; the registry functions
+// are spies so the wiring under test is the dispatch/check routing, not the
+// search itself.
+vi.mock("../services/web-search-jobs.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/web-search-jobs.js")>(
+    "../services/web-search-jobs.js",
+  );
+  return {
+    ...actual,
+    dispatchWebSearch: vi.fn(
+      (options: { conversationId: string; query: string; context?: string }) => ({
+        id: "search-1",
+        conversation_id: options.conversationId,
+        query: options.query,
+        status: "running",
+        activity: "buscando na web",
+        started_at: new Date().toISOString(),
+      }),
+    ),
+    getWebSearchJob: vi.fn(() => undefined),
+    listWebSearchJobs: vi.fn(() => []),
+  };
+});
+
 const { parseToolArguments, executeTool, ToolValidationError } = await import(
   "../services/tool-executor.js"
 );
 const { ALL_TOOLS, toolsForSources } = await import("../tools/index.js");
 const { MAX_CONTEXT_CHARS } = await import("../services/agent-jobs.js");
 const agentJobs = await import("../services/agent-jobs.js");
+const webSearchJobs = await import("../services/web-search-jobs.js");
 const { MERMAID_KINDS } = await import("../services/mermaid.js");
 const { MAX_THINKERS } = await import("../types/deep-tools.js");
 const deliberation = await import("../tools/deliberation-tools.js");
@@ -330,6 +357,116 @@ describe("the deliberation tools reach their handlers", () => {
   });
 });
 
+describe("the async web search", () => {
+  function runningSearch(overrides: Partial<WebSearchJob> = {}): WebSearchJob {
+    return {
+      id: "search-1",
+      conversation_id: CONV,
+      query: "preco do petroleo",
+      status: "running",
+      activity: "buscando na web",
+      started_at: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  it("dispatches the search with the conversation block and answers immediately", async () => {
+    currentSource.value = markdownSource();
+    currentConversation.value = conversationWith([
+      {
+        id: "m1",
+        role: "user",
+        content: "Quero saber o preco do petroleo.",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await executeTool("web_search", '{"query":"preco do petroleo"}', CONV);
+
+    // The whole point: a voice turn is not blocked on the search.
+    expect(result.meta).toMatchObject({ job_id: "search-1", status: "running" });
+    expect(result.output).toMatch(/Busca disparada/);
+    expect(result.output).not.toContain("search-1");
+
+    const options: Partial<WebSearchOptions> =
+      vi.mocked(webSearchJobs.dispatchWebSearch).mock.calls[0]?.[0] ?? {};
+    expect(options.query).toBe("preco do petroleo");
+    // The automatic conversation block rides along, like every research tool.
+    expect(options.context).toContain("# Contexto da conversa");
+    expect(options.context).toContain("Quero saber o preco do petroleo.");
+  });
+
+  it("answers the 409 with a spoken sentence, keeping the id out of it", async () => {
+    currentSource.value = markdownSource();
+    const running = runningSearch();
+    vi.mocked(webSearchJobs.listWebSearchJobs).mockReturnValue([running]);
+    vi.mocked(webSearchJobs.dispatchWebSearch).mockImplementation(() => {
+      throw new webSearchJobs.WebSearchJobError(
+        "Ja existe uma busca em andamento nesta conversa (job search-1).",
+        409,
+      );
+    });
+
+    const result = await executeTool("web_search", '{"query":"outra"}', CONV);
+
+    expect(result.output).toMatch(/Ja tem uma busca em andamento/);
+    // Spoken, the uuid would be read out digit by digit; it belongs in meta.
+    expect(result.output).not.toContain("search-1");
+    expect(result.meta).toMatchObject({ job_id: "search-1", status: "running" });
+  });
+
+  it("reports a running search through check_web_search", async () => {
+    currentSource.value = markdownSource();
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReturnValue(runningSearch());
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-1"}', CONV);
+
+    expect(result.output).toMatch(/ainda esta em andamento/);
+    expect(result.meta).toMatchObject({ job_id: "search-1", status: "running" });
+    expect(webSearchJobs.getWebSearchJob).toHaveBeenCalledWith("search-1");
+  });
+
+  it("hands a finished search's result through check_web_search", async () => {
+    currentSource.value = markdownSource();
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReturnValue(
+      runningSearch({
+        status: "done",
+        activity: "concluido",
+        result: "O petroleo subiu. Fontes:\n[1] Exemplo",
+        cost_usd: 0.01,
+      }),
+    );
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-1"}', CONV);
+
+    expect(result.output).toContain("O petroleo subiu.");
+    expect(result.meta).toMatchObject({ job_id: "search-1", status: "done" });
+  });
+
+  it("reports a failed search's error through check_web_search", async () => {
+    currentSource.value = markdownSource();
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReturnValue(
+      runningSearch({ status: "error", activity: "", error: "A busca falhou: boom" }),
+    );
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-1"}', CONV);
+
+    expect(result.output).toBe("A busca falhou: boom");
+    expect(result.meta).toMatchObject({ job_id: "search-1", status: "error" });
+  });
+
+  it("answers the missing id from check_web_search in words the model can say", async () => {
+    currentSource.value = markdownSource();
+    // A previous test's mockReturnValue would otherwise answer for this one.
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReset();
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-x"}', CONV);
+
+    expect(result.output).toBe("Nenhuma busca com esse identificador.");
+    expect(result.meta).toBeUndefined();
+  });
+});
+
 describe("toolsForSources publishes the deliberation tools", () => {
   it("hides deep_think when BRAVE_API_KEY is unset and shows it when set", () => {
     delete process.env.BRAVE_API_KEY;
@@ -413,8 +550,33 @@ describe("toolsForSources publishes the deliberation tools", () => {
     );
     for (const name of offered) expect(names(ALL_TOOLS)).toContain(name);
     expect(names(ALL_TOOLS)).toEqual(
-      expect.arrayContaining(["deep_think", "check_deep_think", "generate_diagram"]),
+      expect.arrayContaining([
+        "deep_think",
+        "check_deep_think",
+        "generate_diagram",
+        "web_search",
+        "check_web_search",
+      ]),
     );
+  });
+
+  // check_web_search can only report on a search that web_search started, so
+  // the two must always be offered together — a check with no way to dispatch
+  // is a dead slot whose answer would tell the model to reach for a tool it
+  // does not have.
+  it("offers check_web_search wherever web_search is offered", () => {
+    const conversations = [
+      [],
+      [markdownSource()],
+      [repoSource()],
+      [repoSource(), markdownSource()],
+    ];
+
+    for (const sources of conversations) {
+      const published = names(toolsForSources(sources));
+      expect(published).toContain("web_search");
+      expect(published).toContain("check_web_search");
+    }
   });
 });
 
@@ -456,6 +618,14 @@ describe("the published schemas", () => {
     const check = tool("check_deep_think");
     expect(check.parameters.properties.job_id).toBeDefined();
     expect(check.parameters.required).toBeUndefined();
+  });
+
+  // Unlike check_deep_think, a web search has no "latest one" fallback — the
+  // model is told to keep the id, so the schema demands it.
+  it("requires job_id on check_web_search", () => {
+    const check = tool("check_web_search");
+    expect(check.parameters.properties.job_id).toBeDefined();
+    expect(check.parameters.required).toEqual(["job_id"]);
   });
 
   it("promises automatic conversation context on dispatch_pi_agent, nothing more", () => {

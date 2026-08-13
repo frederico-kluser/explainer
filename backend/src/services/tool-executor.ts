@@ -7,12 +7,17 @@ import {
 import { buildResearchContext } from "./research-context.js";
 import { listSources, pickSource } from "./source-store.js";
 import {
+  WebSearchJobError,
+  dispatchWebSearch,
+  getWebSearchJob,
+  listWebSearchJobs,
+} from "./web-search-jobs.js";
+import {
   listSourceFiles,
   readSourceDoc,
   readSourceFile,
   searchSource,
 } from "../tools/source-tools.js";
-import { executeWebSearch } from "../tools/web-search.js";
 import {
   checkDeepThink,
   runDeepThink,
@@ -205,12 +210,28 @@ export async function executeTool(
       };
 
     case "web_search":
+      return dispatchSearch(
+        conversationId,
+        requireString(args, "query", name),
+        await buildResearchContext(conversationId, sources),
+      );
+
+    case "check_web_search": {
+      const job = getWebSearchJob(requireString(args, "job_id", name));
+      if (!job) return { output: "Nenhuma busca com esse identificador." };
+      if (job.status === "running") {
+        return {
+          output:
+            `A busca ainda esta em andamento (${job.activity}). Continue a ` +
+            "conversa; o resultado chega sozinha.",
+          meta: { job_id: job.id, status: job.status, activity: job.activity },
+        };
+      }
       return {
-        output: await executeWebSearch(
-          requireString(args, "query", name),
-          conversationId,
-        ),
+        output: job.result ?? job.error ?? "A busca terminou sem resposta.",
+        meta: { job_id: job.id, status: job.status },
       };
+    }
 
     case "read_source_doc": {
       if (!source) return noMaterial();
@@ -367,6 +388,47 @@ function dispatchAgent(
     };
   } catch (err) {
     if (err instanceof AgentJobError) return { output: err.message };
+    throw err;
+  }
+}
+
+/**
+ * Start a web search and answer immediately.
+ *
+ * Same shape as `dispatchAgent`, for the same reason: a search takes up to
+ * 75 seconds and a spoken conversation cannot hold that open. The model gets
+ * a job id in milliseconds, says out loud that it is searching, and keeps
+ * talking; the answer is injected as a new conversation item when it lands.
+ *
+ * The 409 sentence does not name the running job's id: spoken, the model would
+ * read the uuid out digit by digit. The id goes to the browser through `meta`.
+ */
+function dispatchSearch(
+  conversationId: string,
+  query: string,
+  context: string,
+): ToolOutcome {
+  try {
+    const job = dispatchWebSearch({ conversationId, query, context });
+    return {
+      output:
+        "Busca disparada. Avise o usuario em voz alta que voce esta pesquisando " +
+        "e continue a conversa; o resultado vai chegar sozinho em breve.",
+      meta: { job_id: job.id, status: job.status, activity: job.activity },
+    };
+  } catch (err) {
+    if (err instanceof WebSearchJobError && err.status === 409) {
+      const running = listWebSearchJobs(conversationId).find((j) => j.status === "running");
+      return {
+        output:
+          "Ja tem uma busca em andamento nesta conversa. Diga ao usuario que ela " +
+          "ainda esta rodando e continue a conversa; da para disparar outra depois " +
+          "que terminar.",
+        ...(running
+          ? { meta: { job_id: running.id, status: running.status, activity: running.activity } }
+          : {}),
+      };
+    }
     throw err;
   }
 }

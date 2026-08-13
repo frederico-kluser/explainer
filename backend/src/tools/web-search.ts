@@ -20,23 +20,38 @@ const MAX_RESULTS = 10;
  * returns spoken-answer-shaped prose with citations. When that is unavailable
  * (no key, outage, rate limit) it falls back to `surf-research-skill`, the CLI
  * already installed on this machine, and formats the raw hits instead.
+ *
+ * `context` is the conversation block from `research-context.ts`: the
+ * synthesis model answers `query` alone today, so a question that only makes
+ * sense against what was just said (a follow-up, a correction) comes back
+ * generic. The fallback CLI gets the clean query — it searches raw hits and
+ * has no use for the block.
+ *
+ * The returned `cost_usd` mirrors what was booked on the ledger: defined only
+ * when the OpenAI path actually answered, so the caller can put a price on the
+ * `web_search_done` event without reading the ledger back.
  */
 export async function executeWebSearch(
   query: string,
   conversationId: string,
   maxResults?: number,
-): Promise<string> {
+  context?: string,
+): Promise<{ text: string; cost_usd?: number }> {
   const trimmed = query.trim();
-  if (trimmed.length === 0) return "Busca vazia: informe o que pesquisar.";
+  if (trimmed.length === 0) return { text: "Busca vazia: informe o que pesquisar." };
   const safeQuery = trimmed.slice(0, MAX_QUERY_LENGTH);
 
+  let costUsd: number | undefined;
   try {
-    const { text, citations, usage, model, search_calls } = await webSearch(safeQuery);
+    const { text, citations, usage, model, search_calls } = await webSearch(safeQuery, {
+      context,
+    });
 
     // Hosted search bills a flat fee per call on top of the model's tokens.
+    costUsd = priceTextResponse(model, usage) + search_calls * WEB_SEARCH_CALL_USD;
     void addCost(conversationId, {
       source: "web_search",
-      usd: priceTextResponse(model, usage) + search_calls * WEB_SEARCH_CALL_USD,
+      usd: costUsd,
       detail: safeQuery.slice(0, 80),
       tokens: { input: usage.input_tokens, output: usage.output_tokens },
     });
@@ -46,7 +61,9 @@ export async function executeWebSearch(
         .slice(0, 4)
         .map((c, i) => `[${i + 1}] ${c.title} — ${c.url}`)
         .join("\n");
-      return sources ? `${text}\n\nFontes:\n${sources}` : text;
+      return sources
+        ? { text: `${text}\n\nFontes:\n${sources}`, cost_usd: costUsd }
+        : { text, cost_usd: costUsd };
     }
     // An empty answer is not an error, but the fallback may still find something.
     console.warn("[web_search] OpenAI returned no text; falling back to surf");
@@ -57,7 +74,9 @@ export async function executeWebSearch(
     );
   }
 
-  return surfFallback(safeQuery, maxResults);
+  // The surf CLI costs nothing this app tracks; when the OpenAI path was paid
+  // for and still came back empty, the cost rides the fallback answer anyway.
+  return { text: await surfFallback(safeQuery, maxResults), cost_usd: costUsd };
 }
 
 async function surfFallback(
