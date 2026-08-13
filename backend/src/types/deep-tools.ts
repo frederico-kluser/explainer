@@ -223,3 +223,45 @@ export interface MemoryResume {
   materials: string[];
   event_count: number;
 }
+
+// ---------------------------------------------------------------------------
+// Web search
+// ---------------------------------------------------------------------------
+
+/**
+ * One background web search, as the job stream knows it.
+ *
+ * The query the voice model asked for plus the state of the run. The stream
+ * carries no context block — only the server ever saw it.
+ */
+export interface WebSearchJob {
+  id: string;
+  conversation_id: string;
+  query: string;
+  status: "running" | "done" | "error" | "cancelled";
+  activity: string;
+  /** The spoken answer (with sources), when the job finished. */
+  result?: string;
+  error?: string;
+  cost_usd?: number;
+  started_at: string;
+  finished_at?: string;
+}
+
+/**
+ * The web-search half of the job stream.
+ *
+ * A sibling union with the same discipline as `DeepThinkEvent`: discriminants
+ * disjoint from the agent job's and the deliberation round's, `activity` with
+ * no `replay` field — only a finished search is ever replayed.
+ */
+export type WebSearchEvent =
+  | { type: "web_search_activity"; job_id: string; activity: string }
+  | {
+      type: "web_search_done";
+      job_id: string;
+      result: string;
+      cost_usd?: number;
+      replay?: boolean;
+    }
+  | { type: "web_search_error"; job_id: string; error: string; replay?: boolean };

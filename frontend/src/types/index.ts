@@ -149,7 +149,7 @@ export type DeepThinkEvent =
  * event into a card — a chain of `type === "done" ? … : …` treats every
  * unrecognised type as a failure and invents a job that never existed.
  */
-export type SessionStreamEvent = AgentJobEvent | DeepThinkEvent;
+export type SessionStreamEvent = AgentJobEvent | DeepThinkEvent | WebSearchEvent;
 
 // ---------------------------------------------------------------------------
 // The shared conversation — mirrors backend/src/services/conversation-bus.ts
@@ -611,3 +611,38 @@ export interface CatalogResult {
   /** Models that survived. Always `models.length`. */
   filtered: number;
 }
+
+// ---------------------------------------------------------------------------
+// Web search — mirrors backend/src/types/deep-tools.ts
+// ---------------------------------------------------------------------------
+
+/** One background web search, as the browser knows it. */
+export interface WebSearchJob {
+  id: string;
+  conversation_id: string;
+  query: string;
+  status: "running" | "done" | "error" | "cancelled";
+  activity: string;
+  result?: string;
+  error?: string;
+  cost_usd?: number;
+  started_at: string;
+  finished_at?: string;
+}
+
+/**
+ * The web-search half of the job stream.
+ *
+ * Same discipline as `DeepThinkEvent`: `web_search_activity` carries no
+ * `replay` field at all — only a finished search is ever replayed.
+ */
+export type WebSearchEvent =
+  | { type: "web_search_activity"; job_id: string; activity: string }
+  | {
+      type: "web_search_done";
+      job_id: string;
+      result: string;
+      cost_usd?: number;
+      replay?: boolean;
+    }
+  | { type: "web_search_error"; job_id: string; error: string; replay?: boolean };
