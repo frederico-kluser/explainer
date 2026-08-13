@@ -65,7 +65,8 @@ async function surfFallback(
   maxResults?: number,
 ): Promise<string> {
   const count = clampResults(maxResults);
-  const args = ["search", "--", query, "--max", String(count), "--json"];
+  // The CLI takes the query as a positional arg; a `--` separator is rejected.
+  const args = ["search", query, "--max", String(count), "--json"];
 
   try {
     const { stdout, stderr } = await execFileAsync("surf-research-skill", args, {
