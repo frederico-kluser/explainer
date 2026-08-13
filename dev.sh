@@ -114,6 +114,26 @@ API_PORT="${PORT:-3001}"
 # lone GET cannot do: with no answer it cannot tell a server that refuses to
 # reply from a port nobody is listening on.
 #
+# BOTH LOOPBACK STACKS ARE PROBED, and that is not thoroughness — it is the
+# difference between this check working and lying. A server bound only to `::1`
+# refuses every IPv4 connection, so a probe of 127.0.0.1 alone reports the port
+# `free` while it is very much taken. Measured here against a real one: another
+# project's Vite held `[::1]:5173`, this function said `free`, the script handed
+# 5173 to our Vite, Vite binds dual-stack, hit the collision and — because
+# `strictPort` is on, correctly — died, taking the whole run down with a raw
+# stack trace. The checker and the binder have to mean the same thing by "the
+# port", so a port is taken when *either* stack answers.
+#
+# This is why the rule cannot be copied from `probeBackendPort` in
+# `electron/main/services/backend-process.ts`, which probes 127.0.0.1 alone and
+# is right to: it only ever asks about the backend, and the backend binds
+# 127.0.0.1 (`EXPLAINER_HOST`), so an IPv6-only stranger genuinely does not
+# collide with it. This function also classifies the *Vite* port, and Vite runs
+# with `host: true`. One function, two binders, so it answers for the stricter
+# of them. The cost is a backend that moves off 3001 when only `[::1]:3001` is
+# taken — over-cautious, and the app still works, which is the right direction
+# to be wrong in.
+#
 # If `node` itself fails here the output is empty and the caller reads it as
 # `free`, falling back to the old behaviour of starting the server and letting
 # it complain for itself.
@@ -121,12 +141,18 @@ classify_port() {
   PROBE_PORT="$1" PROBE_HEALTH="${2:-}" node -e '
     const port = Number(process.env.PROBE_PORT);
     const health = process.env.PROBE_HEALTH || "";
-    const host = "127.0.0.1";
+    const hosts = ["127.0.0.1", "::1"];
     const timeoutMs = 600;
     (async () => {
       const { default: net } = await import("node:net");
-      const accepting = await new Promise((resolve) => {
-        const socket = net.connect({ host, port });
+      const accepts = (host) => new Promise((resolve) => {
+        let socket;
+        try {
+          socket = net.connect({ host, port });
+        } catch {
+          // A machine with no IPv6 at all: not a listener, so not taken.
+          return resolve(false);
+        }
         const settle = (value) => {
           socket.removeAllListeners();
           socket.destroy();
@@ -137,19 +163,32 @@ classify_port() {
         socket.once("timeout", () => settle(false));
         socket.once("error", () => settle(false));
       });
-      if (!accepting) return process.stdout.write("free");
+
+      // In parallel, so covering both stacks costs one timeout and not two.
+      const answered = await Promise.all(hosts.map(accepts));
+      const live = hosts.filter((_, index) => answered[index]);
+
+      if (live.length === 0) return process.stdout.write("free");
       if (!health) return process.stdout.write("occupied-by-other");
-      try {
-        const response = await fetch(`http://${host}:${port}${health}`, {
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        const body = response.ok ? await response.json() : null;
-        process.stdout.write(
-          body && body.status === "ok" ? "backend-alive" : "occupied-by-other"
-        );
-      } catch {
-        process.stdout.write("occupied-by-other");
+
+      // Ask on whichever stack answered. Ours binds 127.0.0.1
+      // (`EXPLAINER_HOST` in backend/src/index.ts), but asking only there would
+      // reintroduce the blind spot on a machine that changed that.
+      for (const host of live) {
+        const authority = host.includes(":") ? `[${host}]` : host;
+        try {
+          const response = await fetch(`http://${authority}:${port}${health}`, {
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          const body = response.ok ? await response.json() : null;
+          if (body && body.status === "ok") {
+            return process.stdout.write("backend-alive");
+          }
+        } catch {
+          // Try the other stack before concluding it is a stranger.
+        }
       }
+      process.stdout.write("occupied-by-other");
     })();
   ' 2>/dev/null || true
 }
@@ -180,6 +219,37 @@ fi
 API_STATE="$(classify_port "$API_PORT" /api/health)"
 [ -n "$API_STATE" ] || API_STATE="free"
 
+# A stranger on the API port used to end the run's usefulness without ending the
+# run: the script warned, started the frontend anyway, and every `/api` request
+# was proxied into whatever owned 3001 — measured once as a request for
+# `/api/health` coming back as another project's HTML. Moving is strictly better
+# than warning, and the frontend can follow because the proxy target reads
+# `EXPLAINER_API_PORT` (frontend/vite.config.ts).
+#
+# Only when the port was ours to choose. `PORT=3002 npm run dev` is a decision,
+# and a script that silently overrode it would be worse than the collision.
+# `backend-alive` never moves either: that is our own backend from
+# `npm run dev:desktop`, and reusing it is the point.
+API_MOVED_FROM=""
+API_PINNED=0
+[ -n "${PORT:-}" ] && API_PINNED=1
+
+if [ "$API_STATE" = "occupied-by-other" ] && [ "$API_PINNED" = "0" ]; then
+  for candidate in 3002 3003 3004 3005; do
+    candidate_state="$(classify_port "$candidate" /api/health)"
+    if [ "$candidate_state" = "free" ] || [ -z "$candidate_state" ]; then
+      API_MOVED_FROM="$API_PORT"
+      API_PORT="$candidate"
+      API_STATE="free"
+      break
+    fi
+  done
+fi
+
+# Both halves read this: the backend binds it, and Vite proxies to it.
+export PORT="$API_PORT"
+export EXPLAINER_API_PORT="$API_PORT"
+
 # --- Servidores -----------------------------------------------------------
 
 API_PID=""
@@ -208,12 +278,29 @@ case "$API_STATE" in
     echo "${C_API}[api]${C_OFF} já tem um backend nosso na porta ${API_PORT} (respondeu /api/health) — reusando, não vou subir outro."
     ;;
   occupied-by-other)
+    # Two ways to land here, and telling the user the wrong one is worse than
+    # saying nothing: either they pinned the port, or nothing in 3001-3005 was
+    # free. Blaming a `PORT=` they never typed sends them looking for a variable
+    # that does not exist.
     echo "${C_WARN}[api] a porta ${API_PORT} está ocupada por outro processo — não vou subir o backend.${C_OFF}"
-    echo "${C_DIM}      Veja quem está lá (\`ss -ltnp | grep :${API_PORT}\`) e feche, ou rode em outra porta"
-    echo "      (\`PORT=$((API_PORT + 1)) npm run dev\`). O frontend sobe assim mesmo, mas tudo que passa"
-    echo "      por /api vai parar nesse outro processo, não no nosso backend.${C_OFF}"
+    if [ "$API_PINNED" = "1" ]; then
+      echo "${C_DIM}      Você fixou essa porta com PORT=${API_PORT}, então não escolhi outra por conta própria."
+      echo "      Feche quem está lá (\`ss -ltnp | grep :${API_PORT}\`) ou rode sem PORT, e o dev.sh"
+      echo "      acha uma livre sozinho.${C_OFF}"
+    else
+      echo "${C_DIM}      Procurei uma livre de 3001 a 3005 e não achei nenhuma. Feche um desses"
+      echo "      servidores (\`ss -ltnp | grep -E ':300[1-5]'\`) ou escolha a porta na mão"
+      echo "      (\`PORT=3010 npm run dev\`).${C_OFF}"
+    fi
+    echo "${C_DIM}      Assim o frontend sobe, mas tudo que passa por /api vai parar nesse outro"
+    echo "      processo, não no nosso backend.${C_OFF}"
     ;;
   *)
+    if [ -n "$API_MOVED_FROM" ]; then
+      echo "${C_WARN}[api] a porta ${API_MOVED_FROM} é de outro processo — subindo o backend na ${API_PORT}.${C_OFF}"
+      echo "${C_DIM}      O proxy do /api vai junto, então o app funciona normalmente. Quem está na"
+      echo "      ${API_MOVED_FROM}: \`ss -ltnp | grep :${API_MOVED_FROM}\`.${C_OFF}"
+    fi
     (cd backend && exec node_modules/.bin/tsx watch src/index.ts) \
       > >(sed -u "s/^/${C_API}[api]${C_OFF} /") 2>&1 &
     API_PID=$!
@@ -241,7 +328,15 @@ esac
 SCHEME="${LAN_URL%%://*}"
 LOCAL_URL="${SCHEME}://localhost:${WEB_PORT}"
 
-echo "${C_API}[api]${C_OFF} http://localhost:${API_PORT}   ${C_WEB}[web]${C_OFF} ${LOCAL_URL}"
+# Advertising `[api] http://localhost:3001` on a run that refused to start a
+# backend is the script naming somebody else's server as ours.
+if [ "$API_STATE" = "occupied-by-other" ]; then
+  API_LINE="${C_WARN}[api] nenhum backend nosso — a ${API_PORT} é de outro processo${C_OFF}"
+else
+  API_LINE="${C_API}[api]${C_OFF} http://localhost:${API_PORT}"
+fi
+
+echo "${API_LINE}   ${C_WEB}[web]${C_OFF} ${LOCAL_URL}"
 echo "${C_WEB}[web]${C_OFF} no celular (mesmo wifi): ${LAN_URL}"
 
 # --- Navegador ------------------------------------------------------------

@@ -88,9 +88,16 @@ npm run dev
 ```
 
 `npm run dev` (o mesmo que `npm start`) é `bash dev.sh`: sobe backend (3001) e
-frontend (Vite, 5173) juntos e **abre http://localhost:5173 no navegador** assim
-que a porta 5173 começa a aceitar conexão. Escolha uma fonte, clique no
-microfone e fale. Ctrl+C derruba os dois servidores.
+frontend (Vite, 5173) juntos e **abre o navegador** assim que o frontend se
+identifica como sendo o nosso. Escolha uma fonte, clique no microfone e fale.
+Ctrl+C derruba os dois servidores.
+
+Se outro processo já estiver numa dessas portas, o script **anda para a
+próxima** em vez de morrer — frontend de 5173 a 5177, backend de 3001 a 3005 —
+e o proxy do `/api` acompanha, então o app funciona igual. Duas exceções, as
+duas de propósito: um backend nosso que já responde em 3001 (de um
+`npm run dev:desktop`) é **reusado** em vez de duplicado, e um `PORT=3002 npm run dev`
+é uma escolha sua, então o script não a sobrescreve.
 
 Se você não quer que ele abra o navegador — o editor já abriu a aba, é um
 container, é uma máquina remota — qualquer um destes desliga: `BROWSER=none npm run dev`,

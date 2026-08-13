@@ -73,7 +73,17 @@ export default defineConfig({
 		allowedHosts: [`${os.hostname().split(".")[0]}.local`],
 		proxy: {
 			"/api": {
-				target: "http://localhost:3001",
+				// `dev.sh` moves the backend when 3001 is held by a stranger and
+				// says where it went; without following, every /api request
+				// would be forwarded into that stranger — which is how a
+				// request for /api/health once came back as another project's
+				// HTML. Falls back to 3001 for `npm --prefix frontend run dev`
+				// and anyone else starting Vite on its own.
+				//
+				// 127.0.0.1 and not `localhost`: the backend binds 127.0.0.1
+				// (`EXPLAINER_HOST` in backend/src/index.ts), and `localhost`
+				// can resolve to ::1 first, where nothing is listening.
+				target: `http://127.0.0.1:${Number(process.env.EXPLAINER_API_PORT) || 3001}`,
 				changeOrigin: true,
 				// Without this the backend cannot tell its owner from a guest.
 				// This proxy is resolved by the Node process on the host, so

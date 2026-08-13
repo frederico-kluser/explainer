@@ -10,9 +10,14 @@ backend.
   (Electron, electron-vite, vitest) is a separate `npm install`, and the gate
   needs it.
 - dev (web): `npm run dev` — `bash dev.sh`, backend 3001 + frontend 5173, and it
-  opens http://localhost:5173 itself once 5173 accepts a socket. `BROWSER=none`,
-  `NO_OPEN=1` or `bash dev.sh --no-open` suppress that. `npm start` is the same
-  script.
+  opens the frontend itself once that port identifies itself as ours. Both ports
+  move when a stranger holds them: the frontend walks 5173→5177, the backend
+  3001→3005, and Vite's `/api` proxy follows through `EXPLAINER_API_PORT`.
+  `PORT=` pins the backend port and disables that move. A port is probed on
+  **both** loopback stacks — a listener on `::1` alone is invisible to an IPv4
+  probe, which is how a stranger's Vite once killed the run. `BROWSER=none`,
+  `NO_OPEN=1` or `bash dev.sh --no-open` suppress the browser. `npm start` is
+  the same script.
 - dev (desktop): `npm run dev:desktop` (alias `dev:electron`) — `electron-vite dev`.
   The main process probes 3001 first and reuses a backend already answering
   there instead of spawning a second one, so it can run alongside `npm run dev`.
