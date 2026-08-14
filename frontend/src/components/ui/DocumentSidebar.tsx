@@ -23,6 +23,11 @@ export interface DocumentSidebarProps {
   title: string;
   /** From the mode: what the panel says while the document is empty. */
   placeholder: string;
+  /**
+   * From the mode: how the document renders — markdown, or a whole
+   * html-explainer file shown in a sandboxed iframe. Absent means markdown.
+   */
+  format?: "markdown" | "html";
   content: string;
   onContentChange: (content: string) => void;
   open: boolean;
@@ -36,7 +41,7 @@ function viewportWidth(): number {
 }
 
 /**
- * The markdown, beside the conversation.
+ * The mode's document, beside the conversation.
  *
  * Two shells, chosen by `compact`, because the same pane cannot serve both: on
  * a desktop it is a column you drag to whatever width the document needs, and
@@ -52,6 +57,7 @@ export function DocumentSidebar({
   conversationId,
   title,
   placeholder,
+  format,
   content,
   onContentChange,
   open,
@@ -115,6 +121,7 @@ export function DocumentSidebar({
       conversationId={conversationId}
       content={content}
       placeholder={placeholder}
+      format={format}
       onContentChange={onContentChange}
     />
   );

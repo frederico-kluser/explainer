@@ -338,7 +338,7 @@ export interface Conversation {
  * One kind of conversation, as `GET /api/modes` describes it.
  *
  * Nothing in this package enumerates modes. The picker renders whatever the
- * server sends and the sidebar takes its title and its empty state from
+ * server sends and the sidebar takes its title, its empty state and its format from
  * `document`, so a mode added in `backend/src/modes/registry.ts` appears here
  * without a line changing.
  */
@@ -353,6 +353,11 @@ export interface ModeSummary {
     title: string;
     placeholder: string;
     open_by_default: boolean;
+    /**
+     * How the browser renders the document: markdown through the shared
+     * renderer, or a whole html-explainer file shown in a sandboxed iframe.
+     */
+    format: "markdown" | "html";
   } | null;
 }
 

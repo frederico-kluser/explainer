@@ -1047,6 +1047,7 @@ export function App() {
           conversationId={activeConvId}
           title={modeDocument.title}
           placeholder={modeDocument.placeholder}
+          format={modeDocument.format}
           content={documentContent ?? ""}
           onContentChange={setDocumentContent}
           open={docOpen}
