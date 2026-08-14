@@ -29,6 +29,7 @@ import { MemoryPanel } from "@/components/ui/MemoryPanel";
 import { MermaidDiagram } from "@/components/ui/MermaidDiagram";
 import { Button } from "@/components/ui/button";
 import { MobileTopBar } from "@/components/ui/MobileTopBar";
+import { ModeBadge } from "@/components/ui/ModeBadge";
 import { ConversationsSheet } from "@/components/ui/ConversationsSheet";
 import { PanelsSheet } from "@/components/ui/PanelsSheet";
 import { DocumentSidebar } from "@/components/ui/DocumentSidebar";
@@ -158,6 +159,16 @@ export function App() {
   const modeDocument = activeMode?.document ?? null;
   const needsMaterial = activeMode?.requires_material ?? true;
 
+  // The sidebar's per-conversation mode icons, keyed by mode id. Built from the
+  // same fetched list the picker renders, so the registry stays the only list.
+  const modesById = useMemo(
+    () =>
+      new Map<string, { icon: string; label: string }>(
+        modes.map((m) => [m.id, { icon: m.icon, label: m.label }]),
+      ),
+    [modes],
+  );
+
   // Opening state belongs to the conversation, not to the session: switching to
   // a presentation should show its script, and switching back to a normal
   // conversation should not leave a notes pane the user never opened.
@@ -222,8 +233,9 @@ export function App() {
   const [commandOpen, setCommandOpen] = useState(false);
   const openCommandPalette = useCallback(() => setCommandOpen(true), []);
 
-  const commandItems = useMemo<CommandPaletteItem[]>(
-    () => [
+  const commandItems = useMemo<CommandPaletteItem[]>(() => {
+    const modesById = new Map(modes.map((m) => [m.id, m]));
+    return [
       {
         id: "__new__",
         label: "Nova conversa",
@@ -231,15 +243,21 @@ export function App() {
         group: "Ações",
         keywords: ["nova", "criar", "new", "create", "add"],
       },
-      ...conversations.map((c) => ({
-        id: c.id,
-        label: c.title,
-        group: "Conversas",
-        hint: `Atualizada ${new Date(c.updated_at).toLocaleDateString("pt-BR")}`,
-      })),
-    ],
-    [conversations],
-  );
+      ...conversations.map((c) => {
+        const storedModeId = c.metadata?.mode;
+        const mode =
+          typeof storedModeId === "string" ? modesById.get(storedModeId) : undefined;
+        return {
+          id: c.id,
+          label: c.title,
+          group: "Conversas",
+          hint: `${mode ? `${mode.label} · ` : ""}Atualizada ${new Date(
+            c.updated_at,
+          ).toLocaleDateString("pt-BR")}`,
+        };
+      }),
+    ];
+  }, [conversations, modes]);
 
   // ── Fetch conversations (extracted for retry) ──────────────────
   const initRef = useRef<{ cancelled: boolean }>({ cancelled: false });
@@ -740,6 +758,24 @@ export function App() {
     </div>
   );
 
+  // The header's mode badge: first pill of the status row on a live call, and
+  // above the material picker before one starts. Both branches render it —
+  // the picker state is where the mode matters most, with nothing on screen
+  // yet saying what the conversation is for, and the row would read wrong
+  // without it. The phone carries it in the top bar instead, so this one is
+  // desktop only. `activeConversation` is required alongside `activeMode`
+  // because the latter falls back to the registry's first entry even when no
+  // conversation is open — an empty install must not badge a ghost.
+  const modeBadge =
+    !compact && activeMode && activeConversation ? (
+      <ModeBadge
+        icon={activeMode.icon}
+        label={activeMode.label}
+        size="sm"
+        title={`Modo: ${activeMode.label}`}
+      />
+    ) : null;
+
   // ── Render ────────────────────────────────────────────────────
   return (
     <div className="dark flex h-dvh overflow-hidden bg-background text-foreground">
@@ -775,6 +811,7 @@ export function App() {
           onDelete={handleDelete}
           onRename={handleRename}
           onOpenPalette={openCommandPalette}
+          modesById={modesById}
         >
           {agentsPanel}
           {voicePanel}
@@ -802,6 +839,11 @@ export function App() {
             runningJobs={runningJobs.length}
             onOpenConversations={() => setNavOpen(true)}
             onOpenPanels={() => setPanelsOpen(true)}
+            mode={
+              activeMode && activeConversation
+                ? { icon: activeMode.icon, label: activeMode.label }
+                : null
+            }
             {...(modeDocument
               ? {
                   documentTitle: modeDocument.title,
@@ -837,6 +879,7 @@ export function App() {
                     : "flex-wrap",
                 )}
               >
+                {modeBadge}
                 {!compact && (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-400">
                     <span className="size-1.5 rounded-full bg-emerald-400" />
@@ -880,13 +923,16 @@ export function App() {
                 )}
               </div>
             ) : (
-              <MaterialPicker
-                materials={materials}
-                busy={sourceBusy}
-                disabled={!activeConvId}
-                onAdd={(spec) => void handleMaterialAdd(spec)}
-                onRemove={(id) => void handleMaterialRemove(id)}
-              />
+              <>
+                {modeBadge && <div className="mb-2">{modeBadge}</div>}
+                <MaterialPicker
+                  materials={materials}
+                  busy={sourceBusy}
+                  disabled={!activeConvId}
+                  onAdd={(spec) => void handleMaterialAdd(spec)}
+                  onRemove={(id) => void handleMaterialRemove(id)}
+                />
+              </>
             )}
           </div>
         </div>
@@ -1078,6 +1124,7 @@ export function App() {
               onDelete={handleDelete}
               onRename={handleRename}
               onOpenPalette={searchFromSheet}
+              modesById={modesById}
             >
               {thinkersButton}
             </Sidebar>

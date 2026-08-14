@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Check, MessageSquare, Plus, Search, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { resolveModeIcon } from "@/components/ui/mode-icons";
 import { useMotionUITransition } from "@/components/motion-ui/ui-theme";
 import type { Conversation } from "@/types";
 
@@ -16,6 +17,12 @@ export interface SidebarProps {
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onOpenPalette: () => void;
+  /**
+   * Each conversation's mode, keyed by mode id, so the list can show the kind
+   * of conversation an item is. Absent — modes not loaded — every item keeps
+   * the generic icon.
+   */
+  modesById?: ReadonlyMap<string, { icon: string; label: string }>;
   /** Rendered under the conversation list: agents, settings, costs. */
   children?: React.ReactNode;
 }
@@ -51,6 +58,7 @@ export function Sidebar({
   onDelete,
   onRename,
   onOpenPalette,
+  modesById,
   children,
 }: SidebarProps) {
   const transition = useMotionUITransition("gentle");
@@ -132,6 +140,19 @@ export function Sidebar({
                 const active = conversation.id === activeId;
                 const editing = editingId === conversation.id;
 
+                // The mode this conversation was created in. A conversation
+                // older than the feature has no `metadata.mode`, and a mode
+                // the list has not loaded is unknown — both keep the generic
+                // icon and the plain title, byte for byte.
+                const storedModeId = conversation.metadata?.mode;
+                const mode =
+                  typeof storedModeId === "string"
+                    ? modesById?.get(storedModeId)
+                    : undefined;
+                const ModeIcon = mode
+                  ? resolveModeIcon(mode.icon)
+                  : MessageSquare;
+
                 return (
                   <motion.li
                     key={conversation.id}
@@ -174,9 +195,13 @@ export function Sidebar({
                               ? "bg-accent text-foreground"
                               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                           )}
-                          title="Clique para abrir, dois cliques para renomear"
+                          title={
+                            mode
+                              ? `Conversa · ${mode.label} — clique para abrir, dois cliques para renomear`
+                              : "Clique para abrir, dois cliques para renomear"
+                          }
                         >
-                          <MessageSquare className="size-3.5 shrink-0 opacity-60" />
+                          <ModeIcon className="size-3.5 shrink-0 opacity-60" />
                           <span className="min-w-0 flex-1 truncate">
                             {conversation.title}
                           </span>

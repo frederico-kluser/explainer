@@ -3,6 +3,7 @@
 import { FileText, Menu, MoreHorizontal } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { ModeBadge } from "@/components/ui/ModeBadge";
 
 export interface MobileTopBarProps {
   /** The active conversation's title. */
@@ -15,6 +16,12 @@ export interface MobileTopBarProps {
   runningJobs: number;
   onOpenConversations: () => void;
   onOpenPanels: () => void;
+  /**
+   * The active conversation's mode, so the bar can say what kind of
+   * conversation this is. Absent — no conversation, or modes not loaded — no
+   * badge is rendered.
+   */
+  mode?: { icon: string; label: string } | null;
   /**
    * The mode's document, when it keeps one. Absent — a mode with no document —
    * the button is not rendered rather than rendered and disabled: a phone has
@@ -44,6 +51,7 @@ export function MobileTopBar({
   runningJobs,
   onOpenConversations,
   onOpenPanels,
+  mode,
   documentTitle,
   onOpenDocument,
 }: MobileTopBarProps) {
@@ -66,6 +74,17 @@ export function MobileTopBar({
       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
         {title}
       </span>
+
+      {mode && (
+        <span className="min-w-0 max-w-[40%]">
+          <ModeBadge
+            icon={mode.icon}
+            label={mode.label}
+            size="xs"
+            title={`Modo: ${mode.label}`}
+          />
+        </span>
+      )}
 
       {(live || connecting) && (
         <span

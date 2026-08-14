@@ -1,38 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Compass,
-  FileText,
-  Lightbulb,
-  MessagesSquare,
-  Presentation,
-  Sparkles,
-  type LucideIcon,
-} from "lucide-react";
-
 import { cn } from "@/lib/utils";
+import { resolveModeIcon } from "@/components/ui/mode-icons";
 import { CenteredOverlay } from "@/components/ui/centered-overlay";
 import { Skeleton } from "@/components/motion-ui/skeleton";
 import * as api from "@/lib/api";
 import type { ModeSummary } from "@/types";
-
-/**
- * The icons a mode may name.
- *
- * An allowlist rather than a dynamic lookup: the server sends a string, and
- * pulling a component out of the icon package by that string would let whatever
- * is on the wire decide what gets rendered. A name that is not here falls back,
- * so a new mode that picks an unlisted icon looks plain instead of crashing.
- */
-const ICONS: Record<string, LucideIcon> = {
-  MessagesSquare,
-  Presentation,
-  FileText,
-  Lightbulb,
-  Compass,
-  Sparkles,
-};
 
 export interface ModePickerProps {
   open: boolean;
@@ -93,7 +67,7 @@ export function ModePicker({ open, onClose, onChoose }: ModePickerProps) {
       ) : (
         <div className="space-y-2">
           {modes.map((mode) => {
-            const Icon = ICONS[mode.icon] ?? Sparkles;
+            const Icon = resolveModeIcon(mode.icon);
             return (
               <button
                 key={mode.id}
