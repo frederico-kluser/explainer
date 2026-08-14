@@ -54,7 +54,7 @@ vi.mock("@/hooks/useRealtimeSession", async (importOriginal) => {
 import { App } from "@/App";
 import { MobileTopBar } from "@/components/ui/MobileTopBar";
 import { resetSetupDismissed } from "@/components/SetupScreen";
-import type { Material, ModeSummary } from "@/types";
+import type { Conversation, Material, ModeSummary } from "@/types";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -148,6 +148,41 @@ function installBackend(mode: ModeSummary, materials: Material[] = []): void {
   );
 }
 
+/**
+ * A backend whose registry holds at least two modes. `default` names the
+ * *second* one on purpose: App never reads that field — the fallback rule is
+ * "first of the registry", not "server default" — so a test that asserts the
+ * badge shows `modes[0]` proves which rule really won.
+ */
+function installBackendWithModes(
+  modes: [ModeSummary, ModeSummary, ...ModeSummary[]],
+  conversations: Conversation[],
+): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/api/modes")) {
+        return jsonResponse({ modes, default: modes[1].id });
+      }
+      if (url.endsWith("/api/conversations")) {
+        return jsonResponse(conversations);
+      }
+      if (url.endsWith("/api/provider-keys")) {
+        return jsonResponse({ providers: [] });
+      }
+      if (url.endsWith("/settings")) {
+        return jsonResponse({ voice: "alloy", speed: 1, voices: ["alloy"] });
+      }
+      if (url.includes("/api/sources/")) {
+        return jsonResponse({ materials: [], tools: [], greeting: "" });
+      }
+      if (url.includes("/api/credits")) return jsonResponse({ providers: [] });
+      return new Response("", { status: 404 });
+    }),
+  );
+}
+
 const PRESENTATION_MODE: ModeSummary = {
   id: "presentation",
   label: "Criar apresentação",
@@ -165,6 +200,15 @@ const MATERIAL: Material = {
   primary_doc_chars: 0,
   ephemeral: false,
   resolved_at: "2026-08-01T00:00:00.000Z",
+};
+
+const RESEARCH_MODE: ModeSummary = {
+  id: "research",
+  label: "Pesquisa",
+  description: "Investigue um tema com buscas na web.",
+  icon: "Compass",
+  requires_material: false,
+  document: null,
 };
 
 afterEach(async () => {
@@ -242,6 +286,65 @@ describe("the header's mode badge, through the whole App", () => {
     await settle();
 
     expect(modeBadgeOnScreen()).toBeNull();
+  });
+
+  it("falls back to the first registered mode for a conversation that predates modes", async () => {
+    // A conversation created before modes existed has no `metadata.mode`. The
+    // server answers those with the first mode in its registry, and
+    // `activeMode` mirrors that rule with `modes[0]` — but every other test
+    // here registers a single mode whose id matches the conversation, so
+    // `find` always wins and the fallback was dead code under test. Removing
+    // it would leave this badge empty and the suite would not notice.
+    installBackendWithModes(
+      [PRESENTATION_MODE, RESEARCH_MODE],
+      [
+        {
+          id: "legacy-1",
+          title: "Conversa antiga",
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    );
+
+    await mount(<App />);
+    await settle();
+
+    const badge = modeBadgeOnScreen();
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute("title")).toBe("Modo: Criar apresentação");
+    expect(badge?.textContent).toContain("Criar apresentação");
+    expect(badge?.querySelector("svg")?.getAttribute("class") ?? "").toContain(
+      "lucide-presentation",
+    );
+  });
+
+  it("falls back to the first registered mode when the conversation names a mode the registry does not have", async () => {
+    // A mode id that left the registry: `find` misses, and the badge must show
+    // the first registered mode rather than an empty one or nothing at all.
+    installBackendWithModes(
+      [PRESENTATION_MODE, RESEARCH_MODE],
+      [
+        {
+          id: "ghost-1",
+          title: "Rota de fuga",
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          metadata: { mode: "conversation" },
+        },
+      ],
+    );
+
+    await mount(<App />);
+    await settle();
+
+    const badge = modeBadgeOnScreen();
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute("title")).toBe("Modo: Criar apresentação");
+    expect(badge?.textContent).toContain("Criar apresentação");
+    expect(badge?.querySelector("svg")?.getAttribute("class") ?? "").toContain(
+      "lucide-presentation",
+    );
   });
 });
 

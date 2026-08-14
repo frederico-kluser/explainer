@@ -121,3 +121,57 @@ describe("Sidebar's per-conversation mode icon", () => {
     expect(rowButton("Rota de fuga").getAttribute("title")).toBe(PLAIN_TITLE);
   });
 });
+
+describe("Sidebar's per-conversation mode icon with a partial map", () => {
+  it("resolves a known mode and falls back to MessageSquare for an unknown one in the same list", async () => {
+    // Only some modes loaded: the known id resolves, and a conversation whose
+    // metadata names a mode the map does not have keeps the generic icon —
+    // the empty-map case above only asserted the title, never the icon.
+    const partial = new Map<string, { icon: string; label: string }>([
+      ["research", { icon: "Compass", label: "Pesquisa" }],
+    ]);
+    const local: Conversation[] = [
+      {
+        id: "research-1",
+        title: "Rota de fuga",
+        created_at: "2026-08-01T00:00:00.000Z",
+        updated_at: "2026-08-01T00:00:00.000Z",
+        metadata: { mode: "research" },
+      },
+      {
+        id: "unknown-1",
+        title: "Apresentação antiga",
+        created_at: "2026-07-01T00:00:00.000Z",
+        updated_at: "2026-07-01T00:00:00.000Z",
+        metadata: { mode: "presentation" },
+      },
+    ];
+
+    await mount(
+      <Sidebar
+        conversations={local}
+        activeId={null}
+        onSelect={() => {}}
+        onCreate={() => {}}
+        onDelete={() => {}}
+        onRename={() => {}}
+        onOpenPalette={() => {}}
+        modesById={partial}
+      />,
+    );
+
+    const known = rowButton("Rota de fuga");
+    expect(known.getAttribute("title")).toBe(
+      "Conversa · Pesquisa — clique para abrir, dois cliques para renomear",
+    );
+    expect(known.querySelector("svg")?.getAttribute("class") ?? "").toContain(
+      "lucide-compass",
+    );
+
+    const unknown = rowButton("Apresentação antiga");
+    expect(unknown.getAttribute("title")).toBe(PLAIN_TITLE);
+    expect(unknown.querySelector("svg")?.getAttribute("class") ?? "").toContain(
+      "lucide-message-square",
+    );
+  });
+});

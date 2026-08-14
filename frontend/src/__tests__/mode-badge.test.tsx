@@ -77,3 +77,20 @@ describe("ModeBadge", () => {
     expect(badge().getAttribute("title")).toBe("Modo: Conversa");
   });
 });
+
+describe("ModeBadge structure", () => {
+  it("leads with the icon, then the label, at the default xs size", async () => {
+    await mount(<ModeBadge icon="Compass" label="Pesquisa" />);
+
+    const pill = badge();
+    const [icon, label] = [...pill.children];
+    expect(icon).toBeDefined();
+    expect(icon!.tagName.toLowerCase()).toBe("svg");
+    expect(icon!.getAttribute("class") ?? "").toContain("size-3");
+    expect(label).toBeDefined();
+    expect(label!.tagName.toLowerCase()).toBe("span");
+    expect(label!.textContent).toBe("Pesquisa");
+    // The default size — the explicit-xs case is covered above.
+    expect(pill.className).toContain("text-[10px]");
+  });
+});
