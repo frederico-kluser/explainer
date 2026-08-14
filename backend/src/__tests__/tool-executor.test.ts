@@ -9,9 +9,10 @@ const currentSource = { value: null as ResolvedSource | null };
 // Same for the conversation: research-context reads it through storage, and a
 // fixture keeps the routing tests off the real data directory.
 const currentConversation = { value: null as Conversation | null };
-// Same for the mode: the research mode does not exist in this worktree yet, so
-// the tests that need its material-free set and parallel cap override the
-// resolved mode per test. Null keeps the real registry fallback.
+// Same for the mode: the real research mode lives in the registry now, but
+// the gate tests still override the resolved mode per test — the knob keeps
+// the two axes testable with arbitrary values, while the real-mode tests
+// further down pin the registry itself through `metadata.mode`.
 const modeOverride = {
   value: null as null | {
     materialFreeTools?: readonly ToolName[];
@@ -116,9 +117,10 @@ vi.mock("../services/web-search-jobs.js", async () => {
   };
 });
 
-// The mode lookup is real — registry plus storage — but the research mode is
-// not in this worktree yet: the material-free set and the parallel cap are
-// injected per test, merged over the resolved default mode.
+// The mode lookup is real — registry plus storage — with an override knob:
+// the gate tests merge arbitrary material-free sets and parallel caps over
+// the resolved mode, and the real research mode backs the tests that carry
+// `metadata.mode` on the conversation fixture.
 vi.mock("../services/conversation-mode.js", async () => {
   const actual = await vi.importActual<typeof import("../services/conversation-mode.js")>(
     "../services/conversation-mode.js",
@@ -136,6 +138,7 @@ const { parseToolArguments, executeTool, ToolValidationError } = await import(
   "../services/tool-executor.js"
 );
 const { ALL_TOOLS, toolsForSources } = await import("../tools/index.js");
+const { MODES } = await import("../modes/registry.js");
 const { MAX_CONTEXT_CHARS } = await import("../services/agent-jobs.js");
 const agentJobs = await import("../services/agent-jobs.js");
 const webSearchJobs = await import("../services/web-search-jobs.js");
@@ -160,7 +163,10 @@ function repoSource(): ResolvedSource {
   return { ...markdownSource(), id: "mat-2", kind: "repo", label: "Um repo", root: "/tmp" };
 }
 
-function conversationWith(messages: Conversation["messages"]): Conversation {
+function conversationWith(
+  messages: Conversation["messages"],
+  metadata: Conversation["metadata"] = {},
+): Conversation {
   return {
     id: CONV,
     title: "Uma conversa",
@@ -168,6 +174,7 @@ function conversationWith(messages: Conversation["messages"]): Conversation {
     updated_at: "2026-01-01T00:00:00.000Z",
     messages,
     attachments: [],
+    metadata,
   };
 }
 
@@ -657,6 +664,60 @@ describe("the research mode's parallel web searches", () => {
     );
   });
 
+  it("runs web_search on an empty conversation through the real research mode", async () => {
+    // No modeOverride: the fixture conversation carries the mode on its
+    // metadata, and the resolved registry entry frees web_search with nothing
+    // attached. The knob tests pin the gate's shape; this one pins the mode.
+    currentConversation.value = conversationWith([], { mode: "research" });
+
+    const result = await executeTool("web_search", '{"query":"o que e rust?"}', CONV);
+
+    expect(result.output).toMatch(/Busca disparada/);
+    expect(result.output).not.toMatch(/Nenhum material/i);
+    // The registry's parallelSearches: 6 reaches the dispatch untouched.
+    expect(webSearchJobs.dispatchWebSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ maxConcurrent: 6 }),
+    );
+  });
+
+  it("frees check_web_search too on an empty research conversation", async () => {
+    currentConversation.value = conversationWith([], { mode: "research" });
+    // A previous test's mockReturnValue would otherwise answer for this one.
+    vi.mocked(webSearchJobs.getWebSearchJob).mockReset();
+
+    const result = await executeTool("check_web_search", '{"job_id":"search-x"}', CONV);
+
+    // The gate lets the lookup through instead of answering "add a material",
+    // and the missing id is reported in words the model can say.
+    expect(result.output).toBe("Nenhuma busca com esse identificador.");
+    expect(webSearchJobs.getWebSearchJob).toHaveBeenCalledWith("search-x");
+  });
+
+  it("accepts a fan of searches on an empty research conversation", async () => {
+    currentConversation.value = conversationWith([], { mode: "research" });
+    // Round-one style: four approved doubts in flight at once, inside the
+    // registry cap of six — none of the dispatches may be refused.
+    vi.mocked(webSearchTool.executeWebSearch)
+      .mockImplementationOnce(() => new Promise<never>(() => undefined))
+      .mockImplementationOnce(() => new Promise<never>(() => undefined))
+      .mockImplementationOnce(() => new Promise<never>(() => undefined))
+      .mockImplementationOnce(() => new Promise<never>(() => undefined));
+
+    const ids: string[] = [];
+    try {
+      for (const query of ["rust", "go", "kotlin", "zig"]) {
+        const run = await executeTool("web_search", JSON.stringify({ query }), CONV);
+        expect(run.output).toMatch(/Busca disparada/);
+        ids.push(String(run.meta?.job_id ?? ""));
+      }
+    } finally {
+      // Tear the hanging jobs off their budget timers so the suite is not held open.
+      for (const id of ids) webSearchJobs.cancelWebSearch(id);
+    }
+
+    expect(ids).toHaveLength(4);
+  });
+
   it("refuses a fourth search by speaking the cap back", async () => {
     modeOverride.value = { materialFreeTools: ["web_search"], parallelSearches: 3 };
     // Searches that never answer keep their jobs "running" in the real
@@ -729,6 +790,27 @@ describe("the research tools and the conversation block", () => {
     expect(options.context).toContain("# Contexto da conversa");
   });
 });
+describe("the research mode's tool mint", () => {
+  it("offers the search pair and its own tools on an empty conversation", () => {
+    // The executor's allow-list is this same call with the same mode, so the
+    // mint a research conversation gets is what its web_search tools pass
+    // through on an empty conversation: the pair plus the mode's document
+    // tools, appended in the mode's own declaration order.
+    const published = names(toolsForSources([], MODES.research));
+
+    expect(published).toContain("web_search");
+    expect(published).toContain("check_web_search");
+    expect(published).toEqual(
+      expect.arrayContaining([
+        "read_document",
+        "write_document",
+        "append_document",
+        "edit_document_section",
+      ]),
+    );
+  });
+});
+
 describe("toolsForSources publishes the deliberation tools", () => {
   it("hides deep_think when BRAVE_API_KEY is unset and shows it when set", () => {
     delete process.env.BRAVE_API_KEY;

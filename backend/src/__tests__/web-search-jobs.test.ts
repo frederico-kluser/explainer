@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import type { WebSearchEvent } from "../types/deep-tools.js";
+import type { WebSearchEvent, WebSearchJob } from "../types/deep-tools.js";
 
 // web-search-jobs.ts imports executeWebSearch from tools/web-search.js, which
 // would reach the OpenAI API and the surf CLI. The stub replaces the whole
@@ -584,4 +584,138 @@ describe("dispatchWebSearch", () => {
 
     for (const job of [a1, a2, b1]) expect(mod.cancelWebSearch(job.id)).toBe(true);
   });
+
+  it("cancelling one parallel search leaves the others running and free to finish", async () => {
+    let resolveSecond: (value: SearchResult) => void = () => undefined;
+    executeWebSearchMock.mockImplementationOnce(() => hangingSearch());
+    executeWebSearchMock.mockImplementationOnce(
+      () => new Promise<SearchResult>((resolve) => { resolveSecond = resolve; }),
+    );
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    const conv = randomUUID();
+    const first = mod.dispatchWebSearch({ conversationId: conv, query: "a", maxConcurrent: 2 });
+    const second = mod.dispatchWebSearch({ conversationId: conv, query: "b", maxConcurrent: 2 });
+    expect(mod.cancelWebSearch(first.id)).toBe(true);
+    expect(mod.getWebSearchJob(first.id)?.status).toBe("cancelled");
+
+    // The cancelled job does not eat a slot: the guard counts only `running`
+    // jobs, so with `second` alone in flight a third dispatch is accepted.
+    const third = mod.dispatchWebSearch({ conversationId: conv, query: "c", maxConcurrent: 2 });
+    expect(third.status).toBe("running");
+
+    // The untouched search still concludes normally, and the cancelled job
+    // stays cancelled instead of being overwritten by the late arrival.
+    resolveSecond({ text: "a segunda chegou" });
+    await waitFor((e) => e.type === "web_search_done" && e.job_id === second.id);
+    expect(mod.getWebSearchJob(second.id)?.status).toBe("done");
+    expect(mod.getWebSearchJob(first.id)?.status).toBe("cancelled");
+    expect(mod.getWebSearchJob(third.id)?.status).toBe("running");
+
+    expect(mod.cancelWebSearch(third.id)).toBe(true);
+  });
+
+  it("an error in one parallel search does not touch the others", async () => {
+    let resolveSecond: (value: SearchResult) => void = () => undefined;
+    executeWebSearchMock.mockImplementationOnce(() => Promise.reject(new Error("boom")));
+    executeWebSearchMock.mockImplementationOnce(
+      () => new Promise<SearchResult>((resolve) => { resolveSecond = resolve; }),
+    );
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    const conv = randomUUID();
+    const first = mod.dispatchWebSearch({ conversationId: conv, query: "a", maxConcurrent: 2 });
+    const second = mod.dispatchWebSearch({ conversationId: conv, query: "b", maxConcurrent: 2 });
+    const failed = await waitFor((e) => e.type === "web_search_error" && e.job_id === first.id);
+    if (failed.type === "web_search_error") expect(failed.error).toMatch(/A busca falhou: boom/);
+    expect(mod.getWebSearchJob(first.id)?.status).toBe("error");
+
+    // The failed job frees its slot (only `running` counts) and the surviving
+    // search keeps running — and still concludes normally afterwards.
+    expect(mod.getWebSearchJob(second.id)?.status).toBe("running");
+    const third = mod.dispatchWebSearch({ conversationId: conv, query: "c", maxConcurrent: 2 });
+    expect(third.status).toBe("running");
+
+    resolveSecond({ text: "a segunda chegou" });
+    await waitFor((e) => e.type === "web_search_done" && e.job_id === second.id);
+    expect(mod.getWebSearchJob(second.id)?.status).toBe("done");
+    expect(mod.getWebSearchJob(first.id)?.status).toBe("error");
+
+    expect(mod.cancelWebSearch(third.id)).toBe(true);
+  });
+
+  it("timing one parallel search out does not kill the others", async () => {
+    let resolveSecond: (value: SearchResult) => void = () => undefined;
+    executeWebSearchMock.mockImplementationOnce(hangingSearch);
+    executeWebSearchMock.mockImplementationOnce(
+      () => new Promise<SearchResult>((resolve) => { resolveSecond = resolve; }),
+    );
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    const conv = randomUUID();
+    const first = mod.dispatchWebSearch({
+      conversationId: conv,
+      query: "demora",
+      maxConcurrent: 2,
+      timeoutMs: 1_000,
+    });
+    const second = mod.dispatchWebSearch({ conversationId: conv, query: "b", maxConcurrent: 2 });
+    const timedOut = await waitFor((e) => e.type === "web_search_error" && e.job_id === first.id);
+    if (timedOut.type === "web_search_error") expect(timedOut.error).toMatch(/interrompida/);
+    expect(mod.getWebSearchJob(first.id)?.status).toBe("error");
+
+    // The timeout freed the slot and the other search is untouched.
+    expect(mod.getWebSearchJob(second.id)?.status).toBe("running");
+    const third = mod.dispatchWebSearch({ conversationId: conv, query: "c", maxConcurrent: 2 });
+    expect(third.status).toBe("running");
+
+    resolveSecond({ text: "a segunda chegou" });
+    await waitFor((e) => e.type === "web_search_done" && e.job_id === second.id);
+    expect(mod.getWebSearchJob(second.id)?.status).toBe("done");
+
+    expect(mod.cancelWebSearch(third.id)).toBe(true);
+  });
+
+  it("speaks the cap back for a fan of six", async () => {
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    const conv = randomUUID();
+    const jobs: WebSearchJob[] = [];
+    for (let i = 0; i < 6; i++) {
+      jobs.push(mod.dispatchWebSearch({ conversationId: conv, query: `q${i}`, maxConcurrent: 6 }));
+    }
+    expect(jobs.every((job) => job.status === "running")).toBe(true);
+
+    let status = 0;
+    try {
+      mod.dispatchWebSearch({ conversationId: conv, query: "setima", maxConcurrent: 6 });
+      expect.unreachable("the seventh dispatch should have been refused");
+    } catch (err) {
+      expect(err).toBeInstanceOf(mod.WebSearchJobError);
+      expect((err as InstanceType<typeof mod.WebSearchJobError>).message).toMatch(
+        /Ja existem 6 buscas em andamento/,
+      );
+      status = (err as InstanceType<typeof mod.WebSearchJobError>).status;
+    }
+    expect(status).toBe(409);
+
+    for (const job of jobs) expect(mod.cancelWebSearch(job.id)).toBe(true);
+  });
+
+  it("keeps every running job when the registry overflows with nothing finished", async () => {
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    // 55 in-flight searches: every dispatch prunes, and the prune has nothing
+    // to sacrifice — all of them are `running`, so the retention cap has no
+    // victim and none of them disappears.
+    const ids: string[] = [];
+    for (let i = 0; i < 55; i++) {
+      ids.push(mod.dispatchWebSearch({ conversationId: randomUUID(), query: `r${i}` }).id);
+    }
+
+    for (const id of ids) expect(mod.getWebSearchJob(id)?.status).toBe("running");
+
+    for (const id of ids) expect(mod.cancelWebSearch(id)).toBe(true);
+  });
+
 });
