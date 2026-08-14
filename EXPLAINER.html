@@ -7,8 +7,8 @@
 
   1. TOKENS INLINE  — substituição simples de string. Cada token {{NOME}} é
      trocado pelo valor real:
-       v2  2026-08-14  main  Novo modo de conversa <strong>Pesquisa</strong> no Explainer (app de voz realtime): um modo de criar uma pesquisa perfeita, inspirado na surf-research-skill. O assistente pesquisa primeiro, levanta duvidas e pede aprovacao, dispara as buscas aprovadas EM PARALELO (cada uma com cartao e indicador de terminado), escreve o resumo de cada rodada (pontos, duvidas, respostas com fontes) num documento html-explainer editado EM CIMA a cada update, e repete o ciclo ate o usuario dizer que esta bom. O material aparece direto na pagina (iframe sandboxado no painel do documento).
-       2 (+ PREP + testing subwave)  15  9
+       v2  2026-08-14  main  Sinalizacao do modo de conversa no Explainer: com 3 modos (Conversa, Criar apresentacao, Pesquisa), o usuario agora VE em cada conversa qual modo ela e — badge no header do chat (desktop), badge na barra superior (mobile), icone do modo em cada conversa da lista (sidebar e drawer) e hint na command palette. O seletor ao criar nova conversa ja existia (botao 'Nova conversa' abre o ModePicker) e continua intacto.
+       1 (+ testing subwave)  5  2
      Os tokens inline aparecem na navbar, no hero, nos cards de estatística,
      no rodapé e na tabela de placeholders da aba "Visão geral".
 
@@ -185,7 +185,7 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Novo modo de conversa <strong>Pesquisa</strong> no Explainer (app de voz realtime): um modo de criar uma pesquisa perfeita, inspirado na surf-research-skill. O assistente pesquisa primeiro, levanta duvidas e pede aprovacao, dispara as buscas aprovadas EM PARALELO (cada uma com cartao e indicador de terminado), escreve o resumo de cada rodada (pontos, duvidas, respostas com fontes) num documento html-explainer editado EM CIMA a cada update, e repete o ciclo ate o usuario dizer que esta bom. O material aparece direto na pagina (iframe sandboxado no painel do documento).</p>
+    <p class="lead text-white-50 mb-3">Sinalizacao do modo de conversa no Explainer: com 3 modos (Conversa, Criar apresentacao, Pesquisa), o usuario agora VE em cada conversa qual modo ela e — badge no header do chat (desktop), badge na barra superior (mobile), icone do modo em cada conversa da lista (sidebar e drawer) e hint na command palette. O seletor ao criar nova conversa ja existia (botao 'Nova conversa' abre o ModePicker) e continua intacto.</p>
     <div class="d-flex flex-wrap gap-2">
       <span class="badge badge-accent">vv2</span>
       <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-14</span>
@@ -245,7 +245,7 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Novo modo de conversa <strong>Pesquisa</strong> no Explainer (app de voz realtime): um modo de criar uma pesquisa perfeita, inspirado na surf-research-skill. O assistente pesquisa primeiro, levanta duvidas e pede aprovacao, dispara as buscas aprovadas EM PARALELO (cada uma com cartao e indicador de terminado), escreve o resumo de cada rodada (pontos, duvidas, respostas com fontes) num documento html-explainer editado EM CIMA a cada update, e repete o ciclo ate o usuario dizer que esta bom. O material aparece direto na pagina (iframe sandboxado no painel do documento).</p>
+      <p class="text-body-secondary">Sinalizacao do modo de conversa no Explainer: com 3 modos (Conversa, Criar apresentacao, Pesquisa), o usuario agora VE em cada conversa qual modo ela e — badge no header do chat (desktop), badge na barra superior (mobile), icone do modo em cada conversa da lista (sidebar e drawer) e hint na command palette. O seletor ao criar nova conversa ja existia (botao 'Nova conversa' abre o ModePicker) e continua intacto.</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
@@ -257,7 +257,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">2 (+ PREP + testing subwave)</div>
+              <div class="display-6 fw-bold stat-value">1 (+ testing subwave)</div>
               <div class="text-body-secondary small">Ondas executadas</div>
             </div>
           </div>
@@ -266,7 +266,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">15</div>
+              <div class="display-6 fw-bold stat-value">5</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -275,7 +275,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">9</div>
+              <div class="display-6 fw-bold stat-value">2</div>
               <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
@@ -336,58 +336,16 @@
           </thead>
           <tbody>
             <tr>
-              <td><span class="badge badge-soft">PREP</span></td>
-              <td><code>(no branch)</code></td>
-              <td>Contratos do modo pesquisa em <code>modes/types.ts</code>: <code>document.format</code>, <code>parallelSearches</code>, <code>materialFreeTools</code> + <code>format: "markdown"</code> nos modos legados + pin de serializacao</td>
-              <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluida</span></td>
-            </tr>
-            <tr>
               <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-mode-research</code></td>
-              <td>Modo <code>research</code> completo: protocolo de rodadas (pesquisa ampla, duvidas, aprovacao, paralelizacao, resumo, repetir ate "esta bom"), template html-explainer de 5 abas, icon Compass, <code>requiresMaterial: false</code></td>
-              <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluida</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-search-parallel</code></td>
-              <td>Buscas web paralelas: <code>maxConcurrent</code> por conversa (default 1 = comportamento antigo), gate material-free do modo no executor, frase 409 condicional por cap (+ fix de revisao adversarial)</td>
-              <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluida</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-doc-html</code></td>
-              <td>Frontend: <code>format</code> no tipo do modo; <code>DocumentPanel</code> renderiza html em iframe sandbox (<code>allow-scripts</code> sem <code>allow-same-origin</code>) com toggle Ver/Editar; sidebar e App repassam</td>
-              <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluida</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>onda2-tool-desc</code></td>
-              <td><code>toolDescriptions</code> por modo: o modo research minta descricao propria da <code>web_search</code> (buscas simultaneas, cartao por busca); texto compartilhado "uma busca por vez" intacto para os outros modos</td>
+              <td><code>onda1-mode-badges</code></td>
+              <td><code>ModeBadge</code> (novo) + <code>mode-icons.ts</code> (allowlist extraido do ModePicker) + badge no header desktop (row de status e pre-live) + prop <code>mode</code> no MobileTopBar + <code>modesById</code> no Sidebar (icone do modo por conversa, fallback byte-a-byte) + hint do modo na command palette + 13 testes</td>
               <td class="text-end">1</td>
               <td><span class="badge badge-ok">Concluida</span></td>
             </tr>
             <tr>
               <td><span class="badge badge-soft">Testing</span></td>
-              <td><code>test-onda1-mode-tests</code></td>
-              <td>11 testes do modo research: protocolo (8 marcos), gating de 2 eixos, serializacao, rotas, create com casca html, sessao realtime em conversa vazia</td>
-              <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluida</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-soft">Testing</span></td>
-              <td><code>test-onda1-search-tests</code></td>
-              <td>9 testes: isolamento cancelar/errar/timeout entre paralelas, fan de 6 com recusa da 7a, poda com 55 running, modo research REAL atraves do gate (cap 6, material-free)</td>
-              <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluida</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-soft">Testing</span></td>
-              <td><code>test-onda1-html-doc</code></td>
-              <td>8 testes: markdown com html cru escapado, srcdoc reflete conteudo novo, guarda de foco do editor, App com modo format html renderizando iframe sandboxado</td>
+              <td><code>test-onda1-mode-ui</code></td>
+              <td>9 testes: caminho mobile (compact) no App REAL (gap do revisor adversarial), fallback do registro <code>modes[0]</code> com mutation check, palette com hint, mapa parcial, estado transiente</td>
               <td class="text-end">1</td>
               <td><span class="badge badge-ok">Concluida</span></td>
             </tr>
@@ -423,21 +381,13 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td><code>backend/src/modes/types.ts</code></td><td><span class="badge badge-soft">contrato</span></td><td><span class="diff-plus">+37</span> — <code>ModeDocumentSpec.format</code>, <code>ModeSummary.document.format</code>, <code>parallelSearches</code>, <code>materialFreeTools</code>, <code>toolDescriptions</code></td></tr>
-            <tr><td><code>backend/src/modes/research.ts</code></td><td><span class="badge badge-accent">novo</span></td><td><span class="diff-plus">+436</span> — modo Pesquisa completo (protocolo 7 passos, template html-explainer 5 abas ~14k chars, <code>parallelSearches: 6</code>, <code>materialFreeTools</code>, <code>toolDescriptions.web_search</code>)</td></tr>
-            <tr><td><code>backend/src/modes/registry.ts</code></td><td><span class="badge badge-soft">registro</span></td><td><span class="diff-plus">+2</span> — import + linha em MODES (conversation continua default)</td></tr>
-            <tr><td><code>backend/src/modes/conversation.ts</code> / <code>presentation.ts</code></td><td><span class="badge badge-soft">contrato</span></td><td><span class="diff-plus">+2</span> — <code>format: "markdown"</code> explicito (campo obrigatorio do contrato)</td></tr>
-            <tr><td><code>backend/src/services/web-search-jobs.ts</code></td><td><span class="badge badge-soft">comportamento</span></td><td><span class="diff-plus">+26</span> — <code>WebSearchOptions.maxConcurrent</code>; guard 409 vira cap por conversa (default 1, mensagem singular byte-a-byte preservada)</td></tr>
-            <tr><td><code>backend/src/services/tool-executor.ts</code></td><td><span class="badge badge-soft">comportamento</span></td><td><span class="diff-plus">+40</span> — gate material-free honra <code>mode.materialFreeTools</code>; dispatch passa <code>parallelSearches ?? 1</code>; frase 409 condicional por cap</td></tr>
-            <tr><td><code>backend/src/tools/index.ts</code></td><td><span class="badge badge-soft">mint</span></td><td><span class="diff-plus">+27</span> — <code>withModeDescriptions</code> aplica <code>toolDescriptions</code> do modo nos 2 caminhos do mint (clone, constantes intactas)</td></tr>
-            <tr><td><code>frontend/src/types/index.ts</code></td><td><span class="badge badge-soft">tipo</span></td><td><span class="diff-plus">+7</span> — <code>ModeSummary.document.format: "markdown" | "html"</code></td></tr>
-            <tr><td><code>frontend/src/components/ui/DocumentPanel.tsx</code></td><td><span class="badge badge-soft">ui</span></td><td><span class="diff-plus">+24</span> — prop <code>format</code> (default markdown); format html renderiza iframe <code>sandbox="allow-scripts"</code> sem <code>allow-same-origin</code> com <code>srcDoc</code>; toggle Ver/Editar</td></tr>
-            <tr><td><code>frontend/src/components/ui/DocumentSidebar.tsx</code> / <code>App.tsx</code></td><td><span class="badge badge-soft">fiacao</span></td><td><span class="diff-plus">+10</span> — prop <code>format</code> repassada do modo selecionado ao painel</td></tr>
-            <tr><td><code>backend/src/__tests__/modes.test.ts</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+211</span> — teto research &lt;26k, pin da casca, protocolo, gating, toolDescriptions, serializacao</td></tr>
-            <tr><td><code>backend/src/__tests__/mode-routes.test.ts</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+45</span> — /api/modes lista research; create grava casca html; sessao realtime 200 em conversa vazia</td></tr>
-            <tr><td><code>backend/src/__tests__/web-search-jobs.test.ts</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+235</span> — cap 3/1, slot liberado, conversas independentes, cancel/erro/timeout isolados, fan de 6, poda</td></tr>
-            <tr><td><code>backend/src/__tests__/tool-executor.test.ts</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+210</span> — gate material-free por modo, cap chega ao dispatch, frase 409 singular/plural, modo research REAL via metadata</td></tr>
-            <tr><td><code>frontend/src/__tests__/html-document*.test.tsx</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+602</span> — sandbox/srcdoc, nao-vazamento, toggle, atualizacoes, guarda de foco, App format html</td></tr>
+            <tr><td><code>frontend/src/components/ui/ModeBadge.tsx</code></td><td><span class="badge badge-accent">novo</span></td><td><span class="diff-plus">+38</span> — pill estatico xs/sm (icone do allowlist + label, tooltip opcional)</td></tr>
+            <tr><td><code>frontend/src/components/ui/mode-icons.ts</code></td><td><span class="badge badge-accent">novo</span></td><td><span class="diff-plus">+34</span> — allowlist MODE_ICONS extraido do ModePicker + resolveModeIcon (fallback Sparkles)</td></tr>
+            <tr><td><code>frontend/src/components/ui/ModePicker.tsx</code></td><td><span class="badge badge-soft">refactor</span></td><td><span class="diff-minus">-30</span> — passa a importar de mode-icons; comportamento identico (pins intactos)</td></tr>
+            <tr><td><code>frontend/src/App.tsx</code></td><td><span class="badge badge-soft">ui</span></td><td><span class="diff-plus">+83</span> — badge do activeMode no header (row de status live + acima do MaterialPicker pre-live, desktop-only, gated em activeMode && activeConversation); modesById para 2 Sidebars; mode para MobileTopBar; hint do modo na palette</td></tr>
+            <tr><td><code>frontend/src/components/ui/MobileTopBar.tsx</code></td><td><span class="badge badge-soft">ui</span></td><td><span class="diff-plus">+19</span> — prop opcional mode (icon/label) → badge xs ao lado do titulo (truncado)</td></tr>
+            <tr><td><code>frontend/src/components/ui/Sidebar.tsx</code></td><td><span class="badge badge-soft">ui</span></td><td><span class="diff-plus">+29</span> — prop opcional modesById → icone do modo por conversa (fallback MessageSquare byte-a-byte), tooltip "Conversa · &lt;label&gt;"</td></tr>
+            <tr><td><code>frontend/src/__tests__/*</code> (6 arquivos)</td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+992</span> — 22 testes: badge (unidade), sidebar por conversa, App desktop (pre-live/live/sem conversa/fallback do registro), App mobile compact (matchMedia stub + cache de modulo), palette com hint, estado transiente</td></tr>
           </tbody>
         </table>
       </div>
@@ -451,36 +401,12 @@
       <!-- {{COMMITS_LIST}} begin -->
       <ul class="list-group list-group-flush">
         <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">fcda2ee</span>
-          <div><strong>PREP-onda-1:</strong> contratos do modo pesquisa (document format, parallelSearches, materialFreeTools)</div>
+          <span class="badge badge-accent font-monospace">f2ead92</span>
+          <div><strong>Onda 1:</strong> sinalizacao do modo ativo (badge no header, topbar mobile, lista de conversas e palette)</div>
         </li>
         <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-accent font-monospace">f75e757</span>
-          <div><strong>Onda 1:</strong> modo de conversa Pesquisa com protocolo de rodadas e documento html-explainer</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-accent font-monospace">c0038ad</span>
-          <div><strong>Onda 1:</strong> buscas web paralelas por modo (cap por conversa) e gate material-free do modo</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-accent font-monospace">72e0afe</span>
-          <div><strong>Onda 1:</strong> documento do modo renderizado como html em iframe sandbox (format do modo)</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-accent font-monospace">8cd5814</span>
-          <div><strong>Onda 2:</strong> descricao da tool web_search por modo (override no mint, texto compartilhado intacto)</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">da39859</span>
-          <div><strong>Testing subwave:</strong> cobre o modo research (protocolo, gating, serializacao, rotas)</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">12200a4</span>
-          <div><strong>Testing subwave:</strong> cobre paralelismo de buscas (isolamento cancel/erro/timeout, cap real do modo, gate material-free)</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">fe155de</span>
-          <div><strong>Testing subwave:</strong> cobre atualizacoes do documento html (srcdoc, guarda de foco, App com format html)</div>
+          <span class="badge badge-soft font-monospace">03997df</span>
+          <div><strong>Testing subwave:</strong> cobre a sinalizacao do modo (mobile compact no App real, fallback do registro, palette, mapa parcial)</div>
         </li>
       </ul>
 <!-- {{COMMITS_LIST}} end -->
@@ -524,13 +450,13 @@
       </div>
 
       <!-- {{BEFORE_AFTER}} begin -->
-      <h3 class="h5 mt-4">1. O modo de conversa (backend/src/modes/)</h3>
+      <h3 class="h5 mt-4">1. Sinalizacao do modo ativo (frontend)</h3>
       <div class="row g-3 mb-4">
         <div class="col-lg-6">
           <div class="card h-100 depara-antes">
             <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
             <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Dois modos: <code>conversation</code> (default) e <code>presentation</code> — sem protocolo de pesquisa.</li></ul>
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>O modo de cada conversa (conversation/presentation/research) existia so como dado interno: o App resolvia <code>activeMode</code> para documento/needsMaterial, mas NENHUM lugar da UI mostrava em que modo o usuario esta. Conversas na lista eram indistinguiveis (icone MessageSquare generico).</li></ul>
             </div>
           </div>
         </div>
@@ -538,17 +464,17 @@
           <div class="card h-100 depara-depois">
             <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
             <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Tres modos; <code>research</code> (label Pesquisa, icon Compass, <code>requiresMaterial: false</code>) com protocolo em 7 passos: tema → pesquisa ampla → duvidas (3-5) → aprovacao → PARALELIZAR (1 busca por duvida aprovada) → resumo da rodada no documento → repetir ate <em>"esta bom"</em>.</li></ul>
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Badge com icone + label do modo: header do chat no desktop (row de status ao vivo e acima do seletor de material antes da chamada), barra superior no mobile, icone do modo em CADA conversa da lista (sidebar e drawer) com tooltip "Conversa · &lt;label&gt;", e hint "&lt;label&gt; · Atualizada ..." na command palette.</li></ul>
             </div>
           </div>
         </div>
-      </div>      <h3 class="h5 mt-4">2. Buscas web (backend/src/services/web-search-jobs.ts)</h3>
+      </div>      <h3 class="h5 mt-4">2. Robustez (conversas legadas e modos desconhecidos)</h3>
       <div class="row g-3 mb-4">
         <div class="col-lg-6">
           <div class="card h-100 depara-antes">
             <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
             <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Uma busca por vez por conversa: segundo disparo recusado com 409 e frase fixa.</li></ul>
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Sem caminho de exibicao — nada a degradar.</li></ul>
             </div>
           </div>
         </div>
@@ -556,17 +482,17 @@
           <div class="card h-100 depara-depois">
             <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
             <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>maxConcurrent</code> por conversa (default 1 = comportamento antigo byte-a-byte); modo research aceita fan de ate 6; cada busca e um job com cartao proprio (running → <em>concluido</em>) no frontend.</li></ul>
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Conversas criadas antes dos modos (sem <code>metadata.mode</code>) continuam com o icone generico MessageSquare byte-a-byte; modo desconhecido cai no allowlist com fallback Sparkles; conversa legada mostra o primeiro modo do registro no header (mesma regra do servidor, <code>getMode</code>); sem conversa ativa, nenhum badge fantasma (gate <code>activeMode && activeConversation</code>).</li></ul>
             </div>
           </div>
         </div>
-      </div>      <h3 class="h5 mt-4">3. Gate de material (backend/src/services/tool-executor.ts)</h3>
+      </div>      <h3 class="h5 mt-4">3. Estrutura de codigo</h3>
       <div class="row g-3 mb-4">
         <div class="col-lg-6">
           <div class="card h-100 depara-antes">
             <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
             <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>MATERIAL_FREE_TOOLS</code> fixo; <code>web_search</code> deliberadamente ausente — conversa vazia respondia <em>"adicione um material"</em>.</li></ul>
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Allowlist de icones era constante privada do ModePicker — impossivel reutilizar para badges.</li></ul>
             </div>
           </div>
         </div>
@@ -574,17 +500,17 @@
           <div class="card h-100 depara-depois">
             <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
             <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>O modo pode declarar <code>materialFreeTools</code> (research: web_search + check_web_search) — a pesquisa abre o microfone sem material. Outros modos intactos (pins preservados).</li></ul>
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>mode-icons.ts</code> compartilhado (<code>MODE_ICONS</code> + <code>resolveModeIcon</code>); <code>ModeBadge</code> reutilizavel (xs/sm); props novas opcionais (<code>mode</code>, <code>modesById</code>) — servidor/cliente antigo nao quebra; backend intocado.</li></ul>
             </div>
           </div>
         </div>
-      </div>      <h3 class="h5 mt-4">4. Documento do modo (types + frontend)</h3>
+      </div>      <h3 class="h5 mt-4">4. Cobertura de testes</h3>
       <div class="row g-3 mb-4">
         <div class="col-lg-6">
           <div class="card h-100 depara-antes">
             <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
             <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Documento sempre markdown, renderizado pelo <code>renderMarkdown</code> do painel.</li></ul>
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>502 testes frontend; caminho mobile do App nunca exercitado (happy-dom matchMedia false → compact=false sempre).</li></ul>
             </div>
           </div>
         </div>
@@ -592,43 +518,7 @@
           <div class="card h-100 depara-depois">
             <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
             <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>document.format: "markdown" | "html"</code>; o painel renderiza html num iframe <code>sandbox="allow-scripts"</code> SEM <code>allow-same-origin</code> (conteudo gerado por LLM e dado nao confiavel), com toggle Ver/Editar e guarda de foco; markdown intocado.</li></ul>
-            </div>
-          </div>
-        </div>
-      </div>      <h3 class="h5 mt-4">5. Descricao da tool web_search (tools/index.ts)</h3>
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
-            <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Descricao compartilhada <em>"So pode haver UMA busca por vez"</em> — contradizia o modo research (paralelizacao).</li></ul>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-depois">
-            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
-            <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>toolDescriptions</code> por modo: o research minta sua propria descricao ("VARIAS buscas podem rodar AO MESMO TEMPO... cartao proprio com indicador"); o texto compartilhado continua valendo para os modos cap-1 (clone no mint, constantes intactas).</li></ul>
-            </div>
-          </div>
-        </div>
-      </div>      <h3 class="h5 mt-4">6. Cobertura de testes</h3>
-      <div class="row g-3 mb-4">
-        <div class="col-lg-6">
-          <div class="card h-100 depara-antes">
-            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
-            <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Modo novo sem testes dedicados; busca web com 1 caminho de concorrencia.</li></ul>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-6">
-          <div class="card h-100 depara-depois">
-            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
-            <div class="card-body">
-              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>28 testes novos (onda 1) + 3 (onda 2): protocolo pinado por 8 marcos, gating de 2 eixos, cap real via metadata, isolamento cancel/erro/timeout, sandbox do iframe, guarda de foco. Backend 1296 e frontend 489 testes verdes no fim.</li></ul>
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>511 testes frontend (22 novos): caminho mobile real no App via stub de matchMedia + cache de modulo do use-compact-layout; fallback <code>modes[0]</code> do registro com MUTATION CHECK (remover o fallback derruba exatamente os testes novos); palette aberta pelo trigger real com portal; estado transiente (modes carregando).</li></ul>
             </div>
           </div>
         </div>
@@ -724,35 +614,31 @@
       <ul class="list-group list-group-flush">
         <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>O modo e DATA, nao codigo:</strong> o protocolo de rodadas (surf-research-skill) vive no Role/Flow/sections do modo em pt-BR; nenhum <code>if</code> por modo em prompts.ts/routes.</div>
+          <div><strong>O seletor ja existia:</strong> o pedido "um seletor quando clico em nova conversa" ja estava atendido (botao Nova conversa abre o ModePicker com os 3 modos e comunica congelamento). A entrega focou na sinalizacao — e o revisor de plano confirmou que reforco adicional seria gold-plating.</div>
         </li>
         <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Cap por conversa, default 1:</strong> o guard de busca vira cap parametrizavel — outros modos mantem comportamento pinado byte-a-byte; so o research paraleliza.</div>
+          <div><strong>Sinalizacao em 4 superficies:</strong> header desktop (2 estados), topbar mobile, lista de conversas (2 instancias de Sidebar), command palette — nenhuma superfície onde conversas sao vistas ficou sem o modo.</div>
         </li>
         <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>materialFreeTools por modo:</strong> o modo pesquisa abre o microfone sem material; a web_search fica livre SO para ele, sem alargar o conjunto global.</div>
+          <div><strong>Allowlist compartilhada:</strong> <code>mode-icons.ts</code> extraido do ModePicker (mesma filosofia de seguranca: nome da wire nunca vira componente direto; fallback Sparkles).</div>
         </li>
         <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Produto = html-explainer em iframe sandbox:</strong> a casca (Bootstrap 5.3.8 CDN+SRI, abas ARIA, runtime de deep-link/copiar) nasce no template do documento e e preservada byte-a-byte pelo modelo; o painel mostra em iframe <code>allow-scripts</code> sem <code>allow-same-origin</code> (conteudo LLM e dado nao confiavel).</div>
+          <div><strong>Sem badge fantasma:</strong> gate em <code>activeMode && activeConversation</code> — activeMode cai em <code>modes[0]</code> mesmo sem conversa; o install vazio nao mostra modo nenhum.</div>
         </li>
         <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>O prompt nao paga o template:</strong> a casca html (~14k chars) vive no DOCUMENTO, nao nas sections — o teto de instrucoes do research fica em &lt;26k (mesma disciplina do presentation).</div>
+          <div><strong>Conversas legadas intactas:</strong> sem <code>metadata.mode</code> → MessageSquare byte-a-byte (mesmas classes, mesmo tooltip); props novas opcionais (cliente/servidor antigo nao quebram).</div>
         </li>
         <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Nenhuma ferramenta nova no Realtime:</strong> o protocolo e conversacional (o modelo orquestra por voz com web_search + document tools); o indicador de terminado sao os cards de job existentes, um por busca.</div>
+          <div><strong>Backend intocado:</strong> zero mudancas fora de <code>frontend/src</code> — a sinalizacao e derivada de dados que ja existiam (GET /api/modes e metadata.mode).</div>
         </li>
         <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Descricao da tool por modo:</strong> em vez de reescrever o texto compartilhado (que e a verdade para os modos cap-1 e e pinado), o mint clona e sobrescreve a descricao so para o modo que precisa.</div>
-        </li>
-        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Fix via revisao adversarial:</strong> a frase falada do 409 foi generalizada para plural — o revisor apontou a mentira no cap 1; o fix tornou a frase condicional ao cap e restaurou os pins.</div>
+          <div><strong>Prova por mutacao:</strong> o teste do fallback do registro foi validado removendo <code>?? modes[0]</code> temporariamente — exatamente os 2 testes novos falham; a regressao descrita pela revisao nao passa mais.</div>
         </li>
       </ul>
 <!-- {{DECISIONS}} end -->
@@ -773,28 +659,28 @@
             <span class="badge badge-accent">Fase 0-1</span>
             <strong>DELIMITAR / ANALYZE</strong>
           </div>
-          <p class="mb-0 text-body-secondary small">FASE 0 (MODE=normal, main), leitura do repo (modos, web-search-jobs, tool-executor, document-store, frontend), das skills do project-router (building-conversation-modes, writing-explainer-code) e das skills externas surf-research-skill e html-explainer-skill. R7: Tier 1 disponivel.</p>
+          <p class="mb-0 text-body-secondary small">FASE 0 (MODE=normal, main). Leitura do ModePicker, App.tsx (activeMode, handleCreate, header, MobileTopBar), Sidebar, ConversationsSheet, MobileTopBar, conversations.ts (create com mode). Descoberta central: o SELETOR JA EXISTIA; a SINALIZACAO nao existia em lugar nenhum.</p>
         </li>
         <li class="timeline-item mb-4">
           <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
             <span class="badge badge-accent">Fase 2</span>
             <strong>PLAN</strong>
           </div>
-          <p class="mb-0 text-body-secondary small">Decomposicao: PREP (contratos) + Onda 1 (3 worktrees paralelas: modo, busca paralela, doc html) + Onda 2 (tool desc). TASK_PLAN.md publicado.</p>
+          <p class="mb-0 text-body-secondary small">Uma onda (onda1-mode-badges): ModeBadge + mode-icons + header + topbar mobile + sidebar + palette + testes. Sem PREP (props opcionais, backend intocado). TASK_PLAN.md publicado.</p>
         </li>
         <li class="timeline-item mb-4">
           <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
             <span class="badge badge-accent">Fase 3</span>
-            <strong>EXECUTE-ONDA 1 e 2</strong>
+            <strong>EXECUTE-ONDA 1</strong>
           </div>
-          <p class="mb-0 text-body-secondary small">PREP commitado; 3 worktrees da Onda 1 + fix de revisao adversarial (frase 409 por cap) + Onda 2 (toolDescriptions). Barreiras, 2 revisores de plano (CONTINUAR → CONVERGENCIA), 4 revisoes adversariais (1 refutacao real corrigida), squash-merges com gate verde entre cada, testing subwave disparada em background.</p>
+          <p class="mb-0 text-body-secondary small">Worktree unica; barreira; REVISOR DE PLANO (CONVERGENCIA — sem Onda 2, reforco seria gold-plating); revisao adversarial (Nada a refutar, com 1 observacao: caminho mobile nao exercitado); squash-merge f2ead92 com gate verde; testing subwave disparada em background.</p>
         </li>
         <li class="timeline-item">
           <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
             <span class="badge badge-ok">Fase 4</span>
             <strong>COMMIT-FINAL</strong>
           </div>
-          <p class="mb-0 text-body-secondary small">Testing subwave integrada (revisao adversarial de testes APROVOU; 3 merges com gates verdes), gate completo final verde, este EXPLAINER.html gerado, commit final e limpeza.</p>
+          <p class="mb-0 text-body-secondary small">Testing subwave integrada: 9 testes (mobile compact no App real, fallback com mutation check, palette, mapa parcial, transiente); revisao adversarial de testes APROVOU com 1 gap estreito, fechado por fix com prova de mutacao; gate final verde; este EXPLAINER.html gerado; commit final e limpeza.</p>
         </li>
       </ol>
 <!-- {{TIMELINE}} end -->
