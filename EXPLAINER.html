@@ -7,8 +7,8 @@
 
   1. TOKENS INLINE  — substituição simples de string. Cada token {{NOME}} é
      trocado pelo valor real:
-       2.0  13/08/2026  main  Sistema de pesquisa do Explainer: busca web virou assíncrona (a conversa continua falando durante a pesquisa), contexto da conversa agora é enviado às pesquisas (online e especialistas) e falhas do fallback de busca foram corrigidas.
-       2  26  12
+       v2  2026-08-14  main  Novo modo de conversa <strong>Pesquisa</strong> no Explainer (app de voz realtime): um modo de criar uma pesquisa perfeita, inspirado na surf-research-skill. O assistente pesquisa primeiro, levanta duvidas e pede aprovacao, dispara as buscas aprovadas EM PARALELO (cada uma com cartao e indicador de terminado), escreve o resumo de cada rodada (pontos, duvidas, respostas com fontes) num documento html-explainer editado EM CIMA a cada update, e repete o ciclo ate o usuario dizer que esta bom. O material aparece direto na pagina (iframe sandboxado no painel do documento).
+       2 (+ PREP + testing subwave)  15  9
      Os tokens inline aparecem na navbar, no hero, nos cards de estatística,
      no rodapé e na tabela de placeholders da aba "Visão geral".
 
@@ -176,7 +176,7 @@
 <nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary">
   <div class="container">
     <span class="navbar-brand fw-semibold"><i class="bi bi-diagram-3 brand-accent me-2"></i>deep-orchestrator <span class="text-body-secondary fw-normal">· EXPLAINER</span></span>
-    <span class="navbar-text small text-body-secondary d-none d-md-inline">v2.0 · 13/08/2026</span>
+    <span class="navbar-text small text-body-secondary d-none d-md-inline">vv2 · 2026-08-14</span>
   </div>
 </nav>
 
@@ -185,10 +185,10 @@
   <header class="explainer-hero rounded-4 p-4 p-md-5 mb-4">
     <span class="badge badge-accent mb-3"><i class="bi bi-clipboard-data me-1"></i>Relatório de execução</span>
     <h1 class="display-6 fw-semibold text-white mb-2">O que aconteceu nesta execução</h1>
-    <p class="lead text-white-50 mb-3">Sistema de pesquisa do Explainer: busca web virou assíncrona (a conversa continua falando durante a pesquisa), contexto da conversa agora é enviado às pesquisas (online e especialistas) e falhas do fallback de busca foram corrigidas.</p>
+    <p class="lead text-white-50 mb-3">Novo modo de conversa <strong>Pesquisa</strong> no Explainer (app de voz realtime): um modo de criar uma pesquisa perfeita, inspirado na surf-research-skill. O assistente pesquisa primeiro, levanta duvidas e pede aprovacao, dispara as buscas aprovadas EM PARALELO (cada uma com cartao e indicador de terminado), escreve o resumo de cada rodada (pontos, duvidas, respostas com fontes) num documento html-explainer editado EM CIMA a cada update, e repete o ciclo ate o usuario dizer que esta bom. O material aparece direto na pagina (iframe sandboxado no painel do documento).</p>
     <div class="d-flex flex-wrap gap-2">
-      <span class="badge badge-accent">v2.0</span>
-      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>13/08/2026</span>
+      <span class="badge badge-accent">vv2</span>
+      <span class="badge badge-soft"><i class="bi bi-calendar3 me-1"></i>2026-08-14</span>
       <span class="badge badge-soft"><i class="bi bi-git-branch me-1"></i>main</span>
     </div>
   </header>
@@ -245,7 +245,7 @@
     <div class="tab-pane fade show active" id="pane-visao" role="tabpanel"
          aria-labelledby="tab-visao" tabindex="0" data-print-title="Visão geral">
       <h2 class="h4 pane-title">Resumo da execução</h2>
-      <p class="text-body-secondary">Sistema de pesquisa do Explainer: busca web virou assíncrona (a conversa continua falando durante a pesquisa), contexto da conversa agora é enviado às pesquisas (online e especialistas) e falhas do fallback de busca foram corrigidas.</p>
+      <p class="text-body-secondary">Novo modo de conversa <strong>Pesquisa</strong> no Explainer (app de voz realtime): um modo de criar uma pesquisa perfeita, inspirado na surf-research-skill. O assistente pesquisa primeiro, levanta duvidas e pede aprovacao, dispara as buscas aprovadas EM PARALELO (cada uma com cartao e indicador de terminado), escreve o resumo de cada rodada (pontos, duvidas, respostas com fontes) num documento html-explainer editado EM CIMA a cada update, e repete o ciclo ate o usuario dizer que esta bom. O material aparece direto na pagina (iframe sandboxado no painel do documento).</p>
 
       <div class="alert alert-primary d-flex gap-2" role="alert">
         <i class="bi bi-info-circle-fill flex-shrink-0"></i>
@@ -257,7 +257,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-layers fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">2</div>
+              <div class="display-6 fw-bold stat-value">2 (+ PREP + testing subwave)</div>
               <div class="text-body-secondary small">Ondas executadas</div>
             </div>
           </div>
@@ -266,7 +266,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-robot fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">26</div>
+              <div class="display-6 fw-bold stat-value">15</div>
               <div class="text-body-secondary small">Sub-agentes</div>
             </div>
           </div>
@@ -275,7 +275,7 @@
           <div class="card h-100 text-center">
             <div class="card-body py-4">
               <i class="bi bi-git-commit fs-3 stat-value"></i>
-              <div class="display-6 fw-bold stat-value">12</div>
+              <div class="display-6 fw-bold stat-value">9</div>
               <div class="text-body-secondary small">Commits (squash)</div>
             </div>
           </div>
@@ -286,7 +286,7 @@
       <p>O orquestrador, na fase COMMIT-FINAL, gera o explainer a partir deste template:</p>
 <pre><code class="language-bash"># Gera o explainer a partir do template
 ./scripts/generate-explainer.sh &gt; EXPLAINER.html
-# Ou preenche manualmente os placeholders 2.0, 13/08/2026, main, ...</code></pre>
+# Ou preenche manualmente os placeholders v2, 2026-08-14, main, ...</code></pre>
       <p class="text-body-secondary small">O template é <code>templates/html-explainer.html</code> — arquivo único, sem build: abre por file:// e imprime em PDF com todas as abas.</p>
 
       <details class="mt-4">
@@ -323,7 +323,6 @@
       <p>Uma linha por sub-agente. Cada sub-agente trabalha numa worktree Git nomeada; a integração é squash-merge um a um, com gate (build + testes) entre merges. Worktrees e branches <code>wt/*</code> são removidos ao fim de cada onda.</p>
 
       <!-- {{WAVES_TABLE}} begin -->
-
       <div class="table-responsive">
         <table class="table table-hover align-middle">
           <thead>
@@ -337,65 +336,64 @@
           </thead>
           <tbody>
             <tr>
-              <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-websurf-fallback</code></td>
-              <td>Fallback do CLI surf-research-skill corrigido (invocação sem <code>--</code>) + 6 testes</td>
+              <td><span class="badge badge-soft">PREP</span></td>
+              <td><code>(no branch)</code></td>
+              <td>Contratos do modo pesquisa em <code>modes/types.ts</code>: <code>document.format</code>, <code>parallelSearches</code>, <code>materialFreeTools</code> + <code>format: "markdown"</code> nos modos legados + pin de serializacao</td>
               <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-research-context</code></td>
-              <td>Contexto automático (materiais + conversa recente, sem LLM) anexado a web_search, dispatch_pi_agent e deep_think; caps ampliados</td>
-              <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluída</span></td>
+              <td><span class="badge badge-ok">Concluida</span></td>
             </tr>
             <tr>
               <td><span class="badge badge-accent">Onda 1</span></td>
-              <td><code>onda1-toolcall-timeout</code></td>
-              <td>Timeout no runTool (75s) + outputs de erro que destravam a conversa em falha de tool call</td>
+              <td><code>onda1-mode-research</code></td>
+              <td>Modo <code>research</code> completo: protocolo de rodadas (pesquisa ampla, duvidas, aprovacao, paralelizacao, resumo, repetir ate "esta bom"), template html-explainer de 5 abas, icon Compass, <code>requiresMaterial: false</code></td>
               <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluída</span></td>
+              <td><span class="badge badge-ok">Concluida</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-accent">Onda 1</span></td>
+              <td><code>onda1-search-parallel</code></td>
+              <td>Buscas web paralelas: <code>maxConcurrent</code> por conversa (default 1 = comportamento antigo), gate material-free do modo no executor, frase 409 condicional por cap (+ fix de revisao adversarial)</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluida</span></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-accent">Onda 1</span></td>
+              <td><code>onda1-doc-html</code></td>
+              <td>Frontend: <code>format</code> no tipo do modo; <code>DocumentPanel</code> renderiza html em iframe sandbox (<code>allow-scripts</code> sem <code>allow-same-origin</code>) com toggle Ver/Editar; sidebar e App repassam</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluida</span></td>
             </tr>
             <tr>
               <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>PREP-onda-2</code></td>
-              <td>Contrato SSE web_search_* (WebSearchJob/WebSearchEvent) nos dois pacotes + narrowing integrado</td>
-              <td class="text-end">2</td>
-              <td><span class="badge badge-ok">Concluída</span></td>
-            </tr>
-            <tr>
-              <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>onda2-websync-backend</code></td>
-              <td>web_search assíncrona (jobs SSE, 409 por conversa, timeout 180s, cancel que desarma o timer), check_web_search, replay só de jobs finalizados, descrição da tool reescrita</td>
+              <td><code>onda2-tool-desc</code></td>
+              <td><code>toolDescriptions</code> por modo: o modo research minta descricao propria da <code>web_search</code> (buscas simultaneas, cartao por busca); texto compartilhado "uma busca por vez" intacto para os outros modos</td>
               <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluída</span></td>
+              <td><span class="badge badge-ok">Concluida</span></td>
             </tr>
             <tr>
-              <td><span class="badge badge-accent">Onda 2</span></td>
-              <td><code>onda2-websync-frontend</code></td>
-              <td>handleWebSearchEvent (injeção + persist [busca web]), applyWebSearchEvent, WebSearchCard, reset de estado, fix PT-BR do timeout</td>
+              <td><span class="badge badge-soft">Testing</span></td>
+              <td><code>test-onda1-mode-tests</code></td>
+              <td>11 testes do modo research: protocolo (8 marcos), gating de 2 eixos, serializacao, rotas, create com casca html, sessao realtime em conversa vazia</td>
               <td class="text-end">1</td>
-              <td><span class="badge badge-ok">Concluída</span></td>
+              <td><span class="badge badge-ok">Concluida</span></td>
             </tr>
             <tr>
-              <td><span class="badge badge-warn">Subwave</span></td>
-              <td><code>test-onda1-{websurf,context,toolcall}-coverage</code></td>
-              <td>62 testes novos (100% stmts/branch no web-search.ts; e2e real do destrave; invariantes de truncamento)</td>
-              <td class="text-end">3</td>
-              <td><span class="badge badge-ok">Concluída</span></td>
+              <td><span class="badge badge-soft">Testing</span></td>
+              <td><code>test-onda1-search-tests</code></td>
+              <td>9 testes: isolamento cancelar/errar/timeout entre paralelas, fan de 6 com recusa da 7a, poda com 55 running, modo research REAL atraves do gate (cap 6, material-free)</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluida</span></td>
             </tr>
             <tr>
-              <td><span class="badge badge-warn">Subwave</span></td>
-              <td><code>test-onda2-{websync-backend,websync-frontend}</code></td>
-              <td>62 testes novos (falsos positivos corrigidos com prova por mutação; filtros SSE honestos; reset de conversa; pin do default 180s)</td>
-              <td class="text-end">2</td>
-              <td><span class="badge badge-ok">Concluída</span></td>
+              <td><span class="badge badge-soft">Testing</span></td>
+              <td><code>test-onda1-html-doc</code></td>
+              <td>8 testes: markdown com html cru escapado, srcdoc reflete conteudo novo, guarda de foco do editor, App com modo format html renderizando iframe sandboxado</td>
+              <td class="text-end">1</td>
+              <td><span class="badge badge-ok">Concluida</span></td>
             </tr>
           </tbody>
         </table>
       </div>
-
 <!-- {{WAVES_TABLE}} end -->
 
       <p class="text-body-secondary small">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pelos dados reais da execução.</p>
@@ -415,154 +413,34 @@
       <p>Diff stats da execução: <span class="diff-plus">+</span> linhas adicionadas, <span class="diff-minus">−</span> removidas.</p>
 
       <!-- {{FILES_TABLE}} begin -->
-
       <div class="table-responsive">
         <table class="table table-hover align-middle">
           <thead>
-            <tr><th scope="col">Arquivo</th><th scope="col">Tipo</th><th scope="col" class="text-end">Diff</th></tr>
-          </thead>
-          <tbody>            <tr>
-              <td><code>backend/src/services/web-search-jobs.ts</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+237</td>
-            </tr>            <tr>
-              <td><code>backend/src/services/research-context.ts</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+136</td>
-            </tr>            <tr>
-              <td><code>backend/src/tools/web-search.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+34 −1</td>
-            </tr>            <tr>
-              <td><code>backend/src/services/tool-executor.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+93 −1</td>
-            </tr>            <tr>
-              <td><code>backend/src/services/agent-jobs.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+23 −1</td>
-            </tr>            <tr>
-              <td><code>backend/src/services/deep-think.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+30</td>
-            </tr>            <tr>
-              <td><code>backend/src/services/openai.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+11</td>
-            </tr>            <tr>
-              <td><code>backend/src/tools/deliberation-tools.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+7</td>
-            </tr>            <tr>
-              <td><code>backend/src/tools/index.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+35 −2</td>
-            </tr>            <tr>
-              <td><code>backend/src/routes/agents.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+50 −4</td>
-            </tr>            <tr>
-              <td><code>backend/src/types/deep-tools.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+42</td>
-            </tr>            <tr>
-              <td><code>backend/src/types/index.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+1</td>
-            </tr>            <tr>
-              <td><code>frontend/src/hooks/useRealtimeSession.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+287 −28</td>
-            </tr>            <tr>
-              <td><code>frontend/src/lib/api.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+42 −9</td>
-            </tr>            <tr>
-              <td><code>frontend/src/components/ui/WebSearchCard.tsx</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+73</td>
-            </tr>            <tr>
-              <td><code>frontend/src/App.tsx</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+9 −2</td>
-            </tr>            <tr>
-              <td><code>frontend/src/types/index.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+37 −1</td>
-            </tr>            <tr>
-              <td><code>backend/src/__tests__/web-search-jobs.test.ts</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+488</td>
-            </tr>            <tr>
-              <td><code>backend/src/__tests__/web-search.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+526</td>
-            </tr>            <tr>
-              <td><code>backend/src/__tests__/research-context.test.ts</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+351</td>
-            </tr>            <tr>
-              <td><code>backend/src/__tests__/tool-executor.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+483 −13</td>
-            </tr>            <tr>
-              <td><code>backend/src/__tests__/agents-sse.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+315 −15</td>
-            </tr>            <tr>
-              <td><code>backend/src/__tests__/deep-think.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+188</td>
-            </tr>            <tr>
-              <td><code>backend/src/__tests__/agent-jobs.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+142</td>
-            </tr>            <tr>
-              <td><code>backend/src/__tests__/openai.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+71</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/realtime-websearch.test.ts</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+856</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/realtime.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+581 −6</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/toolcall-e2e.test.tsx</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+453</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/conversation-switch-reset.test.tsx</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+268</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/app-websearch-panel.test.tsx</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+225</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/websearch-card-render.test.tsx</code></td>
-              <td><span class="badge badge-ok">novo</span></td>
-              <td class="text-end diff-plus">+159</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/api.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+42</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/app-setup-gate.test.tsx</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+1</td>
-            </tr>            <tr>
-              <td><code>frontend/src/__tests__/realtime-deepthink.test.ts</code></td>
-              <td><span class="badge badge-accent">modificado</span></td>
-              <td class="text-end diff-plus">+7</td>
+            <tr>
+              <th scope="col">Arquivo</th>
+              <th scope="col">Tipo</th>
+              <th scope="col">Diff</th>
             </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>backend/src/modes/types.ts</code></td><td><span class="badge badge-soft">contrato</span></td><td><span class="diff-plus">+37</span> — <code>ModeDocumentSpec.format</code>, <code>ModeSummary.document.format</code>, <code>parallelSearches</code>, <code>materialFreeTools</code>, <code>toolDescriptions</code></td></tr>
+            <tr><td><code>backend/src/modes/research.ts</code></td><td><span class="badge badge-accent">novo</span></td><td><span class="diff-plus">+436</span> — modo Pesquisa completo (protocolo 7 passos, template html-explainer 5 abas ~14k chars, <code>parallelSearches: 6</code>, <code>materialFreeTools</code>, <code>toolDescriptions.web_search</code>)</td></tr>
+            <tr><td><code>backend/src/modes/registry.ts</code></td><td><span class="badge badge-soft">registro</span></td><td><span class="diff-plus">+2</span> — import + linha em MODES (conversation continua default)</td></tr>
+            <tr><td><code>backend/src/modes/conversation.ts</code> / <code>presentation.ts</code></td><td><span class="badge badge-soft">contrato</span></td><td><span class="diff-plus">+2</span> — <code>format: "markdown"</code> explicito (campo obrigatorio do contrato)</td></tr>
+            <tr><td><code>backend/src/services/web-search-jobs.ts</code></td><td><span class="badge badge-soft">comportamento</span></td><td><span class="diff-plus">+26</span> — <code>WebSearchOptions.maxConcurrent</code>; guard 409 vira cap por conversa (default 1, mensagem singular byte-a-byte preservada)</td></tr>
+            <tr><td><code>backend/src/services/tool-executor.ts</code></td><td><span class="badge badge-soft">comportamento</span></td><td><span class="diff-plus">+40</span> — gate material-free honra <code>mode.materialFreeTools</code>; dispatch passa <code>parallelSearches ?? 1</code>; frase 409 condicional por cap</td></tr>
+            <tr><td><code>backend/src/tools/index.ts</code></td><td><span class="badge badge-soft">mint</span></td><td><span class="diff-plus">+27</span> — <code>withModeDescriptions</code> aplica <code>toolDescriptions</code> do modo nos 2 caminhos do mint (clone, constantes intactas)</td></tr>
+            <tr><td><code>frontend/src/types/index.ts</code></td><td><span class="badge badge-soft">tipo</span></td><td><span class="diff-plus">+7</span> — <code>ModeSummary.document.format: "markdown" | "html"</code></td></tr>
+            <tr><td><code>frontend/src/components/ui/DocumentPanel.tsx</code></td><td><span class="badge badge-soft">ui</span></td><td><span class="diff-plus">+24</span> — prop <code>format</code> (default markdown); format html renderiza iframe <code>sandbox="allow-scripts"</code> sem <code>allow-same-origin</code> com <code>srcDoc</code>; toggle Ver/Editar</td></tr>
+            <tr><td><code>frontend/src/components/ui/DocumentSidebar.tsx</code> / <code>App.tsx</code></td><td><span class="badge badge-soft">fiacao</span></td><td><span class="diff-plus">+10</span> — prop <code>format</code> repassada do modo selecionado ao painel</td></tr>
+            <tr><td><code>backend/src/__tests__/modes.test.ts</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+211</span> — teto research &lt;26k, pin da casca, protocolo, gating, toolDescriptions, serializacao</td></tr>
+            <tr><td><code>backend/src/__tests__/mode-routes.test.ts</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+45</span> — /api/modes lista research; create grava casca html; sessao realtime 200 em conversa vazia</td></tr>
+            <tr><td><code>backend/src/__tests__/web-search-jobs.test.ts</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+235</span> — cap 3/1, slot liberado, conversas independentes, cancel/erro/timeout isolados, fan de 6, poda</td></tr>
+            <tr><td><code>backend/src/__tests__/tool-executor.test.ts</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+210</span> — gate material-free por modo, cap chega ao dispatch, frase 409 singular/plural, modo research REAL via metadata</td></tr>
+            <tr><td><code>frontend/src/__tests__/html-document*.test.tsx</code></td><td><span class="badge badge-ok">testes</span></td><td><span class="diff-plus">+602</span> — sandbox/srcdoc, nao-vazamento, toggle, atualizacoes, guarda de foco, App format html</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="text-body-secondary small">34 arquivos · +6 212 / −91 linhas (c26f01e..HEAD)</p>
-
 <!-- {{FILES_TABLE}} end -->
 
       <p class="text-body-secondary small">Exemplo demonstrativo — valores aproximados, substituídos na geração.</p>
@@ -571,42 +449,38 @@
       <p>Histórico final do branch principal: um commit squash por sub-agente. Nenhuma worktree ou branch <code>wt/*</code> sobra ao final.</p>
 
       <!-- {{COMMITS_LIST}} begin -->
-<ul class="list-group list-group-flush">        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">ed7768a</span>
-          <div><strong>Subwave Onda 2:</strong> test-onda2-websync-frontend: handler da busca web (fold, card, reset de conversa)</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">19ec852</span>
-          <div><strong>Subwave Onda 2:</strong> test-onda2-websync-backend: endurece os testes da busca assíncrona (prune, disarm, filtros SSE, default 180s)</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">c3e6898</span>
-          <div><strong>Subwave Onda 1:</strong> test-onda1-toolcall-coverage: loop de tools (timeout, e2e do destrave)</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">8bbe8d0</span>
-          <div><strong>Subwave Onda 1:</strong> test-onda1-context-coverage: pipeline de contexto com pin de presença</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">4400d6f</span>
-          <div><strong>Subwave Onda 1:</strong> test-onda1-websurf-coverage: fallback de busca web (28 casos)</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">ac1b2b8</span>
-          <div><strong>Onda 2:</strong> frontend: injeção do resultado da busca web no fluxo de voz (handler SSE, WebSearchCard, persist [busca web])</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">82f8b5e</span>
-          <div><strong>Onda 2:</strong> backend: busca web assíncrona (jobs SSE + check_web_search + contexto) e limpeza do timer no cancel</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">b0d6611</span>
-          <div><strong>Onda 2 (PREP):</strong> integra o contrato web_search_* ao narrowing do sessionStreamHandler</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">5f2ed74</span>
-          <div><strong>Onda 2 (PREP):</strong> contrato SSE da busca web assíncrona (WebSearchJob/WebSearchEvent)</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">0e37318</span>
-          <div><strong>Onda 1:</strong> frontend: destrava a conversa quando um tool call falha ou estoura o timeout</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">6c0fff8</span>
-          <div><strong>Onda 1:</strong> backend: contexto da conversa enviado às pesquisas (web, agente pi e pensadores deep_think)</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <span class="badge badge-soft font-monospace">75dd538</span>
-          <div><strong>Onda 1:</strong> backend: corrige a invocação do CLI surf-research-skill no fallback de busca web</div>
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">fcda2ee</span>
+          <div><strong>PREP-onda-1:</strong> contratos do modo pesquisa (document format, parallelSearches, materialFreeTools)</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-accent font-monospace">f75e757</span>
+          <div><strong>Onda 1:</strong> modo de conversa Pesquisa com protocolo de rodadas e documento html-explainer</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-accent font-monospace">c0038ad</span>
+          <div><strong>Onda 1:</strong> buscas web paralelas por modo (cap por conversa) e gate material-free do modo</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-accent font-monospace">72e0afe</span>
+          <div><strong>Onda 1:</strong> documento do modo renderizado como html em iframe sandbox (format do modo)</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-accent font-monospace">8cd5814</span>
+          <div><strong>Onda 2:</strong> descricao da tool web_search por modo (override no mint, texto compartilhado intacto)</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">da39859</span>
+          <div><strong>Testing subwave:</strong> cobre o modo research (protocolo, gating, serializacao, rotas)</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">12200a4</span>
+          <div><strong>Testing subwave:</strong> cobre paralelismo de buscas (isolamento cancel/erro/timeout, cap real do modo, gate material-free)</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
+          <span class="badge badge-soft font-monospace">fe155de</span>
+          <div><strong>Testing subwave:</strong> cobre atualizacoes do documento html (srcdoc, guarda de foco, App com format html)</div>
         </li>
       </ul>
 <!-- {{COMMITS_LIST}} end -->
@@ -650,56 +524,115 @@
       </div>
 
       <!-- {{BEFORE_AFTER}} begin -->
-
-      <div class="accordion" id="depara-accordion">
-        <div class="accordion-item">
-          <h3 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#dep1">1 · A fala congela durante a pesquisa — web_search síncrona → assíncrona</button></h3>
-          <div id="dep1" class="accordion-collapse collapse show" data-bs-parent="#depara-accordion">
-            <div class="accordion-body">
-              <p><strong>Antes:</strong> <code>web_search</code> era a única tool lenta SÍNCRONA. O frontend fazia <code>await executeToolCalls</code> e só depois enviava o <code>function_call_output</code>; o servidor demorava 45s (OpenAI) + 30s (fallback surf). Durante a espera a conversa ficava presa no turno aberto — o explainer não respondia a nada. Pior: o fetch não tinha timeout, então um servidor pendurado bloqueava a conversa para sempre.</p>
-              <p><strong>Depois:</strong> <code>web_search</code> responde em milissegundos com um job id (padrão do agente pi). A busca roda em background (<code>web-search-jobs.ts</code>: 1 por conversa, timeout 180s, cancel que desarma o timer) e o resultado chega pelo SSE (<code>web_search_done</code>) — o frontend injeta o texto e pede uma resposta, o modelo narra com suas palavras. O modelo é instruído a avisar em voz alta e CONTINUAR conversando enquanto a busca roda.</p>
+      <h3 class="h5 mt-4">1. O modo de conversa (backend/src/modes/)</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100 depara-antes">
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Dois modos: <code>conversation</code> (default) e <code>presentation</code> — sem protocolo de pesquisa.</li></ul>
             </div>
           </div>
         </div>
-        <div class="accordion-item">
-          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#dep2">2 · "Alguns falham" — fallback do CLI surf sempre quebrava</button></h3>
-          <div id="dep2" class="accordion-collapse collapse" data-bs-parent="#depara-accordion">
-            <div class="accordion-body">
-              <p><strong>Antes:</strong> <code>surf-research-skill search -- &lt;query&gt; --max N --json</code> — o separador <code>--</code> não é suportado pelo CLI; a chamada falhava sempre com <i>Usage:</i>, inclusive quando a busca da OpenAI falhava e o fallback era a única saída (verificado ao vivo: exit 0 na forma correta).</p>
-              <p><strong>Depois:</strong> <code>surf-research-skill search "&lt;query&gt;" --max N --json</code>, com teste que trava o array exato de args (falha se o <code>--</code> voltar) e cobertura de 100% stmts/branch/funcs/lines no arquivo.</p>
+        <div class="col-lg-6">
+          <div class="card h-100 depara-depois">
+            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Tres modos; <code>research</code> (label Pesquisa, icon Compass, <code>requiresMaterial: false</code>) com protocolo em 7 passos: tema → pesquisa ampla → duvidas (3-5) → aprovacao → PARALELIZAR (1 busca por duvida aprovada) → resumo da rodada no documento → repetir ate <em>"esta bom"</em>.</li></ul>
             </div>
           </div>
         </div>
-        <div class="accordion-item">
-          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#dep3">3 · Contexto insuficiente — nada era enviado às pesquisas</button></h3>
-          <div id="dep3" class="accordion-collapse collapse" data-bs-parent="#depara-accordion">
-            <div class="accordion-body">
-              <p><strong>Antes:</strong> o modelo de síntese da busca web recebia só a <code>query</code>; o agente pi recebia <code>question</code> + um <code>context</code> opcional que o modelo podia omitir; os pensadores do deep_think viam apenas o <code>scenario</code>. Nenhum deles via os materiais da conversa nem o histórico.</p>
-              <p><strong>Depois:</strong> <code>buildResearchContext()</code> monta um bloco PT-BR (materiais + últimos turns, mais recentes primeiro, truncado com marcador, cap 3 000, SEM custo de LLM) e o anexa às três vias: ao input do OpenAI na busca web, ao <code>context</code> do agente pi (cap 6 000; pergunta agora com cap 8 000) e ao planner/pensadores/síntese do deep_think. O resultado de cada busca é persistido como <code>[busca web]</code> — alimentando o contexto de buscas futuras.</p>
+      </div>      <h3 class="h5 mt-4">2. Buscas web (backend/src/services/web-search-jobs.ts)</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100 depara-antes">
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Uma busca por vez por conversa: segundo disparo recusado com 409 e frase fixa.</li></ul>
             </div>
           </div>
         </div>
-        <div class="accordion-item">
-          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#dep4">4 · Tool call que falhava congelava o turno — sem rede de segurança</button></h3>
-          <div id="dep4" class="accordion-collapse collapse" data-bs-parent="#depara-accordion">
-            <div class="accordion-body">
-              <p><strong>Antes:</strong> se o fetch de <code>/api/realtime/tool</code> pendurasse ou a rede caísse, nenhum <code>function_call_output</code> era enviado — turno aberto para sempre, spinner eterno.</p>
-              <p><strong>Depois:</strong> <code>runTool</code> tem timeout (75s — o worst case legítimo do servidor é 45+30=75s) via AbortController; o <code>runToolCalls</code> trata falha de lote com <code>failedToolOutcomes</code> e fecha o turno SEMPRE (<code>foldToolOutcomes</code>: ack-antes-send numa passada síncrona, <code>setActiveTool(null)</code> + ack timer no finally), enviando outputs de erro falados em PT-BR. Provado por um teste e2e que monta o hook real com handshake WebRTC genuíno.</p>
+        <div class="col-lg-6">
+          <div class="card h-100 depara-depois">
+            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>maxConcurrent</code> por conversa (default 1 = comportamento antigo byte-a-byte); modo research aceita fan de ate 6; cada busca e um job com cartao proprio (running → <em>concluido</em>) no frontend.</li></ul>
             </div>
           </div>
         </div>
-        <div class="accordion-item">
-          <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#dep5">5 · Novas ferramentas e UI</button></h3>
-          <div id="dep5" class="accordion-collapse collapse" data-bs-parent="#depara-accordion">
-            <div class="accordion-body">
-              <p><strong>check_web_search</strong> — por paridade com <code>check_pi_agent</code>/<code>check_deep_think</code>: consulta o estado de uma busca (running/done/error/ausente), leitura do registry, oferecida nas mesmas condições que a própria busca. A descrição da <code>web_search</code> foi reescrita para ensinar o contrato assíncrono (avise e continue conversando; uma busca por vez; segunda chamada com uma em andamento é recusada com 409).</p>
-              <p><strong>WebSearchCard</strong> — card novo (espelho do AgentJobCard, <code>data-role="web-search"</code>) mostrando a busca em andamento e o custo; o estado <code>webSearchJobs</code> reseta na troca de conversa. <strong>Replay SSE</strong> segue a regra dos irmãos: só jobs finalizados carregam <code>replay: true</code>; reconexão nunca narra resposta antiga.</p>
-              <p><strong>Fix cosmético herdado:</strong> o "(timed out)" em inglês na string falada do timeout virou "excedeu o limite de tempo".</p>
+      </div>      <h3 class="h5 mt-4">3. Gate de material (backend/src/services/tool-executor.ts)</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100 depara-antes">
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>MATERIAL_FREE_TOOLS</code> fixo; <code>web_search</code> deliberadamente ausente — conversa vazia respondia <em>"adicione um material"</em>.</li></ul>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card h-100 depara-depois">
+            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>O modo pode declarar <code>materialFreeTools</code> (research: web_search + check_web_search) — a pesquisa abre o microfone sem material. Outros modos intactos (pins preservados).</li></ul>
+            </div>
+          </div>
+        </div>
+      </div>      <h3 class="h5 mt-4">4. Documento do modo (types + frontend)</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100 depara-antes">
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Documento sempre markdown, renderizado pelo <code>renderMarkdown</code> do painel.</li></ul>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card h-100 depara-depois">
+            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>document.format: "markdown" | "html"</code>; o painel renderiza html num iframe <code>sandbox="allow-scripts"</code> SEM <code>allow-same-origin</code> (conteudo gerado por LLM e dado nao confiavel), com toggle Ver/Editar e guarda de foco; markdown intocado.</li></ul>
+            </div>
+          </div>
+        </div>
+      </div>      <h3 class="h5 mt-4">5. Descricao da tool web_search (tools/index.ts)</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100 depara-antes">
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Descricao compartilhada <em>"So pode haver UMA busca por vez"</em> — contradizia o modo research (paralelizacao).</li></ul>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card h-100 depara-depois">
+            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i><code>toolDescriptions</code> por modo: o research minta sua propria descricao ("VARIAS buscas podem rodar AO MESMO TEMPO... cartao proprio com indicador"); o texto compartilhado continua valendo para os modos cap-1 (clone no mint, constantes intactas).</li></ul>
+            </div>
+          </div>
+        </div>
+      </div>      <h3 class="h5 mt-4">6. Cobertura de testes</h3>
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card h-100 depara-antes">
+            <div class="card-header"><i class="bi bi-arrow-left-circle me-1"></i><strong>Antes</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>Modo novo sem testes dedicados; busca web com 1 caminho de concorrencia.</li></ul>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card h-100 depara-depois">
+            <div class="card-header"><i class="bi bi-arrow-right-circle me-1"></i><strong>Depois</strong></div>
+            <div class="card-body">
+              <ul class="list-unstyled mb-0 d-grid gap-2"><li><i class="bi bi-dot me-2 text-body-secondary"></i>28 testes novos (onda 1) + 3 (onda 2): protocolo pinado por 8 marcos, gating de 2 eixos, cap real via metadata, isolamento cancel/erro/timeout, sandbox do iframe, guarda de foco. Backend 1296 e frontend 489 testes verdes no fim.</li></ul>
             </div>
           </div>
         </div>
       </div>
-
 <!-- {{BEFORE_AFTER}} end -->
 
       <h2 class="h4 pane-title">Impacto</h2>
@@ -788,36 +721,38 @@
       <p>O orquestrador opera em autonomia total: nenhuma pergunta foi feita ao usuário. Toda premissa assumida fica registrada aqui — para revisão e reprodutibilidade.</p>
 
       <!-- {{DECISIONS}} begin -->
-<ul class="list-group list-group-flush">        <li class="list-group-item d-flex gap-3 align-items-start">
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>web_search assíncrona é a decisão central:</strong> A skill integrating-openai-realtime prescreve: 'A slow tool must not block the conversation. Return something immediately and inject the real answer later'. web_search era a única tool lenta que violava isso; o fix correto era assíncrono, não um timeout menor.</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <div><strong>O modo e DATA, nao codigo:</strong> o protocolo de rodadas (surf-research-skill) vive no Role/Flow/sections do modo em pt-BR; nenhum <code>if</code> por modo em prompts.ts/routes.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Timeout do job de busca em 180s:</strong> O pior caso legítimo é 45s (OpenAI) + 30s (fallback surf) = 75s. Um timeout menor mataria a busca no meio do fallback — pinado com teste (default 180s).</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <div><strong>Cap por conversa, default 1:</strong> o guard de busca vira cap parametrizavel — outros modos mantem comportamento pinado byte-a-byte; so o research paraleliza.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Timeout do runTool em 75s, não 60s:</strong> 60s cortaria uma busca legítima no fallback (75s é o worst case real verificado no código); 75s destrava a conversa em qualquer cenário e nunca dispara com o dispatch assíncrono (que responde em ms).</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <div><strong>materialFreeTools por modo:</strong> o modo pesquisa abre o microfone sem material; a web_search fica livre SO para ele, sem alargar o conjunto global.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Bloco de contexto SEM custo de LLM:</strong> buildResearchContext lê storage (getConversation) + source-store — nada de buildResume/summarizer por tool call. Cada caractere de instrução é re-bilado; o bloco entra uma vez por chamada de pesquisa, nunca nas instruções do realtime.</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <div><strong>Produto = html-explainer em iframe sandbox:</strong> a casca (Bootstrap 5.3.8 CDN+SRI, abas ARIA, runtime de deep-link/copiar) nasce no template do documento e e preservada byte-a-byte pelo modelo; o painel mostra em iframe <code>allow-scripts</code> sem <code>allow-same-origin</code> (conteudo LLM e dado nao confiavel).</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>prompts.ts intacto:</strong> A descrição da tool é o contrato (o modelo lê o schema da tool no session); ensinar o comportamento em TOOL_GUIDANCE seria re-bilado em toda resposta sem mudar comportamento. As descrições de web_search/check_web_search/context foram atualizadas em tools/index.ts.</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <div><strong>O prompt nao paga o template:</strong> a casca html (~14k chars) vive no DOCUMENTO, nao nas sections — o teto de instrucoes do research fica em &lt;26k (mesma disciplina do presentation).</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>check_web_search registry read-only:</strong> Sem rotas extras de listagem, sem polling de UI — apenas o espelho de check_pi_agent. Paridade com os irmãos, escopo mínimo.</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <div><strong>Nenhuma ferramenta nova no Realtime:</strong> o protocolo e conversacional (o modelo orquestra por voz com web_search + document tools); o indicador de terminado sao os cards de job existentes, um por busca.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>WebSearchCard espelha AgentJobCard:</strong> Busca web não tem fan de thinkers — o padrão DeepThinkCard seria over-engineering. Sem onCancel (o cancel pertence ao registry do pi; busca não tem processo filho).</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
+          <div><strong>Descricao da tool por modo:</strong> em vez de reescrever o texto compartilhado (que e a verdade para os modos cap-1 e e pinado), o mint clona e sobrescreve a descricao so para o modo que precisa.</div>
+        </li>
+        <li class="list-group-item d-flex gap-3 align-items-start">
           <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Erros de busca não são persistidos:</strong> Espelha os handlers irmãos (agente pi e deep-think): só resultados úteis entram no arquivo da conversa; o motivo da falha é falado e mostrado no card.</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Testes da subwave foram integrados à main:</strong> As testing subwaves rodaram contra a base da Onda 1; a Onda 2 mudou a API (retorno {text, cost_usd}, 4 args com contexto, frase PT-BR). Os pins stale foram reescritos contra main — o pin de ausência virou pin de presença (falha se o contexto sumir).</div>
-        </li>        <li class="list-group-item d-flex gap-3 align-items-start">
-          <i class="bi bi-lightbulb fs-5 stat-value flex-shrink-0 mt-1"></i>
-          <div><strong>Falsos positivos de teste corrigidos com prova por mutação:</strong> prune-running (running sempre os mais novos), disarm do timer no timeout (getTimerCount era vácuo), filtros de conversa do SSE (testes liam 1 chunk só) — cada fix comprovado: mutação na produção → teste falha; restauração → passa.</div>
+          <div><strong>Fix via revisao adversarial:</strong> a frase falada do 409 foi generalizada para plural — o revisor apontou a mentira no cap 1; o fix tornou a frase condicional ao cap e restaurou os pins.</div>
         </li>
       </ul>
 <!-- {{DECISIONS}} end -->
@@ -832,45 +767,36 @@
       <p>As quatro fases do orquestrador e o que aconteceu em cada uma.</p>
 
       <!-- {{TIMELINE}} begin -->
-
       <ol class="timeline list-unstyled mb-0">
         <li class="timeline-item mb-4">
           <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">17:16</span>
-            <strong>FASE 0 + ANALYZE</strong>
+            <span class="badge badge-accent">Fase 0-1</span>
+            <strong>DELIMITAR / ANALYZE</strong>
           </div>
-          <p class="mb-0 text-body-secondary small">Fronteira resolvida (MODE=normal, raiz /home/ondokai/Projects/explainer). Project-router e 6 skills carregadas. Diagnóstico no código: 3 subsistemas de pesquisa (web_search síncrono que bloqueia a fala; fallback surf sempre quebrado — verificado ao vivo; zero contexto enviado a web/pi/deep_think) + fetch de tool sem timeout.</p>
+          <p class="mb-0 text-body-secondary small">FASE 0 (MODE=normal, main), leitura do repo (modos, web-search-jobs, tool-executor, document-store, frontend), das skills do project-router (building-conversation-modes, writing-explainer-code) e das skills externas surf-research-skill e html-explainer-skill. R7: Tier 1 disponivel.</p>
         </li>
         <li class="timeline-item mb-4">
           <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">17:25</span>
-            <strong>PLAN + ONDA 1</strong>
+            <span class="badge badge-accent">Fase 2</span>
+            <strong>PLAN</strong>
           </div>
-          <p class="mb-0 text-body-secondary small">Plano publicado (2 ondas + subwaves). 3 worktrees paralelas (surf-fallback · research-context · toolcall-timeout). Barreira: revisão adversarial 'nada a refutar' nas três; 1a/1b/1c squash-mergeadas com gate verde. Replan aprovou emendas para a Onda 2.</p>
+          <p class="mb-0 text-body-secondary small">Decomposicao: PREP (contratos) + Onda 1 (3 worktrees paralelas: modo, busca paralela, doc html) + Onda 2 (tool desc). TASK_PLAN.md publicado.</p>
         </li>
         <li class="timeline-item mb-4">
           <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">17:40</span>
-            <strong>ONDA 2 (PREP + 2 worktrees)</strong>
+            <span class="badge badge-accent">Fase 3</span>
+            <strong>EXECUTE-ONDA 1 e 2</strong>
           </div>
-          <p class="mb-0 text-body-secondary small">COMMIT PREP: contrato SSE web_search_* fixado nos dois pacotes. backend (jobs + check_web_search + contexto + replay) e frontend (handler + card + persist) em paralelo. Revisor adversarial achou 1 problema real no backend (timer do job cancelado nunca era limpo) — fix com prova por mutação. Replan final: CONVERGÊNCIA.</p>
-        </li>
-        <li class="timeline-item mb-4">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-accent">18:10</span>
-            <strong>TESTING SUBWAVES (5 worktrees)</strong>
-          </div>
-          <p class="mb-0 text-body-secondary small">Onda 1: 62 testes (100% de cobertura no fallback; e2e do destrave com WebRTC real; invariantes de truncamento). Onda 2: 62 testes. Revisão adversarial dos testes achou 3 pins stale (API da Onda 2) + 2 falsos positivos + 1 gap — todos corrigidos com integração a main e prova por mutação. Um conflito de merge resolvido preservando os dois lados (29 casos em web-search.test.ts).</p>
+          <p class="mb-0 text-body-secondary small">PREP commitado; 3 worktrees da Onda 1 + fix de revisao adversarial (frase 409 por cap) + Onda 2 (toolDescriptions). Barreiras, 2 revisores de plano (CONTINUAR → CONVERGENCIA), 4 revisoes adversariais (1 refutacao real corrigida), squash-merges com gate verde entre cada, testing subwave disparada em background.</p>
         </li>
         <li class="timeline-item">
           <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge badge-ok">19:00</span>
+            <span class="badge badge-ok">Fase 4</span>
             <strong>COMMIT-FINAL</strong>
           </div>
-          <p class="mb-0 text-body-secondary small">12 squash commits em main; gates verdes após cada merge (validate + frontend separado); 1 275 testes backend + 476 frontend; worktrees/branches removidos e arquivados em refs/do-archive; contenção provada; este EXPLAINER.html gerado.</p>
+          <p class="mb-0 text-body-secondary small">Testing subwave integrada (revisao adversarial de testes APROVOU; 3 merges com gates verdes), gate completo final verde, este EXPLAINER.html gerado, commit final e limpeza.</p>
         </li>
       </ol>
-
 <!-- {{TIMELINE}} end -->
 
       <p class="text-body-secondary small mt-3">Exemplo demonstrativo — a geração substitui o bloco entre os marcadores pela timeline real da execução.</p>
@@ -879,7 +805,7 @@
   </div>
 
   <footer class="text-body-secondary small border-top mt-5 pt-3">
-    Gerado por <strong>deep-orchestrator</strong> v2.0 · 13/08/2026 · branch main.
+    Gerado por <strong>deep-orchestrator</strong> vv2 · 2026-08-14 · branch main.
     Documento de arquivo único — salve, abra com duplo clique ou imprima em PDF (todas as abas entram no papel).
   </footer>
 
