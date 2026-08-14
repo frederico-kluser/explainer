@@ -87,6 +87,12 @@ export interface WebSearchOptions {
   context?: string;
   /** Injected so a job can be exercised without waiting 180 s. */
   timeoutMs?: number;
+  /**
+   * How many searches may run at once in this conversation. The research mode
+   * dispatches a fan of approved doubts, each becoming its own job card; every
+   * other mode keeps the one-at-a-time rule. Absent means one.
+   */
+  maxConcurrent?: number;
 }
 
 /**
@@ -98,13 +104,19 @@ export interface WebSearchOptions {
 export function dispatchWebSearch(options: WebSearchOptions): WebSearchJob {
   const { conversationId } = options;
 
-  const running = listWebSearchJobs(conversationId).find((j) => j.status === "running");
-  if (running) {
-    throw new WebSearchJobError(
-      `Ja existe uma busca em andamento nesta conversa (job ${running.id}). ` +
-        "Espere ela terminar ou cancele antes de disparar outra.",
-      409,
-    );
+  const running = listWebSearchJobs(conversationId).filter(
+    (j) => j.status === "running",
+  );
+  const cap = options.maxConcurrent ?? 1;
+  if (running.length >= cap) {
+    // The cap is spoken back when it is more than one: "uma" would be a lie
+    // the moment a mode allows a fan of searches at once.
+    const message =
+      cap > 1
+        ? `Ja existem ${cap} buscas em andamento nesta conversa. Espere alguma terminar ou cancele antes de disparar outra.`
+        : `Ja existe uma busca em andamento nesta conversa (job ${running[0]!.id}). ` +
+          "Espere ela terminar ou cancele antes de disparar outra.";
+    throw new WebSearchJobError(message, 409);
   }
 
   const job: WebSearchJob = {

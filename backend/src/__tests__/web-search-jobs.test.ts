@@ -485,4 +485,103 @@ describe("dispatchWebSearch", () => {
     expect(event.type).toBe("web_search_done");
     if (event.type === "web_search_done") expect(event.result).toBe("");
   });
+
+  it("lets up to the configured cap of searches run at once", async () => {
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    const conv = randomUUID();
+    const first = mod.dispatchWebSearch({ conversationId: conv, query: "a", maxConcurrent: 3 });
+    const second = mod.dispatchWebSearch({ conversationId: conv, query: "b", maxConcurrent: 3 });
+    const third = mod.dispatchWebSearch({ conversationId: conv, query: "c", maxConcurrent: 3 });
+    expect([first.status, second.status, third.status]).toEqual([
+      "running",
+      "running",
+      "running",
+    ]);
+
+    let status = 0;
+    try {
+      mod.dispatchWebSearch({ conversationId: conv, query: "d", maxConcurrent: 3 });
+      expect.unreachable("the fourth dispatch should have been refused");
+    } catch (err) {
+      expect(err).toBeInstanceOf(mod.WebSearchJobError);
+      // The cap is spoken back, so the model knows how many are in flight.
+      expect((err as InstanceType<typeof mod.WebSearchJobError>).message).toMatch(
+        /Ja existem 3 buscas em andamento/,
+      );
+      status = (err as InstanceType<typeof mod.WebSearchJobError>).status;
+    }
+    expect(status).toBe(409);
+
+    for (const job of [first, second, third]) expect(mod.cancelWebSearch(job.id)).toBe(true);
+  });
+
+  it("keeps the one-at-a-time rule for an explicit cap of 1", async () => {
+    executeWebSearchMock.mockImplementationOnce(hangingSearch);
+
+    const conv = randomUUID();
+    const first = mod.dispatchWebSearch({
+      conversationId: conv,
+      query: "a",
+      maxConcurrent: 1,
+    });
+
+    let status = 0;
+    try {
+      mod.dispatchWebSearch({ conversationId: conv, query: "b", maxConcurrent: 1 });
+      expect.unreachable("the second dispatch should have been refused");
+    } catch (err) {
+      expect(err).toBeInstanceOf(mod.WebSearchJobError);
+      expect((err as InstanceType<typeof mod.WebSearchJobError>).message).toMatch(
+        /Ja existe uma busca/,
+      );
+      status = (err as InstanceType<typeof mod.WebSearchJobError>).status;
+    }
+    expect(status).toBe(409);
+
+    expect(mod.cancelWebSearch(first.id)).toBe(true);
+  });
+
+  it("frees a slot when one of the parallel searches finishes", async () => {
+    executeWebSearchMock.mockImplementationOnce(hangingSearch);
+    executeWebSearchMock.mockResolvedValueOnce({ text: "ok" });
+
+    const conv = randomUUID();
+    const first = mod.dispatchWebSearch({ conversationId: conv, query: "a", maxConcurrent: 2 });
+    const second = mod.dispatchWebSearch({ conversationId: conv, query: "b", maxConcurrent: 2 });
+    expect(mod.listWebSearchJobs(conv).filter((j) => j.status === "running")).toHaveLength(2);
+
+    await waitFor((e) => e.type === "web_search_done" && e.job_id === second.id);
+
+    const third = mod.dispatchWebSearch({ conversationId: conv, query: "c", maxConcurrent: 2 });
+    expect(third.status).toBe("running");
+
+    expect(mod.cancelWebSearch(first.id)).toBe(true);
+    expect(mod.cancelWebSearch(third.id)).toBe(true);
+  });
+
+  it("never shares the cap between conversations", async () => {
+    executeWebSearchMock.mockImplementation(hangingSearch);
+
+    const convA = randomUUID();
+    const convB = randomUUID();
+    const a1 = mod.dispatchWebSearch({ conversationId: convA, query: "a1", maxConcurrent: 2 });
+    const a2 = mod.dispatchWebSearch({ conversationId: convA, query: "a2", maxConcurrent: 2 });
+    // convA is at its cap; convB must not feel it, and convB's own search must
+    // not lift convA's either.
+    const b1 = mod.dispatchWebSearch({ conversationId: convB, query: "b1", maxConcurrent: 2 });
+    expect(b1.status).toBe("running");
+
+    let status = 0;
+    try {
+      mod.dispatchWebSearch({ conversationId: convA, query: "a3", maxConcurrent: 2 });
+      expect.unreachable("convA is at its cap");
+    } catch (err) {
+      expect(err).toBeInstanceOf(mod.WebSearchJobError);
+      status = (err as InstanceType<typeof mod.WebSearchJobError>).status;
+    }
+    expect(status).toBe(409);
+
+    for (const job of [a1, a2, b1]) expect(mod.cancelWebSearch(job.id)).toBe(true);
+  });
 });

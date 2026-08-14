@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { DispatchOptions } from "../services/agent-jobs.js";
 import type { WebSearchJob } from "../types/deep-tools.js";
-import type { Conversation, ResolvedSource } from "../types/index.js";
+import type { Conversation, ResolvedSource, ToolName } from "../types/index.js";
 
 // The store reads and writes conversation JSON on disk; the executor's job is
 // routing, so the source is injected instead of persisted.
@@ -9,6 +9,15 @@ const currentSource = { value: null as ResolvedSource | null };
 // Same for the conversation: research-context reads it through storage, and a
 // fixture keeps the routing tests off the real data directory.
 const currentConversation = { value: null as Conversation | null };
+// Same for the mode: the research mode does not exist in this worktree yet, so
+// the tests that need its material-free set and parallel cap override the
+// resolved mode per test. Null keeps the real registry fallback.
+const modeOverride = {
+  value: null as null | {
+    materialFreeTools?: readonly ToolName[];
+    parallelSearches?: number;
+  },
+};
 
 vi.mock("../services/source-store.js", async () => {
   // pickSource is pure resolution logic worth exercising for real; only the
@@ -86,11 +95,12 @@ vi.mock("../tools/deliberation-tools.js", () => ({
 }));
 
 // A real search hits the OpenAI API and the surf CLI; the registry reads are
-// spies so check_web_search's four states are scriptable. dispatchWebSearch
-// stays real on purpose: the web_search tests below pin the conversation block
-// reaching executeWebSearch (mocked above), and that call happens inside the
-// real dispatch path. listWebSearchJobs delegates to the real registry so the
-// real dispatch (which reads it through a module-local binding the mock cannot
+// spies so check_web_search's four states are scriptable. dispatchWebSearch is
+// wrapped in a delegating spy: the web_search tests below pin the conversation
+// block reaching executeWebSearch (mocked above), which happens inside the
+// real dispatch path, and one test asserts the mode's cap reaching the
+// dispatch. listWebSearchJobs delegates to the real registry so the real
+// dispatch (which reads it through a module-local binding the mock cannot
 // reach) and the executor's own reads agree on the same jobs.
 vi.mock("../services/web-search-jobs.js", async () => {
   const actual = await vi.importActual<typeof import("../services/web-search-jobs.js")>(
@@ -98,10 +108,27 @@ vi.mock("../services/web-search-jobs.js", async () => {
   );
   return {
     ...actual,
+    dispatchWebSearch: vi.fn((options) => actual.dispatchWebSearch(options)),
     getWebSearchJob: vi.fn(() => undefined),
     listWebSearchJobs: vi.fn((conversationId: string) =>
       actual.listWebSearchJobs(conversationId),
     ),
+  };
+});
+
+// The mode lookup is real — registry plus storage — but the research mode is
+// not in this worktree yet: the material-free set and the parallel cap are
+// injected per test, merged over the resolved default mode.
+vi.mock("../services/conversation-mode.js", async () => {
+  const actual = await vi.importActual<typeof import("../services/conversation-mode.js")>(
+    "../services/conversation-mode.js",
+  );
+  return {
+    ...actual,
+    getConversationMode: async (conversationId: string) => {
+      const mode = await actual.getConversationMode(conversationId);
+      return modeOverride.value ? { ...mode, ...modeOverride.value } : mode;
+    },
   };
 });
 
@@ -155,6 +182,7 @@ const REAL_BRAVE_KEY = process.env.BRAVE_API_KEY;
 beforeEach(() => {
   currentSource.value = null;
   currentConversation.value = null;
+  modeOverride.value = null;
   vi.clearAllMocks();
   process.env.BRAVE_API_KEY = "test-key";
 });
@@ -393,6 +421,11 @@ describe("the async web search", () => {
     expect(result.meta).toMatchObject({ job_id: expect.any(String), status: "running" });
     expect(result.output).toMatch(/Busca disparada/);
     expect(result.output).not.toContain(String(result.meta?.job_id ?? ""));
+    // The default mode has no parallelSearches, so the dispatch gets the cap
+    // of one the shared rule always applied.
+    expect(webSearchJobs.dispatchWebSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ maxConcurrent: 1 }),
+    );
   });
 
   it("hands the conversation block to the web search", async () => {
@@ -583,6 +616,75 @@ describe("the async web search", () => {
 
     expect(result.output).toBe("A busca terminou sem resposta.");
     expect(result.meta).toMatchObject({ job_id: "search-1", status: "done" });
+  });
+});
+
+describe("the research mode's parallel web searches", () => {
+  it("runs web_search on an empty conversation when the mode frees it", async () => {
+    modeOverride.value = { materialFreeTools: ["web_search"] };
+
+    const result = await executeTool("web_search", '{"query":"o que e rust?"}', CONV);
+
+    // The mode axis of the material gate: no material added, yet the search
+    // dispatches — the "add a material" sentence never spoken.
+    expect(result.output).toMatch(/Busca disparada/);
+    expect(result.output).not.toMatch(/Nenhum material/i);
+    expect(webSearchTool.executeWebSearch).toHaveBeenCalledWith(
+      "o que e rust?",
+      CONV,
+      undefined,
+      expect.stringContaining("# Contexto da conversa"),
+    );
+  });
+
+  it("keeps the material-first answer under a mode without materialFreeTools", async () => {
+    // No override: the real default mode frees nothing of its own, so the gate
+    // has to answer exactly as it always did — and never reach the dispatch.
+    const result = await executeTool("web_search", '{"query":"oi"}', CONV);
+
+    expect(result.output).toMatch(/Nenhum material/i);
+    expect(webSearchTool.executeWebSearch).not.toHaveBeenCalled();
+  });
+
+  it("passes the mode's parallel cap to the dispatch", async () => {
+    modeOverride.value = { parallelSearches: 3 };
+    currentSource.value = markdownSource();
+
+    await executeTool("web_search", '{"query":"cotacao do dolar"}', CONV);
+
+    expect(webSearchJobs.dispatchWebSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ maxConcurrent: 3 }),
+    );
+  });
+
+  it("refuses a fourth search by speaking the cap back", async () => {
+    modeOverride.value = { materialFreeTools: ["web_search"], parallelSearches: 3 };
+    // Searches that never answer keep their jobs "running" in the real
+    // registry, so the fourth dispatch trips the real 409 check.
+    vi.mocked(webSearchTool.executeWebSearch)
+      .mockImplementationOnce(() => new Promise<never>(() => undefined))
+      .mockImplementationOnce(() => new Promise<never>(() => undefined))
+      .mockImplementationOnce(() => new Promise<never>(() => undefined));
+
+    const ids: string[] = [];
+    try {
+      for (const query of ["primeira", "segunda", "terceira"]) {
+        const run = await executeTool("web_search", JSON.stringify({ query }), CONV);
+        expect(run.output).toMatch(/Busca disparada/);
+        ids.push(String(run.meta?.job_id ?? ""));
+      }
+
+      const result = await executeTool("web_search", '{"query":"quarta"}', CONV);
+
+      // The fan cap is spoken back as a number — "uma" would be a lie.
+      expect(result.output).toMatch(/Ja existem 3 buscas em andamento/);
+      // Spoken, the uuid would be read out digit by digit; it belongs in meta.
+      expect(result.output).not.toContain(String(result.meta?.job_id ?? ""));
+      expect(result.meta).toMatchObject({ job_id: expect.any(String), status: "running" });
+    } finally {
+      // Tear the hanging jobs off their budget timers so the suite is not held open.
+      for (const id of ids) webSearchJobs.cancelWebSearch(id);
+    }
   });
 });
 

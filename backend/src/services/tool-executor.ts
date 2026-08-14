@@ -178,7 +178,18 @@ export async function executeTool(
     getConversationMode(conversationId),
   ]);
 
-  if (sources.length === 0 && !MATERIAL_FREE_TOOLS.has(name)) return noMaterial();
+  // The mode axis on top of the shared set: `research` opens the microphone
+  // with nothing attached, and its only job is to search — so it frees
+  // web_search on an empty conversation. Everyone else keeps the "add a
+  // material" answer below, because a conversation with nothing added is one
+  // the user has not started yet.
+  if (
+    sources.length === 0 &&
+    !MATERIAL_FREE_TOOLS.has(name) &&
+    !(mode.materialFreeTools ?? []).includes(name as ToolName)
+  ) {
+    return noMaterial();
+  }
 
   // The same call the mint made, with the same mode, so the allow-list here can
   // never be narrower than the list the model was actually handed.
@@ -214,6 +225,7 @@ export async function executeTool(
         conversationId,
         requireString(args, "query", name),
         await buildResearchContext(conversationId, sources),
+        mode.parallelSearches ?? 1,
       );
 
     case "check_web_search": {
@@ -400,6 +412,9 @@ function dispatchAgent(
  * a job id in milliseconds, says out loud that it is searching, and keeps
  * talking; the answer is injected as a new conversation item when it lands.
  *
+ * The cap of simultaneous searches comes from the mode: research dispatches a
+ * fan of approved doubts, every other mode keeps one at a time.
+ *
  * The 409 sentence does not name the running job's id: spoken, the model would
  * read the uuid out digit by digit. The id goes to the browser through `meta`.
  */
@@ -407,9 +422,10 @@ function dispatchSearch(
   conversationId: string,
   query: string,
   context: string,
+  maxConcurrent: number,
 ): ToolOutcome {
   try {
-    const job = dispatchWebSearch({ conversationId, query, context });
+    const job = dispatchWebSearch({ conversationId, query, context, maxConcurrent });
     return {
       output:
         "Busca disparada. Avise o usuario em voz alta que voce esta pesquisando " +
@@ -419,11 +435,23 @@ function dispatchSearch(
   } catch (err) {
     if (err instanceof WebSearchJobError && err.status === 409) {
       const running = listWebSearchJobs(conversationId).find((j) => j.status === "running");
+      // The spoken sentence is pinned per cap: the one-at-a-time modes keep
+      // the singular wording, parallel modes name the cap. The job layer
+      // already words the fan case; the fallback keeps the cap audible when
+      // a future 409 does not.
+      const pluralSentence =
+        err.message.includes(`Ja existem ${maxConcurrent} buscas`)
+          ? err.message
+          : `Ja existem ${maxConcurrent} buscas em andamento nesta conversa. ` +
+            "Espere alguma terminar ou cancele antes de disparar outra.";
+      const output =
+        maxConcurrent > 1
+          ? pluralSentence
+          : "Ja tem uma busca em andamento nesta conversa. Diga ao usuario que ela " +
+            "ainda esta rodando e continue a conversa; da para disparar outra depois " +
+            "que terminar.";
       return {
-        output:
-          "Ja tem uma busca em andamento nesta conversa. Diga ao usuario que ela " +
-          "ainda esta rodando e continue a conversa; da para disparar outra depois " +
-          "que terminar.",
+        output,
         ...(running
           ? { meta: { job_id: running.id, status: running.status, activity: running.activity } }
           : {}),
