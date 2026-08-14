@@ -43,6 +43,17 @@ describe("the mode registry", () => {
     expect(isModeId("nope")).toBe(false);
   });
 
+  it("keeps the default first and research in the list", () => {
+    // Declaration order is the order the picker shows, and the first entry is
+    // the default — the two contracts a new mode has to respect.
+    expect(DEFAULT_MODE_ID).toBe("conversation");
+    expect(listModes().map((mode) => mode.id)).toEqual([
+      "conversation",
+      "presentation",
+      "research",
+    ]);
+  });
+
   it("carries the old behaviour in the default", () => {
     // The default is not a neutral empty mode: it is the one that behaves the
     // way the app did before this feature, because every existing conversation
@@ -323,5 +334,121 @@ describe("the instructions a mode builds", () => {
       "Adicione um material para comecar.",
     );
     expect(greetingFor([source()], getMode("conversation"))).toContain("explainer");
+  });
+});
+
+describe("the research mode", () => {
+  // The tools the research session is actually minted with: the document
+  // toolkit plus the two web tools, all in the mode's own declaration order.
+  const researchTools = [
+    "read_document",
+    "write_document",
+    "append_document",
+    "edit_document_section",
+    "web_search",
+    "check_web_search",
+  ];
+
+  it("opens the microphone on an empty conversation", () => {
+    // The three numbers the mode starts at nothing with: no material demanded,
+    // the web tools freed with nothing attached, and a fan of six searches
+    // that the executor hands to the dispatch.
+    const research = getMode("research");
+    expect(research.requiresMaterial).toBe(false);
+    expect(research.parallelSearches).toBe(6);
+    expect(research.materialFreeTools).toEqual(["web_search", "check_web_search"]);
+    // The picker resolves the icon against an allowlist; a name outside it
+    // renders as a blank tile.
+    expect(research.icon).toBe("Compass");
+  });
+
+  it("never tells a research conversation to go and find a material", () => {
+    // Presentation is not the only material-free mode, and the "add a
+    // material" sentence is per-mode: research starts at a topic, not at an
+    // artifact.
+    const text = buildInstructions([], null, researchTools, getMode("research"));
+    expect(text).not.toContain("Nenhum material foi adicionado ainda");
+    expect(text).toContain("nao precisa ter");
+    expect(text).toContain("pesquise na internet quando precisar de um fato");
+  });
+
+  it("carries the round protocol into the session", () => {
+    // The seven steps the product is: broad search, doubts, approval, fan-out,
+    // per-round summary, repeat until the person says it is done, and a source
+    // on every claim. A flow that dropped one of these is a different product
+    // wearing the same picker tile.
+    const text = buildInstructions([], null, researchTools, getMode("research"));
+    for (const milestone of [
+      "PESQUISA AMPLA",
+      "levante as DUVIDAS",
+      "PECA APROVACAO",
+      "PESQUISE SO AS APROVADAS",
+      "PARALELIZE",
+      "RESUMO DA RODADA",
+      "ate o usuario dizer que esta bom",
+      "fontes [n]",
+    ]) {
+      expect(text, milestone).toContain(milestone);
+    }
+  });
+
+  it("gates each research section on the tool that names it", () => {
+    // Both axes of the tool gate: the preamble forbids naming a tool the model
+    // does not hold, so the document section must not ship without
+    // write_document and the research section must not ship without web_search.
+    const research = getMode("research");
+
+    const onlyWeb = buildInstructions([], null, ["web_search"], research);
+    expect(onlyWeb).toContain("# Pesquisa");
+    expect(onlyWeb).toContain("web_search responde NA HORA");
+    expect(onlyWeb).not.toContain("# O documento");
+
+    const onlyDocument = buildInstructions([], null, [
+      "read_document",
+      "write_document",
+      "append_document",
+      "edit_document_section",
+    ], research);
+    expect(onlyDocument).toContain("# O documento");
+    expect(onlyDocument).not.toContain("# Pesquisa");
+  });
+
+  it("asks for the attached material before the web", () => {
+    // A material is still welcome in research: it is the person's own artifact
+    // and gives the research its authority. The instruction only makes sense
+    // when one is actually attached.
+    const research = getMode("research");
+    expect(buildInstructions([source()], null, researchTools, research)).toContain(
+      "Esta conversa TEM material anexado",
+    );
+    expect(buildInstructions([], null, researchTools, research)).not.toContain(
+      "Esta conversa TEM material anexado",
+    );
+  });
+
+  it("serialises the html document and the material-free flag", () => {
+    // The browser gates its own microphone on requires_material and renders the
+    // document by format — both have to survive the round trip to the picker.
+    const summary = toModeSummary(getMode("research"));
+    expect(summary.requires_material).toBe(false);
+    expect(summary.document?.format).toBe("html");
+    expect(summary.document?.title).toBe("Pesquisa");
+  });
+
+  it("owns its greeting", () => {
+    // The line opens the call before any material exists — the default derived
+    // greeting would ask for one that research does not need.
+    const line = "Vamos pesquisar. Conecte e me diga o tema da pesquisa.";
+    expect(greetingFor([], getMode("research"))).toBe(line);
+    expect(greetingFor([source()], getMode("research"))).toBe(line);
+  });
+
+  it("offers the shared web tools exactly once with nothing attached", () => {
+    // The base list already carries web_search and check_web_search on an
+    // empty conversation; the mode's own names must not add a second copy to
+    // the frozen list.
+    const offered = names(toolsForSources([], getMode("research")));
+    expect(offered.filter((name) => name === "web_search")).toHaveLength(1);
+    expect(offered.filter((name) => name === "check_web_search")).toHaveLength(1);
   });
 });

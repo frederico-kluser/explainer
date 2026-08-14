@@ -91,7 +91,9 @@ describe("GET /api/modes", () => {
 
     expect(response.status).toBe(200);
     expect(body.modes.map((mode) => mode.id)).toContain("presentation");
+    expect(body.modes.map((mode) => mode.id)).toContain("research");
     expect(body.modes.some((mode) => mode.id === body.default)).toBe(true);
+    expect(body.default).toBe("conversation");
   });
 });
 
@@ -170,5 +172,48 @@ describe("POST /api/realtime/session and the material gate", () => {
       (tool) => (tool as { name?: string }).name,
     );
     expect(offered).toContain("edit_document_section");
+  });
+});
+
+describe("the research conversation", () => {
+  it("lays the html-explainer shell down as its document", async () => {
+    const created = await createConversation("research");
+
+    const document = await fetch(`${base}/conversations/${created.id}/document`);
+    expect(document.status).toBe(200);
+    const body = (await document.json()) as { content: string };
+
+    // The document is born as the html-explainer shell, not as markdown: the
+    // sidebar has to render the tabbed file the model is told to preserve.
+    expect(body.content).toContain("<!doctype html>");
+    expect(body.content).toContain('data-bs-theme="dark"');
+    expect(body.content).toContain('id="tab-resumo"');
+    expect(body.content).toContain('id="pane-resumo"');
+  });
+
+  it("opens the microphone with nothing attached", async () => {
+    const created = await createConversation("research");
+
+    const response = await fetch(`${base}/realtime/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: created.id }),
+    });
+
+    // The 409 gate is per-mode: research starts at a topic, so the empty
+    // conversation mints like the presentation one does.
+    expect(response.status).toBe(200);
+    expect(minted).not.toBeNull();
+    expect(minted!.instructions).toContain("pesquisador de voz");
+    expect(minted!.instructions).toContain("PARALELIZE");
+    expect(minted!.instructions).not.toContain("Nenhum material foi adicionado ainda");
+
+    // Minted with the mode's own tools, not with the default ones.
+    const offered = (minted!.tools ?? []).map(
+      (tool) => (tool as { name?: string }).name,
+    );
+    expect(offered).toContain("web_search");
+    expect(offered).toContain("check_web_search");
+    expect(offered).toContain("write_document");
   });
 });
