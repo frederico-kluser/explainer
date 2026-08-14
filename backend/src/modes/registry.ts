@@ -11,11 +11,13 @@
 
 import { CONVERSATION_MODE } from "./conversation.js";
 import { PRESENTATION_MODE } from "./presentation.js";
+import { RESEARCH_MODE } from "./research.js";
 import type { ModeDefinition } from "./types.js";
 
 export const MODES = {
   conversation: CONVERSATION_MODE,
   presentation: PRESENTATION_MODE,
+  research: RESEARCH_MODE,
 } as const satisfies Record<string, ModeDefinition>;
 
 export type ModeId = keyof typeof MODES;

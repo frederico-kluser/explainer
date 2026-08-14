@@ -234,6 +234,49 @@ describe("the instructions a mode builds", () => {
     expect(plain.length).toBeLessThan(8_000);
   });
 
+  it("holds the research instructions inside the same budget", () => {
+    // Research carries no knowledge base: its sections state the protocol and
+    // the document rules, never the shell — the template is not re-billed on
+    // every response.
+    const research = buildInstructions(
+      [source()],
+      null,
+      [...documentTools, "web_search", "check_web_search"],
+      getMode("research"),
+    );
+    expect(research.length).toBeLessThan(26_000);
+  });
+
+  it("ships an html-explainer shell as the research document", () => {
+    const mode = getMode("research");
+    const template = mode.document!.template;
+
+    // The shell is a byte-for-byte contract: dark theme, the ARIA tab
+    // structure and the runtime the model must preserve on every rewrite.
+    expect(mode.document?.format).toBe("html");
+    expect(template).toContain('data-bs-theme="dark"');
+    expect(template).toContain('role="tablist"');
+    expect(template).toContain('role="tab"');
+    // The five fixed tabs, each with its button.id <-> pane.aria-labelledby
+    // pair, so a deep link and a screen reader always land on the same pane.
+    for (const [tab, pane] of [
+      ["Resumo", "pane-resumo"],
+      ["Pontos levantados", "pane-pontos"],
+      ["Duvidas", "pane-duvidas"],
+      ["Respostas e fontes", "pane-respostas"],
+      ["Rodadas", "pane-rodadas"],
+    ] as const) {
+      expect(template).toContain(tab);
+      expect(template).toContain(`aria-controls="${pane}"`);
+      expect(template).toContain(`aria-labelledby="tab-${pane.slice(5)}"`);
+    }
+    // The runtime: hash deep-link and the copy button.
+    expect(template).toContain("activateFromHash");
+    expect(template).toContain("copy-btn");
+    // And the whole shell fits a document that is rewritten on every round.
+    expect(template.length).toBeLessThan(30_000);
+  });
+
   it("lets a mode own the greeting, and leaves the others alone", () => {
     expect(greetingFor([], getMode("presentation"))).toContain("plateia");
     expect(greetingFor([], getMode("conversation"))).toBe(
