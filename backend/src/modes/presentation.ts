@@ -119,6 +119,7 @@ export const PRESENTATION_MODE: ModeDefinition = {
       "O roteiro da apresentação aparece aqui — a ideia única, a estrutura, e depois cada slide com o que vai na tela, a animação, o que você fala e quanto tempo leva.",
     template: GUIDE_TEMPLATE,
     openByDefault: true,
+    format: "markdown",
   },
 
   toolNames: [

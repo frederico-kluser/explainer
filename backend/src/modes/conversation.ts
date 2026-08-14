@@ -53,6 +53,7 @@ export const CONVERSATION_MODE: ModeDefinition = {
       "As anotações da conversa aparecem aqui. O assistente escreve sozinho enquanto vocês conversam — e você pode editar junto.",
     template: NOTES_TEMPLATE,
     openByDefault: false,
+    format: "markdown",
   },
 
   toolNames: [

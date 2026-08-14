@@ -43,6 +43,12 @@ export interface ModeDocumentSpec {
   template: string;
   /** Whether the sidebar is open the first time the conversation is shown. */
   openByDefault: boolean;
+  /**
+   * How the browser renders the document: markdown through the shared renderer,
+   * or a whole html-explainer file shown in a sandboxed iframe. Every mode
+   * declares it — a missing field would silently fall back to markdown.
+   */
+  format: "markdown" | "html";
 }
 
 /** What the prompt sections get to look at. */
@@ -84,6 +90,19 @@ export interface ModeDefinition {
    * made twice when there are two of them.
    */
   toolNames: readonly ToolName[];
+  /**
+   * Tools this mode may use even when the conversation has no materials, on
+   * top of the shared MATERIAL_FREE_TOOLS. Research opens the microphone with
+   * nothing attached, so web_search has to be free for it and stay gated for
+   * everyone else.
+   */
+  materialFreeTools?: readonly ToolName[];
+  /**
+   * How many web searches may run at once in a conversation under this mode.
+   * The shared tool allows one at a time; research dispatches a fan of
+   * approved doubts, each becoming its own job card. Absent means one.
+   */
+  parallelSearches?: number;
   /** Replaces the shared Role & Objective section. */
   role: string;
   /** Replaces the shared Conversation Flow section. */
@@ -108,6 +127,7 @@ export interface ModeSummary {
     title: string;
     placeholder: string;
     open_by_default: boolean;
+    format: "markdown" | "html";
   } | null;
 }
 
@@ -123,6 +143,7 @@ export function toModeSummary(mode: ModeDefinition): ModeSummary {
           title: mode.document.title,
           placeholder: mode.document.placeholder,
           open_by_default: mode.document.openByDefault,
+          format: mode.document.format,
         }
       : null,
   };

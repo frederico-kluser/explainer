@@ -66,6 +66,7 @@ describe("the mode registry", () => {
               title: mode.document.title,
               placeholder: mode.document.placeholder,
               open_by_default: mode.document.openByDefault,
+              format: mode.document.format,
             }
           : null,
       });
