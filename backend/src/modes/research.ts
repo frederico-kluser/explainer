@@ -373,6 +373,24 @@ export const RESEARCH_MODE: ModeDefinition = {
   parallelSearches: 6,
   materialFreeTools: ["web_search", "check_web_search"],
 
+  // The shared web_search description promises one search at a time — true for
+  // every mode but this one. The model reads that text verbatim from the
+  // session, so without an override a research session would be told to
+  // serialize exactly the fan the flow below dispatches. The constant in
+  // tools/index.ts stays intact for everyone else.
+  toolDescriptions: {
+    web_search:
+      "Pesquisa na internet e devolve NA HORA o aviso de que a busca comecou; o " +
+      "resultado chega sozinho depois, no fluxo da conversa, com as fontes. Nesta " +
+      "conversa VARIAS buscas podem rodar AO MESMO TEMPO, ate um limite: disparar " +
+      "outra com buscas em andamento e permitido, e cada busca vira um cartao " +
+      "proprio com indicador na tela. Use para fatos atuais, noticias, " +
+      "documentacao de terceiros ou qualquer coisa que nao esteja nos materiais. " +
+      "Ao disparar, avise o usuario em voz alta que a busca comecou e CONTINUE A " +
+      "CONVERSA — nunca fique em silencio esperando. Consulte o estado de uma " +
+      "busca especifica com check_web_search.",
+  },
+
   document: {
     title: "Pesquisa",
     placeholder:

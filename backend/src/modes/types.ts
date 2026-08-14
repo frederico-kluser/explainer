@@ -11,7 +11,8 @@
 //   - whether the conversation needs a material before the microphone opens;
 //   - which markdown document it keeps on screen, and what that document starts
 //     as;
-//   - which tools ride on top of the ones the materials already grant;
+//   - which tools ride on top of the ones the materials already grant, and how
+//     those tools describe themselves while this mode is active;
 //   - the Role, the Conversation Flow and any extra prompt sections.
 //
 // What a mode may NOT change is everything that makes the app itself: the
@@ -103,6 +104,19 @@ export interface ModeDefinition {
    * approved doubts, each becoming its own job card. Absent means one.
    */
   parallelSearches?: number;
+  /**
+   * Alternative descriptions for specific tools while this mode is active.
+   *
+   * A tool description reaches the model verbatim in the Realtime session,
+   * and the shared text has to say what is true everywhere: `web_search`
+   * promises one search at a time because that is the rule for every mode but
+   * research, which dispatches a fan of parallel searches. The mode that
+   * breaks the rule overrides the description here; the constants in
+   * `tools/index.ts` stay untouched, so the shared text keeps telling the
+   * truth to the modes that keep the rule. A tool without an entry here keeps
+   * the shared description.
+   */
+  toolDescriptions?: Partial<Record<ToolName, string>>;
   /** Replaces the shared Role & Objective section. */
   role: string;
   /** Replaces the shared Conversation Flow section. */

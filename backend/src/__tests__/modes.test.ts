@@ -134,6 +134,46 @@ describe("the tools a mode adds", () => {
   });
 });
 
+describe("the tool descriptions a mode mints", () => {
+  // A tool description reaches the model verbatim in the session, so the mint
+  // is the signal that matters: research has to tell the model it may fan
+  // searches out in parallel, while every other mode keeps the shared
+  // one-search-at-a-time text.
+  it("overrides web_search for research with the parallel truth", () => {
+    // Both mint paths — an empty conversation and one with materials — go
+    // through the same override.
+    for (const sources of [[], [source()]]) {
+      const search = toolsForSources(sources, getMode("research")).find(
+        (tool) => tool.name === "web_search",
+      )!;
+      expect(search.description).toContain("AO MESMO TEMPO");
+      expect(search.description).toContain("cartao proprio com indicador");
+      expect(search.description).not.toContain("UMA busca por vez");
+    }
+  });
+
+  it("keeps the shared description for modes without an override", () => {
+    const search = toolsForSources([], getMode("conversation")).find(
+      (tool) => tool.name === "web_search",
+    )!;
+    expect(search.description).toContain("So pode haver UMA busca por vez");
+    expect(search.description).toContain("check_web_search");
+  });
+
+  it("never mutates the shared constant the other modes read", () => {
+    // The session config is cached upstream by content, so mutating the shared
+    // constant under research would hand the next conversation mint a
+    // web_search that promises parallelism the executor refuses.
+    const research = toolsForSources([], getMode("research")).find(
+      (tool) => tool.name === "web_search",
+    )!;
+    const shared = ALL_TOOLS.find((tool) => tool.name === "web_search")!;
+    expect(research).not.toBe(shared);
+    expect(shared.description).toContain("So pode haver UMA busca por vez");
+    expect(shared.description).not.toContain("AO MESMO TEMPO");
+  });
+});
+
 describe("the instructions a mode builds", () => {
   const documentTools = [
     "read_document",

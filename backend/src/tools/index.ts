@@ -452,6 +452,26 @@ function deliberationTools(): RealtimeTool[] {
 }
 
 /**
+ * Applies the mode's alternative descriptions to a minted tool list.
+ *
+ * A tool description reaches the model verbatim in the Realtime session, so a
+ * mode whose behaviour breaks what the shared text promises — research
+ * dispatches a fan of parallel web searches, the shared `web_search` says one
+ * at a time — has to mint its own text. The constants above are read by every
+ * mode and are never mutated: a tool under an overriding mode is a clone with
+ * the mode's description, and the shared text keeps telling the truth to the
+ * modes that keep the rule.
+ */
+function withModeDescriptions(tools: RealtimeTool[], mode: ModeDefinition): RealtimeTool[] {
+  const descriptions = mode.toolDescriptions;
+  if (!descriptions) return tools;
+  return tools.map((tool) => {
+    const description = descriptions[tool.name];
+    return description !== undefined ? { ...tool, description } : tool;
+  });
+}
+
+/**
  * Which tools the model gets, decided by what is actually in the conversation.
  *
  * The rule from the original concept still holds per material — a repository
@@ -470,7 +490,10 @@ export function toolsForSources(
   const fromMode = modeTools(mode);
 
   if (sources.length === 0) {
-    return [WEB_SEARCH, CHECK_WEB_SEARCH, ...deliberationTools(), ...fromMode];
+    return withModeDescriptions(
+      [WEB_SEARCH, CHECK_WEB_SEARCH, ...deliberationTools(), ...fromMode],
+      mode,
+    );
   }
 
   const hasFiles = sources.some((source) => Boolean(source.root));
@@ -491,7 +514,7 @@ export function toolsForSources(
   // Naming a material only makes sense when there is more than one to name.
   if (sources.length > 1) tools.unshift(LIST_MATERIALS);
 
-  return tools;
+  return withModeDescriptions(tools, mode);
 }
 
 export const ALL_TOOLS: RealtimeTool[] = [
