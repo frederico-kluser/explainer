@@ -126,9 +126,9 @@ Two lessons from that harness, both learned by getting them wrong:
 
 - `.agents/artifacts/project-analysis.md` §4 — the full signal inventory.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On completion, run the memory pipeline in `meta-skill-evolution`. This skill's
+On completion, run the memory pipeline of the local CoALA memory (`coala.py add`). This skill's
 own eval asserts the current shape of `validate.sh` in both directions: remove
 the `|| true` and the first blind spot's passage is forced open; remove the
 `TypeCheck Root`, `Test Desktop` or `Build Desktop` section and the paragraph

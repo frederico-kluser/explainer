@@ -77,15 +77,15 @@ which is a worse use of them and usually means rework.
 
 ### 8. On completion
 
-- Run the `<evolution>` step of every task skill that was involved, which
-  applies the pipeline in `meta-skill-evolution`. Usually it writes nothing;
+- Run the learning step (memória CoALA local) of every task skill that was involved, which
+  applies the pipeline of the local CoALA memory (`coala.py add`). Usually it writes nothing;
   that is the healthy outcome.
 - Delete `TASK_PLAN.md`. It is scaffolding, and leaving it behind turns a
   finished task into repository noise.
 
 ## Rules
 
-- When no skill covers the task, invoke `meta-skill-evolution` to propose a new
+- When no skill covers the task, invoke the local CoALA memory (`coala.py add`) to propose a new
   one as a draft for review, rather than publishing it directly.
 - Skills with broad side effects — deploys, structural rewrites, widening the
   sandbox — are not auto-invoked; they need the user to say yes first, because

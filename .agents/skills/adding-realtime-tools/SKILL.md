@@ -79,9 +79,9 @@ For a live end-to-end check, `verifying-explainer-changes` has the harness.
 - `backend/src/tools/index.ts` — every existing definition; copy the nearest one
   rather than writing a schema from memory.
 
-## <evolution>
+## registo de aprendizado (memória CoALA local)
 
-On completion, run the memory pipeline in `meta-skill-evolution`. Update this
+On completion, run the memory pipeline of the local CoALA memory (`coala.py add`). Update this
 SKILL.md directly only if the task revealed something important **and**
 externally verified — a step that was missing from the procedure above, or a new
 silent failure mode. Edit or replace the relevant passage rather than appending;

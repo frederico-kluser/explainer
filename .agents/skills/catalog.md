@@ -35,8 +35,6 @@ triggers below match; finish with `verifying-explainer-changes`.
 
 | skill | covers |
 |---|---|
-| `meta-skill-evolution` | the five-step memory pipeline; decides update / propose-new / discard for a candidate learning |
-| `meta-skill-consolidate` | scheduled GC: dedup, conflict resolution, provenance staleness, token budget, second-opinion review before deletion |
 
 ## Running the checks
 
