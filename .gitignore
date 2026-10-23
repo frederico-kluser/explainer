@@ -34,3 +34,7 @@ out/
 # `npm run smoke:desktop`. Evidence of one run on one machine — the PNGs are
 # what a human opens when a smoke goes red, not something to review in a diff.
 .smoke/
+
+# Artefactos do pnpm num projeto npm (o lockfile canónico é package-lock.json)
+pnpm-lock.yaml
+pnpm-workspace.yaml
